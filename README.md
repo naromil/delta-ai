@@ -1,4 +1,4 @@
-# delta-ai
+# Delta AI
 
 An Electron application with React and TypeScript
 
