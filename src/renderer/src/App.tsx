@@ -38,7 +38,12 @@ function App(): React.JSX.Element {
         <div className="sidebar-header">
           <button className="new-chat-button" onClick={() => setMessages([])}>
             <svg viewBox="0 0 24 24" className="icon" aria-hidden="true">
-              <path d="M12 4v16M4 12h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              <path
+                d="M12 4v16M4 12h16"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+              />
             </svg>
             New chat
           </button>
@@ -64,46 +69,46 @@ function App(): React.JSX.Element {
         <Settings onBack={() => setView('chat')} />
       ) : (
         <main className="chat">
-        <div className="chat-scroll">
-          {messages.length === 0 ? (
-            <div className="empty-state">
-              <h1 className="empty-title">How can I help you today?</h1>
-            </div>
-          ) : (
-            <div className="message-list">
-              {messages.map((m) => (
-                <div key={m.id} className={`message message-${m.role}`}>
-                  <div className="message-avatar">{m.role === 'user' ? 'You' : 'AI'}</div>
-                  <div className="message-content">{m.content}</div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-        <div className="composer">
-          <div className="composer-box">
-            <textarea
-              className="composer-input"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Send a message..."
-              rows={1}
-            />
-            <button
-              className="composer-send"
-              onClick={handleSend}
-              disabled={input.trim() === ''}
-              aria-label="Send message"
-            >
-              <svg viewBox="0 0 24 24" className="icon" aria-hidden="true">
-                <path d="M4 12l16-8-6 16-2-7-8-1z" fill="currentColor" />
-              </svg>
-            </button>
+          <div className="chat-scroll">
+            {messages.length === 0 ? (
+              <div className="empty-state">
+                <h1 className="empty-title">How can I help you today?</h1>
+              </div>
+            ) : (
+              <div className="message-list">
+                {messages.map((m) => (
+                  <div key={m.id} className={`message message-${m.role}`}>
+                    <div className="message-avatar">{m.role === 'user' ? 'You' : 'AI'}</div>
+                    <div className="message-content">{m.content}</div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-          <p className="composer-hint">Delta AI can make mistakes. Check important info.</p>
-        </div>
-      </main>
+          <div className="composer">
+            <div className="composer-box">
+              <textarea
+                className="composer-input"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Send a message..."
+                rows={1}
+              />
+              <button
+                className="composer-send"
+                onClick={handleSend}
+                disabled={input.trim() === ''}
+                aria-label="Send message"
+              >
+                <svg viewBox="0 0 24 24" className="icon" aria-hidden="true">
+                  <path d="M4 12l16-8-6 16-2-7-8-1z" fill="currentColor" />
+                </svg>
+              </button>
+            </div>
+            <p className="composer-hint">Delta AI can make mistakes. Check important info.</p>
+          </div>
+        </main>
       )}
     </div>
   )

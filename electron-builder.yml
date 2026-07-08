@@ -1,4 +1,4 @@
-appId: com.electron.app
+appId: io.github.naromil.deltaai.app
 productName: delta-ai
 directories:
   buildResources: build

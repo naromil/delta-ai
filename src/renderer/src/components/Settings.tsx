@@ -9,8 +9,18 @@ type Provider = {
 
 const DEFAULT_PROVIDERS: Provider[] = [
   { name: 'OpenAI', key: '', endpoint: 'https://api.openai.com/v1', model: 'gpt-4o' },
-  { name: 'Anthropic', key: '', endpoint: 'https://api.anthropic.com/v1', model: 'claude-3-5-sonnet' },
-  { name: 'Google AI', key: '', endpoint: 'https://generativelanguage.googleapis.com/v1beta', model: 'gemini-2.0-flash' },
+  {
+    name: 'Anthropic',
+    key: '',
+    endpoint: 'https://api.anthropic.com/v1',
+    model: 'claude-3-5-sonnet'
+  },
+  {
+    name: 'Google AI',
+    key: '',
+    endpoint: 'https://generativelanguage.googleapis.com/v1beta',
+    model: 'gemini-2.0-flash'
+  },
   { name: 'Together AI', key: '', endpoint: 'https://api.together.xyz/v1', model: 'mistral-7b' },
   { name: 'DeepSeek', key: '', endpoint: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
   { name: 'Ollama (local)', key: '', endpoint: 'http://localhost:11434/v1', model: 'llama3' }
@@ -52,7 +62,13 @@ function Settings({ onBack }: SettingsProps): React.JSX.Element {
       <div className="settings-header">
         <button className="settings-back" onClick={onBack} aria-label="Back to chat">
           <svg viewBox="0 0 24 24" className="icon" aria-hidden="true">
-            <path d="M15 18l-6-6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            <path
+              d="M15 18l-6-6 6-6"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
           </svg>
         </button>
         <h2 className="settings-title">API Configuration</h2>
