@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import Settings from './components/Settings'
 
 type Message = {
   id: number
   role: 'user' | 'assistant'
   content: string
+  error?: boolean
 }
 
 type View = 'chat' | 'settings'
@@ -13,16 +14,44 @@ function App(): React.JSX.Element {
   const [view, setView] = useState<View>('chat')
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
+  const [loading, setLoading] = useState(false)
+  const scrollRef = useRef<HTMLDivElement>(null)
 
-  const handleSend = (): void => {
+  /* Auto-scroll to bottom on new messages */
+  useEffect(() => {
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [messages])
+
+  const handleSend = async (): Promise<void> => {
     const trimmed = input.trim()
-    if (trimmed === '') return
-    setMessages((prev) => [
-      ...prev,
-      { id: Date.now(), role: 'user', content: trimmed },
-      { id: Date.now() + 1, role: 'assistant', content: '' }
-    ])
+    if (trimmed === '' || loading) return
     setInput('')
+
+    const userMsg: Message = { id: Date.now(), role: 'user', content: trimmed }
+    const assistantId = Date.now() + 1
+    const assistantMsg: Message = { id: assistantId, role: 'assistant', content: '' }
+    setMessages((prev) => [...prev, userMsg, assistantMsg])
+    setLoading(true)
+
+    // Build message history for the API (exclude the empty assistant placeholder)
+    const history = [...messages, userMsg].map((m) => ({
+      role: m.role,
+      content: m.content
+    }))
+
+    const res = await window.api.sendMessage(history)
+
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === assistantId
+          ? res.success
+            ? { ...m, content: res.response ?? '(No response received)' }
+            : { ...m, content: res.error ?? 'An unknown error occurred.', error: true }
+          : m
+      )
+    )
+    setLoading(false)
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
@@ -69,7 +98,7 @@ function App(): React.JSX.Element {
         <Settings onBack={() => setView('chat')} />
       ) : (
         <main className="chat">
-          <div className="chat-scroll">
+          <div className="chat-scroll" ref={scrollRef}>
             {messages.length === 0 ? (
               <div className="empty-state">
                 <h1 className="empty-title">How can I help you today?</h1>
@@ -79,7 +108,17 @@ function App(): React.JSX.Element {
                 {messages.map((m) => (
                   <div key={m.id} className={`message message-${m.role}`}>
                     <div className="message-avatar">{m.role === 'user' ? 'You' : 'AI'}</div>
-                    <div className="message-content">{m.content}</div>
+                    {m.content === '' && loading && m.role === 'assistant' ? (
+                      <div className="message-content">
+                        <div className="loading-dots">
+                          <span></span>
+                          <span></span>
+                          <span></span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className={`message-content${m.error ? ' error' : ''}`}>{m.content}</div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -98,7 +137,7 @@ function App(): React.JSX.Element {
               <button
                 className="composer-send"
                 onClick={handleSend}
-                disabled={input.trim() === ''}
+                disabled={input.trim() === '' || loading}
                 aria-label="Send message"
               >
                 <svg viewBox="0 0 24 24" className="icon" aria-hidden="true">

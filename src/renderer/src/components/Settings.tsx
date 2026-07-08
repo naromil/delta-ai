@@ -1,61 +1,77 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
-type Provider = {
-  name: string
-  key: string
-  endpoint: string
+/* ---- Google AI Studio models ---- */
+const GOOGLE_MODELS = [
+  'gemini-3.5-flash',
+  'gemini-3.1-pro',
+  'gemini-3.1-flash-lite',
+  'gemini-2.5-flash',
+  'gemma-4-31b-it',
+  'Custom...'
+] as const
+
+type ProviderConfig = {
+  provider: string
+  apiKey: string
   model: string
 }
-
-const DEFAULT_PROVIDERS: Provider[] = [
-  { name: 'OpenAI', key: '', endpoint: 'https://api.openai.com/v1', model: 'gpt-4o' },
-  {
-    name: 'Anthropic',
-    key: '',
-    endpoint: 'https://api.anthropic.com/v1',
-    model: 'claude-3-5-sonnet'
-  },
-  {
-    name: 'Google AI',
-    key: '',
-    endpoint: 'https://generativelanguage.googleapis.com/v1beta',
-    model: 'gemini-2.0-flash'
-  },
-  { name: 'Together AI', key: '', endpoint: 'https://api.together.xyz/v1', model: 'mistral-7b' },
-  { name: 'DeepSeek', key: '', endpoint: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
-  { name: 'Ollama (local)', key: '', endpoint: 'http://localhost:11434/v1', model: 'llama3' }
-]
 
 interface SettingsProps {
   onBack: () => void
 }
 
 function Settings({ onBack }: SettingsProps): React.JSX.Element {
-  const [providers, setProviders] = useState<Provider[]>(() => {
-    try {
-      const saved = localStorage.getItem('delta-ai-providers')
-      if (saved) return JSON.parse(saved)
-    } catch {
-      // ignore corrupted data
-    }
-    return DEFAULT_PROVIDERS
-  })
-
+  const [selectedProvider, setSelectedProvider] = useState('')
+  const [apiKey, setApiKey] = useState('')
+  const [model, setModel] = useState('gemini-3.5-flash')
+  const [customModel, setCustomModel] = useState('')
+  const [isCustomModel, setIsCustomModel] = useState(false)
+  const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
 
-  const updateField = (index: number, field: keyof Provider, value: string): void => {
-    setProviders((prev) => {
-      const next = prev.map((p, i) => (i === index ? { ...p, [field]: value } : p))
-      return next
+  /* load existing config on mount */
+  useEffect(() => {
+    window.api.loadConfig().then((cfg) => {
+      if (!cfg || typeof cfg !== 'object') return
+      const c = cfg as Record<string, unknown>
+      if (typeof c.provider === 'string' && c.provider) {
+        setSelectedProvider(c.provider)
+      }
+      if (typeof c.apiKey === 'string' && c.apiKey) {
+        setApiKey(c.apiKey)
+      }
+      if (typeof c.model === 'string' && c.model) {
+        const known = (GOOGLE_MODELS as readonly string[]).slice(0, -1)
+        if (known.includes(c.model)) {
+          setModel(c.model)
+          setIsCustomModel(false)
+        } else {
+          setCustomModel(c.model)
+          setIsCustomModel(true)
+        }
+      }
     })
-    setSaved(false)
+  }, [])
+
+  const handleSave = async (): Promise<void> => {
+    setSaving(true)
+    const finalModel = isCustomModel ? customModel.trim() : model
+    const config: ProviderConfig = {
+      provider: selectedProvider,
+      apiKey,
+      model: finalModel
+    }
+    const res = await window.api.saveConfig(config)
+    setSaving(false)
+    if (res.success) {
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } else {
+      alert('Failed to save configuration.')
+    }
   }
 
-  const handleSave = (): void => {
-    localStorage.setItem('delta-ai-providers', JSON.stringify(providers))
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
-  }
+  const canSave = selectedProvider !== ''
 
   return (
     <div className="settings">
@@ -71,55 +87,91 @@ function Settings({ onBack }: SettingsProps): React.JSX.Element {
             />
           </svg>
         </button>
-        <h2 className="settings-title">API Configuration</h2>
+        <h2 className="settings-title">Settings</h2>
       </div>
-      <p className="settings-subtitle">
-        Bring your own API keys. Keys are stored locally on your device.
-      </p>
-      <div className="settings-list">
-        {providers.map((p, i) => (
-          <div key={p.name} className="provider-card">
-            <div className="provider-card-header">
-              <span className="provider-name">{p.name}</span>
-              {p.key && <span className="provider-status configured">• Configured</span>}
-              {!p.key && <span className="provider-status unconfigured">• Not configured</span>}
-            </div>
-            <label className="provider-field">
-              <span>API Key</span>
-              <input
-                type="password"
-                className="settings-input"
-                value={p.key}
-                onChange={(e) => updateField(i, 'key', e.target.value)}
-                placeholder="sk-..."
-              />
-            </label>
-            <label className="provider-field">
-              <span>Endpoint URL</span>
-              <input
-                type="text"
-                className="settings-input"
-                value={p.endpoint}
-                onChange={(e) => updateField(i, 'endpoint', e.target.value)}
-                placeholder="https://api.example.com/v1"
-              />
-            </label>
-            <label className="provider-field">
-              <span>Model</span>
-              <input
-                type="text"
-                className="settings-input"
-                value={p.model}
-                onChange={(e) => updateField(i, 'model', e.target.value)}
-                placeholder="model-name"
-              />
-            </label>
-          </div>
-        ))}
+
+      {/* ---- Provider selector ---- */}
+      <div className="settings-section">
+        <label className="settings-label" htmlFor="provider-select">
+          API keys
+        </label>
+        <select
+          id="provider-select"
+          className="settings-select"
+          value={selectedProvider}
+          onChange={(e) => {
+            setSelectedProvider(e.target.value)
+            setSaved(false)
+          }}
+        >
+          <option value="" disabled>
+            Select a provider…
+          </option>
+          <option value="google-ai-studio">Google AI Studio</option>
+        </select>
       </div>
+
+      {/* ---- Provider-specific fields (only Google AI Studio for now) ---- */}
+      {selectedProvider === 'google-ai-studio' && (
+        <div className="settings-section provider-config">
+          <label className="settings-label" htmlFor="api-key-input">
+            API Key
+          </label>
+          <input
+            id="api-key-input"
+            type="password"
+            className="settings-input"
+            value={apiKey}
+            onChange={(e) => {
+              setApiKey(e.target.value)
+              setSaved(false)
+            }}
+            placeholder="Enter your Google AI API key…"
+          />
+
+          <label className="settings-label" htmlFor="model-select">
+            Model
+          </label>
+          <select
+            id="model-select"
+            className="settings-select"
+            value={isCustomModel ? 'Custom...' : model}
+            onChange={(e) => {
+              if (e.target.value === 'Custom...') {
+                setIsCustomModel(true)
+              } else {
+                setModel(e.target.value)
+                setIsCustomModel(false)
+              }
+              setSaved(false)
+            }}
+          >
+            {GOOGLE_MODELS.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+
+          {isCustomModel && (
+            <input
+              type="text"
+              className="settings-input settings-input--custom"
+              value={customModel}
+              onChange={(e) => {
+                setCustomModel(e.target.value)
+                setSaved(false)
+              }}
+              placeholder="Enter custom model name…"
+            />
+          )}
+        </div>
+      )}
+
+      {/* ---- Save ---- */}
       <div className="settings-footer">
-        <button className="settings-save" onClick={handleSave}>
-          {saved ? '✓ Saved' : 'Save Configuration'}
+        <button className="settings-save" onClick={handleSave} disabled={!canSave || saving}>
+          {saving ? 'Saving…' : saved ? '✓ Saved' : 'Save'}
         </button>
       </div>
     </div>
