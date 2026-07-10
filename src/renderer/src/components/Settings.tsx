@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 
 /* ---- Google AI Studio models ---- */
 const GOOGLE_MODELS = [
@@ -28,8 +28,11 @@ function Settings({ onBack }: SettingsProps): React.JSX.Element {
   const [isCustomModel, setIsCustomModel] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [hotkey, setHotkey] = useState('Ctrl+Shift+D')
+  const [capturingHotkey, setCapturingHotkey] = useState(false)
+  const hotkeyRef = useRef(hotkey)
 
-  /* load existing config on mount */
+  /* load existing config + settings on mount */
   useEffect(() => {
     window.api.loadConfig().then((cfg) => {
       if (!cfg || typeof cfg !== 'object') return
@@ -51,7 +54,44 @@ function Settings({ onBack }: SettingsProps): React.JSX.Element {
         }
       }
     })
+
+    window.api.loadSettings().then((s) => {
+      if (s?.hotkey) {
+        setHotkey(s.hotkey)
+        hotkeyRef.current = s.hotkey
+      }
+    })
   }, [])
+
+  /* ---- Hotkey capture mode ----
+   * Clicking the hotkey input toggles capture. While capturing, keystrokes
+   * are translated into Electron accelerator format and stored in `hotkey`.
+   * Normal text editing is disabled via readOnly.
+   */
+  const renderCombo = (e: React.KeyboardEvent<HTMLInputElement>): string => {
+    const parts: string[] = []
+    if (e.ctrlKey) parts.push('Ctrl')
+    if (e.altKey) parts.push('Alt')
+    if (e.shiftKey) parts.push('Shift')
+    if (e.metaKey) parts.push('Meta')
+    const key = e.key
+    // Ignore lone modifiers — wait for a full combo
+    if (!['Control', 'Alt', 'Shift', 'Meta'].includes(key)) {
+      parts.push(key.length === 1 ? key.toUpperCase() : key)
+    }
+    return parts.join('+')
+  }
+
+  const handleHotkeyKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
+    if (!capturingHotkey) return
+    e.preventDefault()
+    e.stopPropagation()
+    const combo = renderCombo(e)
+    if (combo) {
+      hotkeyRef.current = combo
+      setHotkey(combo)
+    }
+  }
 
   const handleSave = async (): Promise<void> => {
     setSaving(true)
@@ -61,9 +101,11 @@ function Settings({ onBack }: SettingsProps): React.JSX.Element {
       apiKey,
       model: finalModel
     }
-    const res = await window.api.saveConfig(config)
+    const saveCfgProm = window.api.saveConfig(config)
+    const saveSettingsProm = window.api.saveSettings({ hotkey: hotkeyRef.current })
+    const [cfgRes] = await Promise.all([saveCfgProm, saveSettingsProm])
     setSaving(false)
-    if (res.success) {
+    if (cfgRes.success) {
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } else {
@@ -167,6 +209,30 @@ function Settings({ onBack }: SettingsProps): React.JSX.Element {
           )}
         </div>
       )}
+
+      {/* ---- Hotkey settings ---- */}
+      <div className="settings-section">
+        <label className="settings-label" htmlFor="hotkey-input">
+          Global Hotkey
+        </label>
+        <div className="hotkey-row">
+          <input
+            id="hotkey-input"
+            type="text"
+            className="settings-input settings-input--hotkey"
+            value={hotkey}
+            readOnly
+            onKeyDown={handleHotkeyKeyDown}
+            onFocus={() => setCapturingHotkey(true)}
+            onBlur={() => setCapturingHotkey(false)}
+            placeholder={capturingHotkey ? 'Press a key combination…' : 'Click to capture…'}
+          />
+        </div>
+        <p className="settings-hint">
+          Click the field, then press a key combination (e.g. Ctrl+Shift+D). Saved via the Save
+          button below.
+        </p>
+      </div>
 
       {/* ---- Save ---- */}
       <div className="settings-footer">

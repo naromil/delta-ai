@@ -1,7 +1,7 @@
 {
   "name": "delta-ai",
   "version": "1.0.0",
-  "description": "An Electron application with React and TypeScript",
+  "description": "A revolutionary AI helper for learning anything.",
   "main": "./out/main/index.js",
   "author": "example.com",
   "homepage": "https://electron-vite.org",
@@ -23,7 +23,9 @@
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
-    "electron-updater": "^6.3.9"
+    "dbus-next": "^0.10.2",
+    "electron-updater": "^6.3.9",
+    "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
     "@electron-toolkit/eslint-config-prettier": "^3.0.0",

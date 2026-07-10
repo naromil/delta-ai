@@ -9,6 +9,8 @@ declare global {
       sendMessage: (
         messages: Array<{ role: string; content: string }>
       ) => Promise<{ success: boolean; response?: string; error?: string }>
+      loadSettings: () => Promise<{ hotkey: string }>
+      saveSettings: (settings: { hotkey: string }) => Promise<{ success: boolean }>
     }
   }
 }

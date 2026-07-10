@@ -9,7 +9,10 @@ const api = {
   sendMessage: (
     messages: Array<{ role: string; content: string }>
   ): Promise<{ success: boolean; response?: string; error?: string }> =>
-    ipcRenderer.invoke('send-message', messages)
+    ipcRenderer.invoke('send-message', messages),
+  loadSettings: (): Promise<{ hotkey: string }> => ipcRenderer.invoke('load-settings'),
+  saveSettings: (settings: { hotkey: string }): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('save-settings', settings)
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to
