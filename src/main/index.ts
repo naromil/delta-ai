@@ -6,11 +6,16 @@ import { unregisterGlobalShortcutPortal } from './globalShortcutPortal'
 import { loadProviderConfig, loadAppSettings, registerHotkey } from './config'
 import { handleHotkeyPressed } from './lookup'
 
+export interface ProviderMessage {
+  role: string
+  content: string
+}
+
 /* ---- Google AI ---- */
-export async function callGoogleAI(
+async function callGoogleAI(
   apiKey: string,
   model: string,
-  messages: Array<{ role: string; content: string }>
+  messages: ProviderMessage[]
 ): Promise<string> {
   const contents = messages.map((m) => ({
     role: m.role === 'user' ? 'user' : 'model',
@@ -36,6 +41,31 @@ export async function callGoogleAI(
     '(No response received)'
   return text
 }
+
+/* ---- Provider dispatch ---- */
+/**
+ * Single entry point for invoking whichever provider is currently configured.
+ * Owns provider selection so callers (IPC handlers, lookup) never branch on
+ * `config.provider` themselves — they just `callProvider(messages)` and let the
+ * user know if the configured provider is not yet wired up.
+ */
+export async function callProvider(messages: ProviderMessage[]): Promise<string> {
+  const config = loadProviderConfig()
+  if (!config || !config.apiKey) {
+    throw new NoApiKeyError('No API key configured. Open Settings to add your provider API key.')
+  }
+
+  switch (config.provider) {
+    case 'google-ai-studio':
+      return await callGoogleAI(config.apiKey, config.model, messages)
+    default:
+      throw new UnsupportedProviderError(`Provider "${config.provider}" is not supported yet.`)
+  }
+}
+
+/** Sentinel error so callers can distinguish missing-config from real failures. */
+export class NoApiKeyError extends Error {}
+export class UnsupportedProviderError extends Error {}
 
 /* ---- Main window ---- */
 function createWindow(): void {
@@ -81,22 +111,11 @@ app.whenReady().then(async () => {
     'send-message',
     async (
       _event,
-      messages: Array<{ role: string; content: string }>
+      messages: ProviderMessage[]
     ): Promise<{ success: boolean; response?: string; error?: string }> => {
-      const config = loadProviderConfig()
-      if (!config || !config.apiKey) {
-        return {
-          success: false,
-          error: 'No API key configured. Open Settings to add your provider API key.'
-        }
-      }
-
       try {
-        if (config.provider === 'google-ai-studio') {
-          const response = await callGoogleAI(config.apiKey, config.model, messages)
-          return { success: true, response }
-        }
-        return { success: false, error: `Provider "${config.provider}" is not supported yet.` }
+        const response = await callProvider(messages)
+        return { success: true, response }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         return { success: false, error: msg }

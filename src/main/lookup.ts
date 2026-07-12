@@ -1,9 +1,13 @@
 import { app, screen, desktopCapturer, nativeImage, BrowserWindow } from 'electron'
 import { join } from 'path/posix'
 import { lookUpHTML } from './lookupHTML'
-import { callGoogleAI } from './index'
-import { loadProviderConfig } from './config'
+import { callProvider, NoApiKeyError, UnsupportedProviderError } from './index'
+import type { ProviderMessage } from './index'
 import { captureScreenViaPortal, isScreenCapturePortalPreferred } from './screenCapturePortal'
+
+const LOOKUP_WINDOW_WIDTH = 420
+const LOOKUP_WINDOW_HEIGHT = 320
+const LOOKUP_WINDOW_CURSOR_OFFSET = 10
 
 /* ---- OCR ---- */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -50,10 +54,7 @@ async function captureScreenImage(display: Electron.Display): Promise<Electron.N
     // Fall through to desktopCapturer if the portal path failed or returned empty.
   }
 
-  const sources = await desktopCapturer.getSources({
-    types: ['screen'],
-    thumbnailSize: { width: display.size.width, height: display.size.height }
-  })
+  const sources = await deliverCapturedSources(display)
 
   const source = sources.find((s) => s.display_id === String(display.id)) ?? sources[0]
   if (!source) return null
@@ -61,6 +62,15 @@ async function captureScreenImage(display: Electron.Display): Promise<Electron.N
   const thumb = source.thumbnail
   if (thumb.isEmpty()) return null
   return thumb
+}
+
+function deliverCapturedSources(
+  display: Electron.Display
+): Promise<Electron.DesktopCapturerSource[]> {
+  return desktopCapturer.getSources({
+    types: ['screen'],
+    thumbnailSize: { width: display.size.width, height: display.size.height }
+  })
 }
 
 /* ---- Screen capture around cursor ---- */
@@ -71,9 +81,6 @@ export async function captureRegionAroundCursor(width = 400, height = 150): Prom
   const screenImage = await captureScreenImage(display)
   if (!screenImage || screenImage.isEmpty()) return null
 
-  // Calculate crop region centered on cursor (relative to this display).
-  // The portal screenshot returns pixels in the display's natural coordinate
-  // space, so we apply the scale factor the same way we do for desktopCapturer.
   const scaleFactor = display.scaleFactor || 1
   const relX = cursorPos.x - display.bounds.x
   const relY = cursorPos.y - display.bounds.y
@@ -111,14 +118,34 @@ function clamp(v: number, lo: number, hi: number): number {
 }
 
 /* ---- Lookup window ---- */
-export let lookupWindow: BrowserWindow | null = null
+// Single in-flight window. Not exported — callers go through handleHotkeyPressed.
+let lookupWindow: BrowserWindow | null = null
 
-export function createLookupWindow(x: number, y: number): BrowserWindow {
+function sendToWindow(channel: string, ...args: unknown[]): void {
+  const win = lookupWindow
+  if (win && !win.isDestroyed()) {
+    win.webContents.send(channel, ...args)
+  }
+}
+
+/**
+ * Position the lookup window next to the cursor, clamped to the display the
+ * cursor is actually on (not always the primary display). Returns the window.
+ */
+function createLookupWindow(cursorX: number, cursorY: number): BrowserWindow {
+  const cursorPoint = { x: cursorX, y: cursorY }
+  const display = screen.getDisplayNearestPoint(cursorPoint)
+  const { x: bx, y: by, width: bw, height: bh } = display.bounds
+
+  // Place the window's top-left near the cursor, then keep it fully visible.
+  const x = clamp(cursorX + LOOKUP_WINDOW_CURSOR_OFFSET, bx, bx + bw - LOOKUP_WINDOW_WIDTH)
+  const y = clamp(cursorY + LOOKUP_WINDOW_CURSOR_OFFSET, by, by + bh - LOOKUP_WINDOW_HEIGHT)
+
   const window = new BrowserWindow({
-    width: 420,
-    height: 320,
-    x: Math.min(x, screen.getPrimaryDisplay().size.width - 430),
-    y: Math.min(y, screen.getPrimaryDisplay().size.height - 340),
+    width: LOOKUP_WINDOW_WIDTH,
+    height: LOOKUP_WINDOW_HEIGHT,
+    x,
+    y,
     frame: false,
     resizable: false,
     minimizable: false,
@@ -133,13 +160,18 @@ export function createLookupWindow(x: number, y: number): BrowserWindow {
     }
   })
 
-  // Auto-close on focus loss
+  // Auto-close on focus loss — but only after the window has had a chance to
+  // take input focus, otherwise startup jitter closes it immediately.
+  let hasBeenFocused = false
+  window.once('focus', () => {
+    hasBeenFocused = true
+  })
   window.on('blur', () => {
-    window.close()
+    if (hasBeenFocused) window.close()
   })
 
   window.on('closed', () => {
-    lookupWindow = null
+    if (lookupWindow === window) lookupWindow = null
   })
 
   window.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(lookUpHTML))
@@ -150,19 +182,25 @@ export function createLookupWindow(x: number, y: number): BrowserWindow {
   return window
 }
 
+function ensureLookupWindow(cursorX: number, cursorY: number): BrowserWindow {
+  if (lookupWindow && !lookupWindow.isDestroyed()) {
+    return lookupWindow
+  }
+  lookupWindow = createLookupWindow(cursorX, cursorY)
+  return lookupWindow
+}
+
 /* ---- Hotkey handler: capture -> OCR -> AI -> lookup ---- */
 export async function handleHotkeyPressed(): Promise<void> {
   const cursorPos = screen.getCursorScreenPoint()
 
-  // Create lookup immediately for responsive feel
-  if (!lookupWindow || lookupWindow.isDestroyed()) {
-    lookupWindow = createLookupWindow(cursorPos.x + 10, cursorPos.y + 10)
-  }
+  // Create lookup immediately for responsive feel.
+  ensureLookupWindow(cursorPos.x, cursorPos.y)
 
   // 1. Capture region around cursor
   const imageBuffer = await captureRegionAroundCursor()
   if (!imageBuffer) {
-    lookupWindow?.webContents.send('ai-error', 'Failed to capture screen region.')
+    sendToWindow('ai-error', 'Failed to capture screen region.')
     return
   }
 
@@ -172,42 +210,32 @@ export async function handleHotkeyPressed(): Promise<void> {
     ocrText = await runOCR(imageBuffer)
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    lookupWindow?.webContents.send('ai-error', `OCR error: ${msg}`)
+    sendToWindow('ai-error', `OCR error: ${msg}`)
     return
   }
 
-  lookupWindow?.webContents.send('ocr-result', ocrText)
+  sendToWindow('ocr-result', ocrText)
 
   if (!ocrText) {
-    lookupWindow?.webContents.send('ai-error', 'No text detected near cursor.')
+    sendToWindow('ai-error', 'No text detected near cursor.')
     return
   }
 
-  // 3. AI query with extracted text
-  const config = loadProviderConfig()
-  if (!config || !config.apiKey) {
-    lookupWindow?.webContents.send(
-      'ai-error',
-      'No API key configured. Open Settings to add your provider API key.'
-    )
-    return
+  // 3. AI query with extracted text — provider choice is delegated to index.ts.
+  const prompt: ProviderMessage = {
+    role: 'user',
+    content: `The following text was extracted via OCR from the screen near the user's cursor. Please analyze and respond to it:\n\n"${ocrText}"`
   }
 
   try {
-    if (config.provider === 'google-ai-studio') {
-      const prompt = `The following text was extracted via OCR from the screen near the user's cursor. Please analyze and respond to it:\n\n"${ocrText}"`
-      const response = await callGoogleAI(config.apiKey, config.model, [
-        { role: 'user', content: prompt }
-      ])
-      lookupWindow?.webContents.send('ai-response', response)
-    } else {
-      lookupWindow?.webContents.send(
-        'ai-error',
-        `Provider "${config.provider}" is not supported yet.`
-      )
-    }
+    const response = await callProvider([prompt])
+    sendToWindow('ai-response', response)
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    lookupWindow?.webContents.send('ai-error', msg)
+    if (err instanceof NoApiKeyError || err instanceof UnsupportedProviderError) {
+      sendToWindow('ai-error', err.message)
+    } else {
+      const msg = err instanceof Error ? err.message : String(err)
+      sendToWindow('ai-error', msg)
+    }
   }
 }
