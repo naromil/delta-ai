@@ -1,5 +1,5 @@
-appId: io.github.naromil.deltaai.app
-productName: delta-ai
+appId: com.naromil.deltaai
+productName: "Delta AI"
 directories:
   buildResources: build
 files:
@@ -12,7 +12,7 @@ files:
 asarUnpack:
   - resources/**
 win:
-  executableName: delta-ai
+  executableName: DeltaAI
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}
