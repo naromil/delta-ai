@@ -71,9 +71,6 @@ export async function captureRegionAroundCursor(width = 400, height = 150): Prom
   const screenImage = await captureScreenImage(display)
   if (!screenImage || screenImage.isEmpty()) return null
 
-  // Calculate crop region centered on cursor (relative to this display).
-  // The portal screenshot returns pixels in the display's natural coordinate
-  // space, so we apply the scale factor the same way we do for desktopCapturer.
   const scaleFactor = display.scaleFactor || 1
   const relX = cursorPos.x - display.bounds.x
   const relY = cursorPos.y - display.bounds.y
