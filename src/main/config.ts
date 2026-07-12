@@ -30,6 +30,11 @@ export function isWaylandSession(): boolean {
   )
 }
 
+export function isKdeWaylandSession(): boolean {
+  const isKde = !!(process.env['XDG_CURRENT_DESKTOP'] ?? '').match(/\bkde\b/i)
+  return isKde && isWaylandSession()
+}
+
 /* ---- Global shortcut management ---- */
 export let currentHotkey = 'Ctrl+Shift+D'
 

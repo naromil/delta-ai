@@ -1,7 +1,7 @@
 # Delta AI — Architecture
 
 > Auto-generated from source as built. Update after major changes to prevent hallucination.
-> Last updated: 2026-07-08
+> Last updated: 2026-07-11
 
 ## High-level stack
 
@@ -22,6 +22,11 @@ electron.vite.config.ts      # Build orchestration (main/preload/renderer)
 src/
   main/
     index.ts                 # All main-process logic
+    config.ts                # Persistence + Wayland detection + hotkey registry
+    globalShortcutPortal.ts  # XDG GlobalShortcuts D-Bus routing for Wayland
+    screenCapturePortal.ts   # Freedesktop Screenshot D-Bus routing for KDE Wayland
+    lookup.ts                # OCR / screen-capture / AI pipeline + lookup popup
+    lookupHTML.ts            # Inline HTML for the lookup popup window
   preload/
     index.ts                 # contextBridge API exposed to renderer
     index.d.ts               # Type declarations for window.api & window.electron
@@ -51,8 +56,10 @@ Main process
     │  fs read/write config.json + settings.json
     │  fetch → Google Gemini API
     │  tesseract.recognize()
-    │  desktopCapturer.getSources() → NativeImage.toPNG()
-    │  globalShortcut.register()
+    │  captureRegionAroundCursor()
+    │      ├── (KDE Wayland) org.freedesktop.portal.Screenshot  → NativeImage.crop() → .toPNG()
+    │      └── (else)        desktopCapturer.getSources()       → NativeImage.crop() → .toPNG()
+    │  globalShortcut.register() / org.freedesktop.portal.GlobalShortcuts
     │  BrowserWindow (main chat + popup overlay)
     ▼
 OS
@@ -72,7 +79,8 @@ All long-running / privileged code lives in a single file. Key functions:
 - **`callGoogleAI(messages, apiKey, model)`** — `POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`. Returns response text or throws.
 
 ### OCR / screen capture
-- **`captureRegionAroundCursor(width=400, height=150)`** — grabs the primary screen source via `desktopCapturer`, crops a rectangle offset-up from cursor position (50 px below region top), returns PNG `Buffer`.
+- **`captureScreenImage(display)`** (in `lookup.ts`) — fetches the current screen as a `NativeImage` matching `display`. On KDE Plasma Wayland, first tries `org.freedesktop.portal.Screenshot` (interactive=false) through the D-Bus portal (see `src/main/screenCapturePortal.ts`) — silent after one-time consent, avoiding the persistent "choose what to share" prompt that every `desktopCapturer` call shows on Plasma Wayland (and whose "remember my choice" checkbox is broken at the portal-impl level). Falls back to Electron's `desktopCapturer.getSources()` everywhere else — which the user expects on X11 / Windows / macOS, and on non-KDE Wayland compositors whose remember-choice checkbox actually works.
+- **`captureRegionAroundCursor(width=400, height=150)`** — calls `captureScreenImage`, then crops a rectangle centered on the cursor position relative to the display. Uses the source image's own dimensions (`imgW`/`imgH`) so the crop math is robust to either source returning at native or scaled resolution. Returns PNG `Buffer`.
 - **`runOCR(imageBuffer)`** — creates a tesseract worker, calls `recognize(imageBuffer)`, returns concatenated text.
 
 ### Popup overlay
