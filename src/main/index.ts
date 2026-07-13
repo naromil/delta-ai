@@ -6,12 +6,53 @@ import { unregisterGlobalShortcutPortal } from './globalShortcutPortal'
 import { loadProviderConfig, loadAppSettings, registerHotkey } from './config'
 import { handleHotkeyPressed } from './lookup'
 
+/* ---- Electron backend: Wayland window decorations ----
+ * The lookup feature needs the global cursor position
+ * (screen.getCursorScreenPoint()) to know where to OCR and where to pop the
+ * overlay. Wayland forbids clients from reading the global pointer — under a
+ * native Wayland (ozone) backend that call returns (0,0), and no XDG portal
+ * streams *observed* pointer coordinates back to the client
+ * (org.freedesktop.portal.RemoteDesktop only *injects* input; its Notify*
+ * methods are outbound). On KDE Plasma 6 there is also no KWin D-Bus method
+ * that returns the cursor.
+ *
+ * The only thing that exposes a real cursor on KDE Plasma Wayland today is
+ * X11/XQueryPointer, i.e. running Electron under XWayland. That does not
+ * reintroduce the recurring desktopCapturer consent prompt on KDE because the
+ * capture pipeline routes through org.freedesktop.portal.Screenshot (gated on
+ * XDG_SESSION_TYPE, not on the renderer backend), and the global-shortcut path
+ * is D-Bus-based and backend-agnostic. So defaulting to XWayland costs us
+ * nothing in this codebase.
+ *
+ * Users who prefer a native Wayland backend (and who do not rely on the lookup
+ * feature, or who have wired a portal-cursor source in the future) can opt in
+ * with DELTA_AI_WAYLAND=1. */
+app.commandLine.appendSwitch('ozone-platform-hint', 'auto')
+app.commandLine.appendSwitch('enable-features', 'WaylandWindowDecorations')
+
 export interface ProviderMessage {
   role: string
   content: string
 }
 
-/* ---- Google AI ---- */
+export async function callProvider(messages: ProviderMessage[]): Promise<string> {
+  const config = loadProviderConfig()
+  if (!config || !config.apiKey) {
+    throw new NoApiKeyError('No API key configured. Open Settings to add your provider API key.')
+  }
+
+  switch (config.provider) {
+    case 'google-ai-studio':
+      return await callGoogleAI(config.apiKey, config.model, messages)
+    default:
+      throw new UnsupportedProviderError(`Provider "${config.provider}" is not supported yet.`)
+  }
+}
+
+export class NoApiKeyError extends Error {}
+export class UnsupportedProviderError extends Error {}
+
+/* ---- Provider dispatch ---- */
 async function callGoogleAI(
   apiKey: string,
   model: string,
@@ -42,30 +83,50 @@ async function callGoogleAI(
   return text
 }
 
-/* ---- Provider dispatch ---- */
-/**
- * Single entry point for invoking whichever provider is currently configured.
- * Owns provider selection so callers (IPC handlers, lookup) never branch on
- * `config.provider` themselves — they just `callProvider(messages)` and let the
- * user know if the configured provider is not yet wired up.
- */
-export async function callProvider(messages: ProviderMessage[]): Promise<string> {
-  const config = loadProviderConfig()
-  if (!config || !config.apiKey) {
-    throw new NoApiKeyError('No API key configured. Open Settings to add your provider API key.')
-  }
+/* ---- App lifecycle ---- */
+app.whenReady().then(async () => {
+  electronApp.setAppUserModelId('com.naromil.deltaai')
 
-  switch (config.provider) {
-    case 'google-ai-studio':
-      return await callGoogleAI(config.apiKey, config.model, messages)
-    default:
-      throw new UnsupportedProviderError(`Provider "${config.provider}" is not supported yet.`)
-  }
-}
+  app.on('browser-window-created', (_, window) => {
+    optimizer.watchWindowShortcuts(window)
+  })
 
-/** Sentinel error so callers can distinguish missing-config from real failures. */
-export class NoApiKeyError extends Error {}
-export class UnsupportedProviderError extends Error {}
+  ipcMain.handle(
+    'send-message',
+    async (
+      _event,
+      messages: ProviderMessage[]
+    ): Promise<{ success: boolean; response?: string; error?: string }> => {
+      try {
+        const response = await callProvider(messages)
+        return { success: true, response }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        return { success: false, error: msg }
+      }
+    }
+  )
+
+  const settings = loadAppSettings()
+  await registerHotkey(settings.hotkey, handleHotkeyPressed)
+
+  createWindow()
+
+  app.on('activate', function () {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+  })
+})
+
+app.on('will-quit', async () => {
+  globalShortcut.unregisterAll()
+  await unregisterGlobalShortcutPortal()
+})
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') {
+    app.quit()
+  }
+})
 
 /* ---- Main window ---- */
 function createWindow(): void {
@@ -97,51 +158,3 @@ function createWindow(): void {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
 }
-
-/* ---- App lifecycle ---- */
-app.whenReady().then(async () => {
-  electronApp.setAppUserModelId('com.naromil.deltaai')
-
-  app.on('browser-window-created', (_, window) => {
-    optimizer.watchWindowShortcuts(window)
-  })
-
-  /* Chat: send message to configured provider */
-  ipcMain.handle(
-    'send-message',
-    async (
-      _event,
-      messages: ProviderMessage[]
-    ): Promise<{ success: boolean; response?: string; error?: string }> => {
-      try {
-        const response = await callProvider(messages)
-        return { success: true, response }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        return { success: false, error: msg }
-      }
-    }
-  )
-
-  /* Register hotkey on startup */
-  const settings = loadAppSettings()
-  await registerHotkey(settings.hotkey, handleHotkeyPressed)
-
-  createWindow()
-
-  app.on('activate', function () {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
-  })
-})
-
-/* Unregister all shortcuts on quit */
-app.on('will-quit', async () => {
-  globalShortcut.unregisterAll()
-  await unregisterGlobalShortcutPortal()
-})
-
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit()
-  }
-})

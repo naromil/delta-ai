@@ -1,17 +1,45 @@
-export const lookUpHTML = `<!DOCTYPE html>
+/**
+ * Generate the inline HTML for the fullscreen transparent overlay.
+ *
+ * The visible 420x320 panel is positioned at (panelX, panelY) — these are
+ * relative to the overlay's viewport (which covers the active monitor), and
+ * are baked into the CSS so the panel is already in place before any script
+ * runs.  No IPC round-trip needed for positioning.
+ */
+export function buildLookupHTML(panelX: number, panelY: number): string {
+  const px = Math.max(0, panelX) + 'px'
+  const py = Math.max(0, panelY) + 'px'
+
+  return `<!DOCTYPE html>
 <html>
   <head>
     <meta charset="utf-8">
     <style>
       * { box-sizing: border-box; margin: 0; padding: 0; }
-      body {
+      html, body {
+        width: 100vw;
+        height: 100vh;
+        background: transparent;
+        overflow: hidden;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      }
+      /* Fullscreen transparent overlay — the compositor honours its origin
+         (0,0).  The 420x320 popup panel is drawn inside it at the supplied
+         cursor offset so the compositor can never reposition it.  The
+         transparent backdrop passes clicks through to the window underneath;
+         clicks on the panel itself are captured. */
+      #panel {
+        position: absolute;
+        width: 420px;
+        height: 320px;
+        left: ${px};
+        top: ${py};
         background: #1a1a1a;
         color: #e0e0e0;
-        padding: 0;
+        border-radius: 8px;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.5);
         display: flex;
         flex-direction: column;
-        height: 100vh;
         overflow: hidden;
         user-select: text;
       }
@@ -67,45 +95,43 @@ export const lookUpHTML = `<!DOCTYPE html>
         white-space: pre-wrap;
         word-break: break-word;
       }
-      .loading {
-        color: #666;
-        font-style: italic;
-      }
-      .error {
-        color: #ff6b6b;
-      }
+      .loading { color: #666; font-style: italic; }
+      .error   { color: #ff6b6b; }
       .scroll::-webkit-scrollbar { width: 6px; }
       .scroll::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
     </style>
   </head>
   <body>
-    <div class="header">
-      <span>Delta AI</span>
-      <span class="close" onclick="window.close()">✕</span>
-    </div>
-    <div class="content">
-      <div class="section-label">Extracted Text</div>
-      <div id="extracted" class="extracted scroll">Waiting for OCR…</div>
-      <div class="section-label">AI Response</div>
-      <div id="response" class="ai-response scroll"><span class="loading">Waiting for response…</span></div>
+    <div id="panel">
+      <div class="header">
+        <span>Delta AI</span>
+        <span class="close" onclick="window.api.lookupClose()">✕</span>
+      </div>
+      <div class="content">
+        <div class="section-label">Extracted Text</div>
+        <div id="extracted" class="extracted scroll">Waiting for OCR…</div>
+        <div class="section-label">AI Response</div>
+        <div id="response" class="ai-response scroll"><span class="loading">Waiting for response…</span></div>
+      </div>
     </div>
     <script>
-      const { ipcRenderer } = require('electron');
-      ipcRenderer.on('ocr-result', (_e, text) => {
-        const el = document.getElementById('extracted');
-        el.textContent = text || '(No text extracted)';
+      var w = window.api;
+      w.lookupOnOcr(function(text) {
+        document.getElementById('extracted').textContent = text || '(No text extracted)';
       });
-      ipcRenderer.on('ai-response', (_e, response) => {
-        const el = document.getElementById('response');
+      w.lookupOnResponse(function(response) {
+        var el = document.getElementById('response');
         el.innerHTML = '';
+        el.className = 'ai-response scroll';
         el.textContent = response;
       });
-      ipcRenderer.on('ai-error', (_e, err) => {
-        const el = document.getElementById('response');
+      w.lookupOnError(function(err) {
+        var el = document.getElementById('response');
         el.innerHTML = '';
-        el.className = 'ai-response error';
+        el.className = 'ai-response scroll error';
         el.textContent = err;
       });
     </script>
   </body>
 </html>`
+}

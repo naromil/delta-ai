@@ -1,7 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 
-// Custom APIs for renderer
 const api = {
   saveConfig: (config: unknown): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('save-config', config),
@@ -12,12 +11,16 @@ const api = {
     ipcRenderer.invoke('send-message', messages),
   loadSettings: (): Promise<{ hotkey: string }> => ipcRenderer.invoke('load-settings'),
   saveSettings: (settings: { hotkey: string }): Promise<{ success: boolean }> =>
-    ipcRenderer.invoke('save-settings', settings)
+    ipcRenderer.invoke('save-settings', settings),
+
+  /* Lookup-overlay channels (one-way, main → overlay page) */
+  lookupOnOcr: (cb: (text: string) => void) => ipcRenderer.on('ocr-result', (_e, text) => cb(text)),
+  lookupOnResponse: (cb: (response: string) => void) =>
+    ipcRenderer.on('ai-response', (_e, response) => cb(response)),
+  lookupOnError: (cb: (err: string) => void) => ipcRenderer.on('ai-error', (_e, err) => cb(err)),
+  lookupClose: () => ipcRenderer.send('lookup-close')
 }
 
-// Use `contextBridge` APIs to expose Electron APIs to
-// renderer only if context isolation is enabled, otherwise
-// just add to the DOM global.
 if (process.contextIsolated) {
   try {
     contextBridge.exposeInMainWorld('electron', electronAPI)

@@ -11,6 +11,11 @@ declare global {
       ) => Promise<{ success: boolean; response?: string; error?: string }>
       loadSettings: () => Promise<{ hotkey: string }>
       saveSettings: (settings: { hotkey: string }) => Promise<{ success: boolean }>
+      /* Lookup overlay channels (one-way) */
+      lookupOnOcr: (cb: (text: string) => void) => void
+      lookupOnResponse: (cb: (response: string) => void) => void
+      lookupOnError: (cb: (err: string) => void) => void
+      lookupClose: () => void
     }
   }
 }
