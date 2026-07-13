@@ -6,30 +6,6 @@ import { unregisterGlobalShortcutPortal } from './globalShortcutPortal'
 import { loadProviderConfig, loadAppSettings, registerHotkey } from './config'
 import { handleHotkeyPressed } from './lookup'
 
-/* ---- Electron backend: Wayland window decorations ----
- * The lookup feature needs the global cursor position
- * (screen.getCursorScreenPoint()) to know where to OCR and where to pop the
- * overlay. Wayland forbids clients from reading the global pointer — under a
- * native Wayland (ozone) backend that call returns (0,0), and no XDG portal
- * streams *observed* pointer coordinates back to the client
- * (org.freedesktop.portal.RemoteDesktop only *injects* input; its Notify*
- * methods are outbound). On KDE Plasma 6 there is also no KWin D-Bus method
- * that returns the cursor.
- *
- * The only thing that exposes a real cursor on KDE Plasma Wayland today is
- * X11/XQueryPointer, i.e. running Electron under XWayland. That does not
- * reintroduce the recurring desktopCapturer consent prompt on KDE because the
- * capture pipeline routes through org.freedesktop.portal.Screenshot (gated on
- * XDG_SESSION_TYPE, not on the renderer backend), and the global-shortcut path
- * is D-Bus-based and backend-agnostic. So defaulting to XWayland costs us
- * nothing in this codebase.
- *
- * Users who prefer a native Wayland backend (and who do not rely on the lookup
- * feature, or who have wired a portal-cursor source in the future) can opt in
- * with DELTA_AI_WAYLAND=1. */
-app.commandLine.appendSwitch('ozone-platform-hint', 'auto')
-app.commandLine.appendSwitch('enable-features', 'WaylandWindowDecorations')
-
 export interface ProviderMessage {
   role: string
   content: string
@@ -85,7 +61,7 @@ async function callGoogleAI(
 
 /* ---- App lifecycle ---- */
 app.whenReady().then(async () => {
-  electronApp.setAppUserModelId('com.naromil.deltaai')
+  electronApp.setAppUserModelId('com.deltaai')
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)

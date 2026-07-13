@@ -1,4 +1,4 @@
-appId: com.naromil.deltaai
+appId: com.deltaai
 productName: "Delta AI"
 directories:
   buildResources: build

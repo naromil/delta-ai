@@ -1,11 +1,11 @@
 {
   "name": "delta-ai",
-  "desktopName": "com.naromil.deltaai.desktop",
+  "desktopName": "com.deltaai.desktop",
   "version": "1.0.0",
   "description": "A revolutionary AI helper for learning anything.",
   "main": "./out/main/index.js",
   "author": "naromil <nroamli@gmail.com>",
-  "homepage": "https://naromil.github.io/delta-ai/",
+  "homepage": "https://github.com/naromil/delta-ai/",
   "scripts": {
     "format": "prettier --write .",
     "lint": "eslint --cache .",

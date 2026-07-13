@@ -130,29 +130,17 @@ Enforced by ESLint + Prettier config; match what already exists:
   and selects the backend; everyone else (the `send-message` IPC handler, `lookup.ts`)
   calls it and handles the sentinel errors. Don't duplicate the
   `loadProviderConfig()` + `config.provider === ...` branching elsewhere.
-- **The lookup popup is a fullscreen, transparent, always-on-top overlay**
-  created inside `lookup.ts` (not exported). On Wayland the compositor will not
-  let a client absolutely position a top-level window, so `new BrowserWindow({x,y})`
-  and `window.setPosition()` are ignored; instead the overlay covers the active
-  monitor (which the compositor *does* honor) and the visible 420×320 panel is
-  drawn inside it at the cursor's relative offset, baked into the HTML by
-  `buildLookupHTML(panelX, panelY)` (race-free — no `position-popup` IPC). Use
-  `sendToWindow` rather than touching the window ref directly. The overlay HTML
-  loads the shared preload and talks only via `window.api.lookupOn*`.
-- **Cursor source: XWayland by default on Linux.** The lookup feature needs the
-  global pointer position (`screen.getCursorScreenPoint()`). Wayland forbids
-  clients from reading it, so under a native-Wayland (ozone) backend the call
-  returns `(0,0)`, and no XDG portal streams *observed* pointer coordinates
-  (RemoteDesktop only *injects* input; its `Notify*` methods are outbound, and
-  KDE's KWin D-Bus exposes no pointer query). `index.ts` therefore defaults to
-  `--ozone-platform=x11` (XWayland) on Linux, where `getCursorScreenPoint()`
-  returns real coordinates. This does **not** reintroduce the recurring
-  desktopCapturer consent prompt on KDE because capture routes through the
-  Screenshot portal (gated on `XDG_SESSION_TYPE`, not the renderer backend), and
-  the global-shortcut path is D-Bus-based and backend-agnostic. `DELTA_AI_WAYLAND=1`
-  opts into native Wayland for users who don't need the lookup feature. Use
-  `getCursorPos()` in `lookup.ts` (it warns once if it reads origin under the
-  native backend) — do **not** call `screen.getCursorScreenPoint()` directly.
+- **The lookup popup is a normal 420×320 always-on-top `BrowserWindow`**
+  created inside `lookup.ts` (not exported). Position is best-effort near the
+  cursor via `new BrowserWindow({x, y})`; the compositor may center it on
+  Wayland, which is acceptable. Use `sendToWindow` rather than touching the
+  window ref directly. The window loads the shared preload and talks only via
+  `window.api.lookupOn*`.
+- **OCR captures the full screen, not a cropped region around the cursor.**
+  `captureScreen()` grabs the entire display; `runOCR()` processes the whole
+  image. Cursor position may fail on Wayland (`getCursorScreenPoint()` returns
+  `(0,0)`), but the full-screen capture + full-image OCR makes the feature
+  still work regardless.
 - **Portal code is KDE/Wayland-specific by design.** `isScreenCapturePortalPreferred()`
   and `isKdeWaylandSession()` gate it. Keep `desktopCapturer` as the default for
   X11/macOS/Windows and non-KDE Wayland.
