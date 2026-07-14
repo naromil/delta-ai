@@ -38,6 +38,60 @@
   background: var(--chat-hover);
 }
 
+/* Category tabs */
+.settings-categories {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 24px;
+  border-bottom: 1px solid var(--chat-border);
+  padding-bottom: 0;
+}
+
+.settings-category-tab {
+  padding: 10px 16px;
+  border-radius: 8px 8px 0 0;
+  border: 1px solid transparent;
+  border-bottom: none;
+  background: transparent;
+  color: var(--ev-c-text-2);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    color 150ms ease,
+    background 150ms ease,
+    border-color 150ms ease;
+  position: relative;
+  bottom: -1px;
+}
+
+.settings-category-tab:hover {
+  color: var(--ev-c-text-1);
+  background: var(--chat-hover);
+}
+
+.settings-category-tab.active {
+  color: var(--ev-c-text-1);
+  background: var(--chat-bg);
+  border-color: var(--chat-border);
+}
+
+/* Category content with fade animation */
+.settings-content {
+  animation: fadeIn 200ms ease-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 /* Sections */
 .settings-section {
   margin-bottom: 24px;

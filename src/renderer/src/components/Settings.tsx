@@ -20,7 +20,10 @@ interface SettingsProps {
   onBack: () => void
 }
 
+type Category = 'general' | 'providers'
+
 function Settings({ onBack }: SettingsProps): React.JSX.Element {
+  const [activeCategory, setActiveCategory] = useState<Category>('general')
   const [selectedProvider, setSelectedProvider] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [model, setModel] = useState('gemini-3.5-flash')
@@ -115,6 +118,121 @@ function Settings({ onBack }: SettingsProps): React.JSX.Element {
 
   const canSave = selectedProvider !== ''
 
+  const renderCategoryContent = (): React.JSX.Element => {
+    if (activeCategory === 'general') {
+      return (
+        <>
+          {/* ---- Hotkey settings ---- */}
+          <div className="settings-section">
+            <label className="settings-label" htmlFor="hotkey-input">
+              Global Hotkey
+            </label>
+            <div className="hotkey-row">
+              <input
+                id="hotkey-input"
+                type="text"
+                className="settings-input settings-input--hotkey"
+                value={hotkey}
+                readOnly
+                onKeyDown={handleHotkeyKeyDown}
+                onFocus={() => setCapturingHotkey(true)}
+                onBlur={() => setCapturingHotkey(false)}
+                placeholder={capturingHotkey ? 'Press a key combination…' : 'Click to capture…'}
+              />
+            </div>
+            <p className="settings-hint">
+              Click the field, then press a key combination (e.g. Ctrl+Shift+D). Saved via the Save
+              button below.
+            </p>
+          </div>
+        </>
+      )
+    }
+
+    // providers category
+    return (
+      <>
+        {/* ---- Provider selector ---- */}
+        <div className="settings-section">
+          <label className="settings-label" htmlFor="provider-select">
+            API keys
+          </label>
+          <select
+            id="provider-select"
+            className="settings-select"
+            value={selectedProvider}
+            onChange={(e) => {
+              setSelectedProvider(e.target.value)
+              setSaved(false)
+            }}
+          >
+            <option value="" disabled>
+              Select a provider…
+            </option>
+            <option value="google-ai-studio">Google AI Studio</option>
+          </select>
+        </div>
+
+        {/* ---- Provider-specific fields (only Google AI Studio for now) ---- */}
+        {selectedProvider === 'google-ai-studio' && (
+          <div className="settings-section provider-config">
+            <label className="settings-label" htmlFor="api-key-input">
+              API Key
+            </label>
+            <input
+              id="api-key-input"
+              type="password"
+              className="settings-input"
+              value={apiKey}
+              onChange={(e) => {
+                setApiKey(e.target.value)
+                setSaved(false)
+              }}
+              placeholder="Enter your Google AI API key…"
+            />
+
+            <label className="settings-label" htmlFor="model-select">
+              Model
+            </label>
+            <select
+              id="model-select"
+              className="settings-select"
+              value={isCustomModel ? 'Custom...' : model}
+              onChange={(e) => {
+                if (e.target.value === 'Custom...') {
+                  setIsCustomModel(true)
+                } else {
+                  setModel(e.target.value)
+                  setIsCustomModel(false)
+                }
+                setSaved(false)
+              }}
+            >
+              {GOOGLE_MODELS.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+
+            {isCustomModel && (
+              <input
+                type="text"
+                className="settings-input settings-input--custom"
+                value={customModel}
+                onChange={(e) => {
+                  setCustomModel(e.target.value)
+                  setSaved(false)
+                }}
+                placeholder="Enter custom model name…"
+              />
+            )}
+          </div>
+        )}
+      </>
+    )
+  }
+
   return (
     <div className="settings">
       <div className="settings-header">
@@ -132,107 +250,24 @@ function Settings({ onBack }: SettingsProps): React.JSX.Element {
         <h2 className="settings-title">Settings</h2>
       </div>
 
-      {/* ---- Provider selector ---- */}
-      <div className="settings-section">
-        <label className="settings-label" htmlFor="provider-select">
-          API keys
-        </label>
-        <select
-          id="provider-select"
-          className="settings-select"
-          value={selectedProvider}
-          onChange={(e) => {
-            setSelectedProvider(e.target.value)
-            setSaved(false)
-          }}
+      {/* ---- Category tabs ---- */}
+      <div className="settings-categories">
+        <button
+          className={`settings-category-tab ${activeCategory === 'general' ? 'active' : ''}`}
+          onClick={() => setActiveCategory('general')}
         >
-          <option value="" disabled>
-            Select a provider…
-          </option>
-          <option value="google-ai-studio">Google AI Studio</option>
-        </select>
+          General
+        </button>
+        <button
+          className={`settings-category-tab ${activeCategory === 'providers' ? 'active' : ''}`}
+          onClick={() => setActiveCategory('providers')}
+        >
+          Providers
+        </button>
       </div>
 
-      {/* ---- Provider-specific fields (only Google AI Studio for now) ---- */}
-      {selectedProvider === 'google-ai-studio' && (
-        <div className="settings-section provider-config">
-          <label className="settings-label" htmlFor="api-key-input">
-            API Key
-          </label>
-          <input
-            id="api-key-input"
-            type="password"
-            className="settings-input"
-            value={apiKey}
-            onChange={(e) => {
-              setApiKey(e.target.value)
-              setSaved(false)
-            }}
-            placeholder="Enter your Google AI API key…"
-          />
-
-          <label className="settings-label" htmlFor="model-select">
-            Model
-          </label>
-          <select
-            id="model-select"
-            className="settings-select"
-            value={isCustomModel ? 'Custom...' : model}
-            onChange={(e) => {
-              if (e.target.value === 'Custom...') {
-                setIsCustomModel(true)
-              } else {
-                setModel(e.target.value)
-                setIsCustomModel(false)
-              }
-              setSaved(false)
-            }}
-          >
-            {GOOGLE_MODELS.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
-
-          {isCustomModel && (
-            <input
-              type="text"
-              className="settings-input settings-input--custom"
-              value={customModel}
-              onChange={(e) => {
-                setCustomModel(e.target.value)
-                setSaved(false)
-              }}
-              placeholder="Enter custom model name…"
-            />
-          )}
-        </div>
-      )}
-
-      {/* ---- Hotkey settings ---- */}
-      <div className="settings-section">
-        <label className="settings-label" htmlFor="hotkey-input">
-          Global Hotkey
-        </label>
-        <div className="hotkey-row">
-          <input
-            id="hotkey-input"
-            type="text"
-            className="settings-input settings-input--hotkey"
-            value={hotkey}
-            readOnly
-            onKeyDown={handleHotkeyKeyDown}
-            onFocus={() => setCapturingHotkey(true)}
-            onBlur={() => setCapturingHotkey(false)}
-            placeholder={capturingHotkey ? 'Press a key combination…' : 'Click to capture…'}
-          />
-        </div>
-        <p className="settings-hint">
-          Click the field, then press a key combination (e.g. Ctrl+Shift+D). Saved via the Save
-          button below.
-        </p>
-      </div>
+      {/* ---- Category content with animation ---- */}
+      <div className="settings-content">{renderCategoryContent()}</div>
 
       {/* ---- Save ---- */}
       <div className="settings-footer">
