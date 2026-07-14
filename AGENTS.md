@@ -90,6 +90,10 @@ Enforced by ESLint + Prettier config; match what already exists:
   pattern to copy if a third-party API is untyped, rather than scattering `any` around.
 - **Comments**: sparse, purposeful. Use `/* ---- Section ---- */` dividers in main-process
   files (see `index.ts`, `config.ts`). Do not add comments that restate the code.
+- **Function ordering (C-style)**: in any file containing multiple functions or blocks,
+  order them so that **callees appear before callers**.
+  When a caller invokes multiple callees in sequence,
+  order those parallel callees in a **logical and sequential** order.
 - **Imports**: named, grouped loosely by source. Use `import type` for type-only
   imports (see `lookup.ts` importing `ProviderMessage` from `index.ts`).
 - **Error handling**: main-process async functions return cleanly structured error

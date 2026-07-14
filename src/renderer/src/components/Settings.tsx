@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 
+// ---- Types ----
 type Category = 'general' | 'providers'
 
 type ProviderConfig = {
@@ -20,7 +21,7 @@ interface SettingsProps {
   onBack: () => void
 }
 
-/* ---- Google AI Studio models ---- */
+// ---- Constants ----
 const GOOGLE_MODELS = [
   'gemini-3.5-flash',
   'gemini-3.1-pro',
@@ -30,7 +31,22 @@ const GOOGLE_MODELS = [
   'Custom...'
 ] as const
 
+// ---- Real-Time Key Pressed Rendering ----
+function renderCombo(e: React.KeyboardEvent<HTMLInputElement>): string {
+  const parts: string[] = []
+  if (e.ctrlKey) parts.push('Ctrl')
+  if (e.altKey) parts.push('Alt')
+  if (e.shiftKey) parts.push('Shift')
+  if (e.metaKey) parts.push('Meta')
+  const key = e.key
+  if (!['Control', 'Alt', 'Shift', 'Meta'].includes(key)) {
+    parts.push(key.length === 1 ? key.toUpperCase() : key)
+  }
+  return parts.join('+')
+}
+
 function Settings({ onBack }: SettingsProps): React.JSX.Element {
+  // ---- State declarations ----
   const [activeCategory, setActiveCategory] = useState<Category>('general')
   const [selectedProvider, setSelectedProvider] = useState('')
   const [apiKey, setApiKey] = useState('')
@@ -44,19 +60,18 @@ function Settings({ onBack }: SettingsProps): React.JSX.Element {
   const [capturingHotkey, setCapturingHotkey] = useState(false)
   const hotkeyRef = useRef(hotkey)
 
-  // Cache for all provider configs; persisted to disk only on Save.
   const cacheRef = useRef<AllProvidersConfig>({
     currentProvider: '',
     providers: {}
   })
 
-  /* Resolve the effective model string for a given provider from form state */
+  // ---- Return the correct model name for save ----
   const resolveModel = (provider: string): string => {
     if (provider === 'google-ai-studio' && !isCustomModel) return model
     return customModel.trim()
   }
 
-  /* Write the current form state back into the cache under the active provider */
+  // ---- Cache Management ----
   const flushToCache = (): void => {
     const provider = selectedProvider
     if (!provider) return
@@ -69,7 +84,6 @@ function Settings({ onBack }: SettingsProps): React.JSX.Element {
     cacheRef.current.providers[provider as keyof typeof cacheRef.current.providers] = entry
   }
 
-  /* Load form state from a cached provider entry */
   const loadFromCache = (provider: string): void => {
     const providers = cacheRef.current.providers as Record<string, ProviderConfig | undefined>
     const entry = providers[provider]
@@ -100,6 +114,46 @@ function Settings({ onBack }: SettingsProps): React.JSX.Element {
     }
   }
 
+  const handleSave = async (): Promise<void> => {
+    setSaving(true)
+    // Flush the currently-edited provider into the cache first
+    flushToCache()
+    cacheRef.current.currentProvider = selectedProvider
+
+    const allConfig = cacheRef.current
+    const saveCfgProm = window.api.saveAllProviders(allConfig)
+    const saveSettingsProm = window.api.saveSettings({ hotkey: hotkeyRef.current })
+    const [cfgRes] = await Promise.all([saveCfgProm, saveSettingsProm])
+    setSaving(false)
+    if (cfgRes.success) {
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } else {
+      alert('Failed to save configuration.')
+    }
+  }
+
+  // ---- Hotkey capture ----
+  const handleHotkeyKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
+    if (!capturingHotkey) return
+    e.preventDefault()
+    e.stopPropagation()
+    const combo = renderCombo(e)
+    if (combo) {
+      hotkeyRef.current = combo
+      setHotkey(combo)
+    }
+  }
+
+  // ---- Event handlers ----
+  const switchProvider = (provider: string): void => {
+    // Stash the current provider's form state before swapping
+    flushToCache()
+    setSelectedProvider(provider)
+    setSaved(false)
+    loadFromCache(provider)
+  }
+
   /* load existing config + settings on mount */
   useEffect(() => {
     window.api.loadAllProviders().then((allCfg) => {
@@ -124,65 +178,9 @@ function Settings({ onBack }: SettingsProps): React.JSX.Element {
     })
   }, [])
 
-  /* ---- Hotkey capture mode ----
-   * Clicking the hotkey input toggles capture. While capturing, keystrokes
-   * are translated into Electron accelerator format and stored in `hotkey`.
-   * Normal text editing is disabled via readOnly.
-   */
-  const renderCombo = (e: React.KeyboardEvent<HTMLInputElement>): string => {
-    const parts: string[] = []
-    if (e.ctrlKey) parts.push('Ctrl')
-    if (e.altKey) parts.push('Alt')
-    if (e.shiftKey) parts.push('Shift')
-    if (e.metaKey) parts.push('Meta')
-    const key = e.key
-    // Ignore lone modifiers — wait for a full combo
-    if (!['Control', 'Alt', 'Shift', 'Meta'].includes(key)) {
-      parts.push(key.length === 1 ? key.toUpperCase() : key)
-    }
-    return parts.join('+')
-  }
-
-  const handleHotkeyKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
-    if (!capturingHotkey) return
-    e.preventDefault()
-    e.stopPropagation()
-    const combo = renderCombo(e)
-    if (combo) {
-      hotkeyRef.current = combo
-      setHotkey(combo)
-    }
-  }
-
-  const switchProvider = (provider: string): void => {
-    // Stash the current provider's form state before swapping
-    flushToCache()
-    setSelectedProvider(provider)
-    setSaved(false)
-    loadFromCache(provider)
-  }
-
-  const handleSave = async (): Promise<void> => {
-    setSaving(true)
-    // Flush the currently-edited provider into the cache first
-    flushToCache()
-    cacheRef.current.currentProvider = selectedProvider
-
-    const allConfig = cacheRef.current
-    const saveCfgProm = window.api.saveAllProviders(allConfig)
-    const saveSettingsProm = window.api.saveSettings({ hotkey: hotkeyRef.current })
-    const [cfgRes] = await Promise.all([saveCfgProm, saveSettingsProm])
-    setSaving(false)
-    if (cfgRes.success) {
-      setSaved(true)
-      setTimeout(() => setSaved(false), 2000)
-    } else {
-      alert('Failed to save configuration.')
-    }
-  }
-
   const canSave = selectedProvider !== ''
 
+  // ---- Render a category on switch ----
   const renderCategoryContent = (): React.JSX.Element => {
     if (activeCategory === 'general') {
       return (
