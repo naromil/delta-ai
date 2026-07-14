@@ -1,7 +1,7 @@
 # AGENTS.md
 
 Guidance for AI coding agents (and humans pairing with them) working on Delta AI.
-Reflects the **actual current codebase**. `ARCHITECTURE.md` may lag behind; when they
+Reflects the **actual current codebase**. `docs/architecture.md` may lag behind; when they
 disagree, the source in `src/` wins.
 
 ## Project at a glance
@@ -14,7 +14,7 @@ Delta AI is an Electron desktop app (BYOK) that:
 - Targets Linux (X11 and KDE Plasma Wayland are first-class), with macOS/Windows as
   secondary targets.
 
-See `README.md` for the product vision and `ARCHITECTURE.md` for a data-flow diagram.
+See `README.md` for the product vision and `docs/architecture.md` for a data-flow diagram.
 
 ## Build, typecheck, lint
 
@@ -57,7 +57,7 @@ main (cjs), preload (cjs), renderer (esm + HTML + CSS).
 
 ### Why the main process is split across files
 
-The older `ARCHITECTURE.md` describes a single `src/main/index.ts` holding everything.
+The older `docs/architecture.md` describes a single `src/main/index.ts` holding everything.
 That is **stale** — the process is now split by concern:
 
 - `index.ts` — app lifecycle, main chat window, `callProvider` (provider dispatch) and
@@ -109,7 +109,7 @@ Enforced by ESLint + Prettier config; match what already exists:
 - File extension `.tsx`. Components are function components returning `React.JSX.Element`
   (see `App.tsx:13`). No prop types file — inline `type` aliases.
 - Styling is plain CSS in `assets/main.css` / `assets/base.css`, using the `:root`
-  CSS variables documented in `ARCHITECTURE.md`. Do not introduce CSS-in-JS or Tailwind
+  CSS variables documented in `docs/architecture.md`. Do not introduce CSS-in-JS or Tailwind
   without discussion.
 - Keep the renderer thin: it talks only to `window.api`. privileged work belongs in the
   main process.
@@ -166,11 +166,11 @@ Enforced by ESLint + Prettier config; match what already exists:
 - Don't import Electron main APIs into the renderer; use the preload bridge.
 - Don't commit secrets. Provider API keys live only in `{userData}/config/providers.json`
   on the user's machine — never in source.
-- Don't update `ARCHITECTURE.md` description sections without also checking the source;
+- Don't update `docs/architecture.md` description sections without also checking the source;
   it is intentionally kept high-level but should not contradict `src/`.
 
 ## Updating this file
 
 When the architecture changes meaningfully (new module split, new IPC channels, new
-provider, new window), update both this file **and** `ARCHITECTURE.md`. This file is the
+provider, new window), update both this file **and** `docs/architecture.md`. This file is the
 source that agents read first; keep it accurate.
