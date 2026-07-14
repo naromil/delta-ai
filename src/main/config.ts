@@ -1,21 +1,27 @@
 import { join } from 'path'
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'fs'
-import { app, ipcMain } from 'electron'
-
-/* ---- Types ---- */
-export interface ProviderConfig {
-  provider: string
-  apiKey: string
-  model: string
-}
-
-export interface AppSettings {
-  hotkey: string
-}
-
-import { globalShortcut } from 'electron'
+import { app, ipcMain, globalShortcut } from 'electron'
 import { registerGlobalShortcutPortal } from './globalShortcutPortal'
 import { handleHotkeyPressed } from './lookup'
+
+/* ---- Types ---- */
+interface ProviderConfig {
+  apiKey: string
+  model: string
+  baseUrl?: string
+}
+
+interface AllProvidersConfig {
+  currentProvider: string
+  providers: {
+    'google-ai-studio'?: ProviderConfig
+    'openai-compatible'?: ProviderConfig
+  }
+}
+
+interface AppSettings {
+  hotkey: string
+}
 
 /* ---- Wayland detection ----
  * On a native Wayland session (KDE Plasma, GNOME) Electron's `globalShortcut`
@@ -64,23 +70,6 @@ export async function registerHotkey(accelerator: string, onPressed: () => void)
 
   return success
 }
-export function ensureConfigDir(): string {
-  const configDir = join(app.getPath('userData'), 'config')
-  if (!existsSync(configDir)) mkdirSync(configDir, { recursive: true })
-  return configDir
-}
-
-export function loadProviderConfig(): ProviderConfig | null {
-  try {
-    const configPath = join(app.getPath('userData'), 'config', 'providers.json')
-    if (existsSync(configPath)) {
-      return JSON.parse(readFileSync(configPath, 'utf-8')) as ProviderConfig
-    }
-  } catch {
-    // ignore
-  }
-  return null
-}
 
 export function loadAppSettings(): AppSettings {
   const defaults: AppSettings = { hotkey: 'Ctrl+Shift+D' }
@@ -96,6 +85,12 @@ export function loadAppSettings(): AppSettings {
   return defaults
 }
 
+function ensureConfigDir(): string {
+  const configDir = join(app.getPath('userData'), 'config')
+  if (!existsSync(configDir)) mkdirSync(configDir, { recursive: true })
+  return configDir
+}
+
 export function saveAppSettings(settings: AppSettings): boolean {
   try {
     const configDir = ensureConfigDir()
@@ -106,36 +101,32 @@ export function saveAppSettings(settings: AppSettings): boolean {
   }
 }
 
+export function loadProviderConfig(): AllProvidersConfig | null {
+  try {
+    const configPath = join(app.getPath('userData'), 'config', 'providers.json')
+    if (existsSync(configPath)) {
+      return JSON.parse(readFileSync(configPath, 'utf-8')) as AllProvidersConfig
+    }
+  } catch {
+    // ignore
+  }
+  return null
+}
+
+export function loadCurrentProviderConfig(): (ProviderConfig & { provider: string }) | null {
+  const allConfig = loadProviderConfig()
+  if (!allConfig || !allConfig.currentProvider) return null
+
+  const provider = allConfig.currentProvider
+  const providerConfig = allConfig.providers[provider as keyof typeof allConfig.providers]
+
+  if (!providerConfig) return null
+
+  return { provider, ...providerConfig }
+}
+
 app.whenReady().then(() => {
-  /* Config save/load (provider) */
-  ipcMain.handle('save-config', (_event, config: unknown): { success: boolean } => {
-    try {
-      const configDir = ensureConfigDir()
-      const configPath = join(configDir, 'providers.json')
-      writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8')
-      return { success: true }
-    } catch {
-      return { success: false }
-    }
-  })
-
-  ipcMain.handle('load-config', (): unknown => {
-    try {
-      const configPath = join(app.getPath('userData'), 'config', 'providers.json')
-      if (existsSync(configPath)) {
-        return JSON.parse(readFileSync(configPath, 'utf-8'))
-      }
-    } catch {
-      // return null on error
-    }
-    return null
-  })
-
   /* Settings (hotkey) */
-  ipcMain.handle('load-settings', (): AppSettings => {
-    return loadAppSettings()
-  })
-
   ipcMain.handle(
     'save-settings',
     async (_event, settings: AppSettings): Promise<{ success: boolean }> => {
@@ -147,4 +138,102 @@ app.whenReady().then(() => {
       return { success: ok }
     }
   )
+
+  ipcMain.handle('load-settings', (): AppSettings => {
+    return loadAppSettings()
+  })
+
+  /* Config save/load (provider) */
+  ipcMain.handle(
+    'save-config',
+    (
+      _event,
+      config: { provider: string; apiKey: string; model: string; baseUrl?: string }
+    ): { success: boolean } => {
+      try {
+        const configDir = ensureConfigDir()
+        const configPath = join(configDir, 'providers.json')
+
+        // Load existing config or create new structure
+        let allConfig: AllProvidersConfig = {
+          currentProvider: config.provider,
+          providers: {}
+        }
+
+        if (existsSync(configPath)) {
+          const parsed = JSON.parse(
+            readFileSync(configPath, 'utf-8')
+          ) as Partial<AllProvidersConfig>
+          allConfig = {
+            currentProvider: parsed.currentProvider ?? config.provider,
+            providers: parsed.providers ?? {}
+          }
+        }
+
+        // Update the specific provider's config
+        allConfig.providers[config.provider as keyof typeof allConfig.providers] = {
+          apiKey: config.apiKey,
+          model: config.model,
+          ...(config.baseUrl ? { baseUrl: config.baseUrl } : {})
+        }
+
+        // Update current provider
+        allConfig.currentProvider = config.provider
+
+        writeFileSync(configPath, JSON.stringify(allConfig, null, 2), 'utf-8')
+
+        return { success: true }
+      } catch (error) {
+        console.log('Failed to save providers.json: ', error)
+        return { success: false }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'save-all-providers',
+    (_event, config: AllProvidersConfig): { success: boolean } => {
+      try {
+        const configDir = ensureConfigDir()
+        const configPath = join(configDir, 'providers.json')
+        writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8')
+        return { success: true }
+      } catch (error) {
+        console.log('Failed to save providers.json: ', error)
+        return { success: false }
+      }
+    }
+  )
+
+  ipcMain.handle('load-config', (): unknown => {
+    try {
+      const configPath = join(app.getPath('userData'), 'config', 'providers.json')
+      if (existsSync(configPath)) {
+        const allConfig = JSON.parse(readFileSync(configPath, 'utf-8')) as AllProvidersConfig
+        // Return the current provider's config merged with provider name
+        const provider = allConfig.currentProvider
+        const providerConfig = allConfig.providers[provider as keyof typeof allConfig.providers]
+        if (providerConfig) {
+          return { provider, ...providerConfig }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load providers.json: ', error)
+      // return null on error
+    }
+    return null
+  })
+
+  ipcMain.handle('load-all-providers', (): unknown => {
+    try {
+      const configPath = join(app.getPath('userData'), 'config', 'providers.json')
+      if (existsSync(configPath)) {
+        return JSON.parse(readFileSync(configPath, 'utf-8')) as AllProvidersConfig
+      }
+    } catch (error) {
+      console.warn('Failed to load providers.json: ', error)
+      // return null on error
+    }
+    return null
+  })
 })

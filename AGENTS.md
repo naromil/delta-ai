@@ -112,17 +112,17 @@ Enforced by ESLint + Prettier config; match what already exists:
 
 ## Key modules (what to touch when)
 
-| Task                                       | File                            |
-| ------------------------------------------ | ------------------------------- |
-| Add an AI provider                         | `index.ts` (`callProvider` switch) |
-| Change the OCR/capture pipeline            | `lookup.ts`                    |
-| Re-position / restyle the lookup popup     | `lookup.ts` + `lookupHTML.ts`   |
-| Persist or load user config/settings       | `config.ts`                    |
-| Wayland global-shortcut binding           | `globalShortcutPortal.ts`       |
-| KDE Wayland silent screenshot              | `screenCapturePortal.ts`        |
-| Renderer chat UI                          | `src/renderer/src/App.tsx`      |
-| Settings form                              | `src/renderer/src/components/Settings.tsx` |
-| Add a new IPC channel                      | preload `index.ts` + `.d.ts`, then main `index.ts`/`config.ts` |
+| Task                                   | File                                                           |
+| -------------------------------------- | -------------------------------------------------------------- |
+| Add an AI provider                     | `index.ts` (`callProvider` switch)                             |
+| Change the OCR/capture pipeline        | `lookup.ts`                                                    |
+| Re-position / restyle the lookup popup | `lookup.ts` + `lookupHTML.ts`                                  |
+| Persist or load user config/settings   | `config.ts`                                                    |
+| Wayland global-shortcut binding        | `globalShortcutPortal.ts`                                      |
+| KDE Wayland silent screenshot          | `screenCapturePortal.ts`                                       |
+| Renderer chat UI                       | `src/renderer/src/App.tsx`                                     |
+| Settings form                          | `src/renderer/src/components/Settings.tsx`                     |
+| Add a new IPC channel                  | preload `index.ts` + `.d.ts`, then main `index.ts`/`config.ts` |
 
 ## Conventions worth remembering
 
@@ -154,11 +154,6 @@ Enforced by ESLint + Prettier config; match what already exists:
 - **`path` vs `path/posix`**: `config.ts` uses `path`, `lookup.ts` uses `path/posix`. The
   tesseract cache path build uses `path/posix` deliberately — match the existing import
   in the file you're editing.
-- **Function ordering in `lookup.ts`**: `handleHotkeyPressed` (the entry-point) comes
-  first. Functions it calls follow in the order they are first called, recursively.
-  Module state (constants, `let` vars) comes at the top. Use section comments
-  (`/* ---- Section ---- */`) sparingly to group related blocks. This ordering makes
-  the hotkey pipeline readable top-to-bottom without forward references.
 
 ## Do not
 

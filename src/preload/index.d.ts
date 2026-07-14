@@ -5,7 +5,9 @@ declare global {
     electron: ElectronAPI
     api: {
       saveConfig: (config: unknown) => Promise<{ success: boolean }>
+      saveAllProviders: (config: unknown) => Promise<{ success: boolean }>
       loadConfig: () => Promise<unknown>
+      loadAllProviders: () => Promise<unknown>
       sendMessage: (
         messages: Array<{ role: string; content: string }>
       ) => Promise<{ success: boolean; response?: string; error?: string }>

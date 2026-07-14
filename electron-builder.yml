@@ -1,5 +1,5 @@
 appId: com.deltaai
-productName: "Delta AI"
+productName: 'Delta AI'
 directories:
   buildResources: build
 files:

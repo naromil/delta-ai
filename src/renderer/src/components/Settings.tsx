@@ -1,5 +1,25 @@
 import { useState, useEffect, useRef } from 'react'
 
+type Category = 'general' | 'providers'
+
+type ProviderConfig = {
+  apiKey: string
+  model: string
+  baseUrl?: string
+}
+
+type AllProvidersConfig = {
+  currentProvider: string
+  providers: {
+    'google-ai-studio'?: ProviderConfig
+    'openai-compatible'?: ProviderConfig
+  }
+}
+
+interface SettingsProps {
+  onBack: () => void
+}
+
 /* ---- Google AI Studio models ---- */
 const GOOGLE_MODELS = [
   'gemini-3.5-flash',
@@ -10,22 +30,11 @@ const GOOGLE_MODELS = [
   'Custom...'
 ] as const
 
-type ProviderConfig = {
-  provider: string
-  apiKey: string
-  model: string
-}
-
-interface SettingsProps {
-  onBack: () => void
-}
-
-type Category = 'general' | 'providers'
-
 function Settings({ onBack }: SettingsProps): React.JSX.Element {
   const [activeCategory, setActiveCategory] = useState<Category>('general')
   const [selectedProvider, setSelectedProvider] = useState('')
   const [apiKey, setApiKey] = useState('')
+  const [baseUrl, setBaseUrl] = useState('')
   const [model, setModel] = useState('gemini-3.5-flash')
   const [customModel, setCustomModel] = useState('')
   const [isCustomModel, setIsCustomModel] = useState(false)
@@ -35,26 +44,75 @@ function Settings({ onBack }: SettingsProps): React.JSX.Element {
   const [capturingHotkey, setCapturingHotkey] = useState(false)
   const hotkeyRef = useRef(hotkey)
 
-  /* load existing config + settings on mount */
-  useEffect(() => {
-    window.api.loadConfig().then((cfg) => {
-      if (!cfg || typeof cfg !== 'object') return
-      const c = cfg as Record<string, unknown>
-      if (typeof c.provider === 'string' && c.provider) {
-        setSelectedProvider(c.provider)
-      }
-      if (typeof c.apiKey === 'string' && c.apiKey) {
-        setApiKey(c.apiKey)
-      }
-      if (typeof c.model === 'string' && c.model) {
+  // Cache for all provider configs; persisted to disk only on Save.
+  const cacheRef = useRef<AllProvidersConfig>({
+    currentProvider: '',
+    providers: {}
+  })
+
+  /* Resolve the effective model string for a given provider from form state */
+  const resolveModel = (provider: string): string => {
+    if (provider === 'google-ai-studio' && !isCustomModel) return model
+    return customModel.trim()
+  }
+
+  /* Write the current form state back into the cache under the active provider */
+  const flushToCache = (): void => {
+    const provider = selectedProvider
+    if (!provider) return
+    const finalModel = resolveModel(provider)
+    const entry: ProviderConfig = {
+      apiKey,
+      model: finalModel,
+      ...(provider === 'openai-compatible' && baseUrl ? { baseUrl } : {})
+    }
+    cacheRef.current.providers[provider as keyof typeof cacheRef.current.providers] = entry
+  }
+
+  /* Load form state from a cached provider entry */
+  const loadFromCache = (provider: string): void => {
+    const providers = cacheRef.current.providers as Record<string, ProviderConfig | undefined>
+    const entry = providers[provider]
+
+    setApiKey('')
+    setBaseUrl('')
+    setModel('gemini-3.5-flash')
+    setCustomModel('')
+    setIsCustomModel(false)
+
+    if (!entry) return
+    if (entry.apiKey) setApiKey(entry.apiKey)
+    if (entry.baseUrl) setBaseUrl(entry.baseUrl)
+    if (entry.model) {
+      if (provider === 'google-ai-studio') {
         const known = (GOOGLE_MODELS as readonly string[]).slice(0, -1)
-        if (known.includes(c.model)) {
-          setModel(c.model)
+        if (known.includes(entry.model)) {
+          setModel(entry.model)
           setIsCustomModel(false)
         } else {
-          setCustomModel(c.model)
+          setCustomModel(entry.model)
           setIsCustomModel(true)
         }
+      } else {
+        setCustomModel(entry.model)
+        setIsCustomModel(true)
+      }
+    }
+  }
+
+  /* load existing config + settings on mount */
+  useEffect(() => {
+    window.api.loadAllProviders().then((allCfg) => {
+      if (!allCfg || typeof allCfg !== 'object') return
+      const all = allCfg as AllProvidersConfig
+      cacheRef.current = {
+        currentProvider: all.currentProvider ?? '',
+        providers: all.providers ?? {}
+      }
+
+      if (cacheRef.current.currentProvider) {
+        setSelectedProvider(cacheRef.current.currentProvider)
+        loadFromCache(cacheRef.current.currentProvider)
       }
     })
 
@@ -96,15 +154,22 @@ function Settings({ onBack }: SettingsProps): React.JSX.Element {
     }
   }
 
+  const switchProvider = (provider: string): void => {
+    // Stash the current provider's form state before swapping
+    flushToCache()
+    setSelectedProvider(provider)
+    setSaved(false)
+    loadFromCache(provider)
+  }
+
   const handleSave = async (): Promise<void> => {
     setSaving(true)
-    const finalModel = isCustomModel ? customModel.trim() : model
-    const config: ProviderConfig = {
-      provider: selectedProvider,
-      apiKey,
-      model: finalModel
-    }
-    const saveCfgProm = window.api.saveConfig(config)
+    // Flush the currently-edited provider into the cache first
+    flushToCache()
+    cacheRef.current.currentProvider = selectedProvider
+
+    const allConfig = cacheRef.current
+    const saveCfgProm = window.api.saveAllProviders(allConfig)
     const saveSettingsProm = window.api.saveSettings({ hotkey: hotkeyRef.current })
     const [cfgRes] = await Promise.all([saveCfgProm, saveSettingsProm])
     setSaving(false)
@@ -161,19 +226,17 @@ function Settings({ onBack }: SettingsProps): React.JSX.Element {
             id="provider-select"
             className="settings-select"
             value={selectedProvider}
-            onChange={(e) => {
-              setSelectedProvider(e.target.value)
-              setSaved(false)
-            }}
+            onChange={(e) => switchProvider(e.target.value)}
           >
             <option value="" disabled>
               Select a provider…
             </option>
             <option value="google-ai-studio">Google AI Studio</option>
+            <option value="openai-compatible">OpenAI Compatible</option>
           </select>
         </div>
 
-        {/* ---- Provider-specific fields (only Google AI Studio for now) ---- */}
+        {/* ---- Provider-specific fields ---- */}
         {selectedProvider === 'google-ai-studio' && (
           <div className="settings-section provider-config">
             <label className="settings-label" htmlFor="api-key-input">
@@ -219,6 +282,7 @@ function Settings({ onBack }: SettingsProps): React.JSX.Element {
               <input
                 type="text"
                 className="settings-input settings-input--custom"
+                spellCheck="false"
                 value={customModel}
                 onChange={(e) => {
                   setCustomModel(e.target.value)
@@ -227,6 +291,57 @@ function Settings({ onBack }: SettingsProps): React.JSX.Element {
                 placeholder="Enter custom model name…"
               />
             )}
+          </div>
+        )}
+
+        {selectedProvider === 'openai-compatible' && (
+          <div className="settings-section provider-config">
+            <label className="settings-label" htmlFor="api-key-input">
+              API Key
+            </label>
+            <input
+              id="api-key-input"
+              type="password"
+              className="settings-input"
+              value={apiKey}
+              onChange={(e) => {
+                setApiKey(e.target.value)
+                setSaved(false)
+              }}
+              placeholder="Enter your API key…"
+            />
+
+            <label className="settings-label" htmlFor="base-url-input">
+              Base URL
+            </label>
+            <input
+              id="base-url-input"
+              type="text"
+              className="settings-input"
+              spellCheck="false"
+              value={baseUrl}
+              onChange={(e) => {
+                setBaseUrl(e.target.value)
+                setSaved(false)
+              }}
+              placeholder="https://api.example.com/v1"
+            />
+
+            <label className="settings-label" htmlFor="model-input">
+              Model
+            </label>
+            <input
+              id="model-input"
+              type="text"
+              className="settings-input"
+              spellCheck="false"
+              value={customModel}
+              onChange={(e) => {
+                setCustomModel(e.target.value)
+                setSaved(false)
+              }}
+              placeholder="Enter model ID (e.g. gpt-4)"
+            />
           </div>
         )}
       </>

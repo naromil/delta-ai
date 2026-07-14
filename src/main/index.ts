@@ -3,7 +3,7 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { unregisterGlobalShortcutPortal } from './globalShortcutPortal'
-import { loadProviderConfig, loadAppSettings, registerHotkey } from './config'
+import { loadCurrentProviderConfig, loadAppSettings, registerHotkey } from './config'
 import { handleHotkeyPressed } from './lookup'
 
 export interface ProviderMessage {
@@ -12,14 +12,24 @@ export interface ProviderMessage {
 }
 
 export async function callProvider(messages: ProviderMessage[]): Promise<string> {
-  const config = loadProviderConfig()
+  const config = loadCurrentProviderConfig()
   if (!config || !config.apiKey) {
     throw new NoApiKeyError('No API key configured. Open Settings to add your provider API key.')
   }
 
   switch (config.provider) {
     case 'google-ai-studio':
-      return await callGoogleAI(config.apiKey, config.model, messages)
+      return await callOpenAICompatible(
+        config.apiKey,
+        config.model,
+        messages,
+        'https://generativelanguage.googleapis.com/v1beta'
+      )
+    case 'openai-compatible':
+      if (!config.baseUrl) {
+        throw new NoApiKeyError('Base URL is required for OpenAI Compatible provider.')
+      }
+      return await callOpenAICompatible(config.apiKey, config.model, messages, config.baseUrl)
     default:
       throw new UnsupportedProviderError(`Provider "${config.provider}" is not supported yet.`)
   }
@@ -29,22 +39,25 @@ export class NoApiKeyError extends Error {}
 export class UnsupportedProviderError extends Error {}
 
 /* ---- Provider dispatch ---- */
-async function callGoogleAI(
+async function callOpenAICompatible(
   apiKey: string,
   model: string,
-  messages: ProviderMessage[]
+  messages: ProviderMessage[],
+  baseUrl: string
 ): Promise<string> {
-  const contents = messages.map((m) => ({
-    role: m.role === 'user' ? 'user' : 'model',
-    parts: [{ text: m.content }]
-  }))
-
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
+  const normalizedBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl
+  const url = `${normalizedBaseUrl}/chat/completions`
 
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ contents })
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model,
+      messages
+    })
   })
 
   if (!res.ok) {
@@ -53,9 +66,7 @@ async function callGoogleAI(
   }
 
   const data = await res.json()
-  const text: string =
-    data?.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text).join('') ??
-    '(No response received)'
+  const text: string = data?.choices?.[0]?.message?.content ?? '(No response received)'
   return text
 }
 

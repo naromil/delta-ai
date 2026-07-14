@@ -14,119 +14,8 @@ const LOOKUP_WINDOW_CURSOR_OFFSET = 10
 let tesseractWorker: any = null
 let lookupWindow: BrowserWindow | null = null
 
-/* ---- Entry-point ---- */
-/** Hotkey handler: capture -> OCR -> AI -> lookup. */
-export async function handleHotkeyPressed(): Promise<void> {
-  const cursorPos = screen.getCursorScreenPoint()
-
-  // 1. Capture the screen (full, no crop)
-  const imageBuffer = await captureScreen()
-  if (!imageBuffer) {
-    lookupWindow = ensureLookupWindow(cursorPos.x, cursorPos.y)
-    sendToWindow('ai-error', 'Failed to capture the screen.')
-    return
-  }
-
-  // 2. Create the popup before OCR for responsiveness
-  lookupWindow = ensureLookupWindow(cursorPos.x, cursorPos.y)
-
-  // 3. OCR
-  let ocrText = ''
-  try {
-    ocrText = await runOCR(imageBuffer)
-  } catch (err) {
-    lookupWindow = ensureLookupWindow(cursorPos.x, cursorPos.y)
-    const msg = err instanceof Error ? err.message : String(err)
-    sendToWindow('ai-error', `OCR error: ${msg}`)
-    return
-  }
-
-  sendToWindow('ocr-result', ocrText)
-
-  if (!ocrText) {
-    sendToWindow('ai-error', 'No text detected on screen.')
-    return
-  }
-
-  // 4. Ask the AI about the text. index.ts picks the provider.
-  const prompt: ProviderMessage = {
-    role: 'explainer',
-    content: `The following text was extracted via OCR from the screen near the user's cursor. Please analyze and explain it:\n\n"${ocrText}"`
-  }
-
-  try {
-    const response = await callProvider([prompt])
-    sendToWindow('ai-response', response)
-  } catch (err) {
-    if (err instanceof NoApiKeyError || err instanceof UnsupportedProviderError) {
-      sendToWindow('ai-error', err.message)
-    } else {
-      const msg = err instanceof Error ? err.message : String(err)
-      sendToWindow('ai-error', msg)
-    }
-  }
-}
-
-/* ---- Screen capture ---- */
-async function captureScreen(): Promise<Buffer | null> {
-  const cursorPos = screen.getCursorScreenPoint()
-  const display = screen.getDisplayNearestPoint(cursorPos)
-
-  const image = await captureScreenImage(display)
-  if (!image || image.isEmpty()) return null
-  return image.toPNG()
-}
-
-async function captureScreenImage(display: Electron.Display): Promise<Electron.NativeImage | null> {
-  if (isScreenCapturePortalPreferred()) {
-    const portalPng = await captureScreenViaPortal()
-    if (portalPng && portalPng.length > 0) {
-      const img = nativeImage.createFromBuffer(portalPng)
-      if (!img.isEmpty()) return img
-    }
-  }
-
-  const sources = await desktopCapturer.getSources({
-    types: ['screen'],
-    thumbnailSize: { width: display.size.width, height: display.size.height }
-  })
-
-  const source = sources.find((s) => s.display_id === String(display.id)) ?? sources[0]
-  if (!source) return null
-
-  const thumb = source.thumbnail
-  if (thumb.isEmpty()) return null
-  return thumb
-}
-
-/* ---- OCR ---- */
-export async function runOCR(imageBuffer: Buffer): Promise<string> {
-  const Tesseract = await import('tesseract.js')
-
-  if (!tesseractWorker) {
-    tesseractWorker = await Tesseract.createWorker('eng', 1, {
-      cachePath: join(app.getPath('userData'), 'tesseract-cache'),
-      logger: () => {}
-    })
-  }
-
-  const result = await tesseractWorker.recognize(imageBuffer)
-  return result.data.text.trim()
-}
-
-/* ---- Lookup window ---- */
-function sendToWindow(channel: string, ...args: unknown[]): void {
-  const win = lookupWindow
-  if (win && !win.isDestroyed()) {
-    win.webContents.send(channel, ...args)
-  }
-}
-
-function ensureLookupWindow(cursorX: number, cursorY: number): BrowserWindow {
-  if (lookupWindow && !lookupWindow.isDestroyed()) {
-    return lookupWindow
-  }
-  return createLookupWindow(cursorX, cursorY)
+function clamp(v: number, lo: number, hi: number): number {
+  return v < lo ? lo : v > hi ? hi : v
 }
 
 function createLookupWindow(cursorX: number, cursorY: number): BrowserWindow {
@@ -181,6 +70,117 @@ function createLookupWindow(cursorX: number, cursorY: number): BrowserWindow {
   return window
 }
 
-function clamp(v: number, lo: number, hi: number): number {
-  return v < lo ? lo : v > hi ? hi : v
+function ensureLookupWindow(cursorX: number, cursorY: number): BrowserWindow {
+  if (lookupWindow && !lookupWindow.isDestroyed()) {
+    return lookupWindow
+  }
+  return createLookupWindow(cursorX, cursorY)
+}
+
+async function captureScreenImage(display: Electron.Display): Promise<Electron.NativeImage | null> {
+  if (isScreenCapturePortalPreferred()) {
+    const portalPng = await captureScreenViaPortal()
+    if (portalPng && portalPng.length > 0) {
+      const img = nativeImage.createFromBuffer(portalPng)
+      if (!img.isEmpty()) return img
+    }
+  }
+
+  const sources = await desktopCapturer.getSources({
+    types: ['screen'],
+    thumbnailSize: { width: display.size.width, height: display.size.height }
+  })
+
+  const source = sources.find((s) => s.display_id === String(display.id)) ?? sources[0]
+  if (!source) return null
+
+  const thumb = source.thumbnail
+  if (thumb.isEmpty()) return null
+  return thumb
+}
+
+/* ---- Screen capture ---- */
+async function captureScreen(): Promise<Buffer | null> {
+  const cursorPos = screen.getCursorScreenPoint()
+  const display = screen.getDisplayNearestPoint(cursorPos)
+
+  const image = await captureScreenImage(display)
+  if (!image || image.isEmpty()) return null
+  return image.toPNG()
+}
+
+/* ---- OCR ---- */
+export async function runOCR(imageBuffer: Buffer): Promise<string> {
+  const Tesseract = await import('tesseract.js')
+
+  if (!tesseractWorker) {
+    tesseractWorker = await Tesseract.createWorker('eng', 1, {
+      cachePath: join(app.getPath('userData'), 'tesseract-cache'),
+      logger: () => {}
+    })
+  }
+
+  const result = await tesseractWorker.recognize(imageBuffer)
+  return result.data.text.trim()
+}
+
+/* ---- Lookup window ---- */
+function sendToWindow(channel: string, ...args: unknown[]): void {
+  const win = lookupWindow
+  if (win && !win.isDestroyed()) {
+    win.webContents.send(channel, ...args)
+  }
+}
+
+/* ---- Entry-point ---- */
+/** Hotkey handler: capture -> OCR -> AI -> lookup. */
+export async function handleHotkeyPressed(): Promise<void> {
+  const cursorPos = screen.getCursorScreenPoint()
+
+  // 1. Capture the screen (full, no crop)
+  const imageBuffer = await captureScreen()
+  if (!imageBuffer) {
+    lookupWindow = ensureLookupWindow(cursorPos.x, cursorPos.y)
+    sendToWindow('ai-error', 'Failed to capture the screen.')
+    return
+  }
+
+  // 2. Create the popup before OCR for responsiveness
+  lookupWindow = ensureLookupWindow(cursorPos.x, cursorPos.y)
+
+  // 3. OCR
+  let ocrText = ''
+  try {
+    ocrText = await runOCR(imageBuffer)
+  } catch (err) {
+    lookupWindow = ensureLookupWindow(cursorPos.x, cursorPos.y)
+    const msg = err instanceof Error ? err.message : String(err)
+    sendToWindow('ai-error', `OCR error: ${msg}`)
+    return
+  }
+
+  sendToWindow('ocr-result', ocrText)
+
+  if (!ocrText) {
+    sendToWindow('ai-error', 'No text detected on screen.')
+    return
+  }
+
+  // 4. Ask the AI about the text. index.ts picks the provider.
+  const prompt: ProviderMessage = {
+    role: 'assistant',
+    content: `The following text was extracted via OCR from the screen near the user's cursor. Please analyze and explain it:\n\n"${ocrText}"`
+  }
+
+  try {
+    const response = await callProvider([prompt])
+    sendToWindow('ai-response', response)
+  } catch (err) {
+    if (err instanceof NoApiKeyError || err instanceof UnsupportedProviderError) {
+      sendToWindow('ai-error', err.message)
+    } else {
+      const msg = err instanceof Error ? err.message : String(err)
+      sendToWindow('ai-error', msg)
+    }
+  }
 }

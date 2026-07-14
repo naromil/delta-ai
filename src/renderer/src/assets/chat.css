@@ -97,7 +97,9 @@ body {
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
-  transition: background 150ms ease, border-color 150ms ease;
+  transition:
+    background 150ms ease,
+    border-color 150ms ease;
 }
 
 .new-chat-button:hover {
@@ -287,7 +289,9 @@ body {
   color: #000;
   cursor: pointer;
   flex-shrink: 0;
-  transition: opacity 150ms ease, background 150ms ease;
+  transition:
+    opacity 150ms ease,
+    background 150ms ease;
 }
 
 .composer-send:disabled {
