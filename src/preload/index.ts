@@ -21,6 +21,11 @@ const api = {
   lookupOnResponse: (cb: (response: string) => void) =>
     ipcRenderer.on('ai-response', (_e, response) => cb(response)),
   lookupOnError: (cb: (err: string) => void) => ipcRenderer.on('ai-error', (_e, err) => cb(err)),
+  /* Lookup ask (renderer → main: send the user's question with OCR context) */
+  lookupAsk: (question: string) => ipcRenderer.send('lookup-ask', question),
+  /* Lookup grow (main → renderer: animate the window larger to show the conversation) */
+  lookupOnGrow: (cb: (width: number, height: number) => void) =>
+    ipcRenderer.on('lookup-grow', (_e, width, height) => cb(width, height)),
   lookupClose: () => ipcRenderer.send('lookup-close')
 }
 

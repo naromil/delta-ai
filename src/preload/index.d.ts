@@ -17,6 +17,10 @@ declare global {
       lookupOnOcr: (cb: (text: string) => void) => void
       lookupOnResponse: (cb: (response: string) => void) => void
       lookupOnError: (cb: (err: string) => void) => void
+      /* Lookup ask (renderer → main: send the user's question with OCR context) */
+      lookupAsk: (question: string) => void
+      /* Lookup grow (main → renderer: animate the window larger to show the conversation) */
+      lookupOnGrow: (cb: (width: number, height: number) => void) => void
       lookupClose: () => void
     }
   }
