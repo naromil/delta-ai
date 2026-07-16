@@ -27,6 +27,8 @@ const api = {
   /* Lookup paste (renderer → main: user pasted context, text or image) */
   lookupPasteText: (text: string) => ipcRenderer.send('lookup-paste-text', text),
   lookupPasteImage: (base64: string) => ipcRenderer.send('lookup-paste-image', base64),
+  /* Lookup input state (renderer → main: whether the Ask field has text) */
+  lookupInputChanged: (hasText: boolean) => ipcRenderer.send('lookup-input-changed', hasText),
   /* Lookup grow (main → renderer: animate the window larger to show the conversation) */
   lookupOnGrow: (cb: (width: number, height: number) => void) =>
     ipcRenderer.on('lookup-grow', (_e, width, height) => cb(width, height)),

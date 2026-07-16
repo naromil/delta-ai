@@ -22,6 +22,8 @@ declare global {
       /* Lookup paste (renderer → main: user pasted context, text or image) */
       lookupPasteText: (text: string) => void
       lookupPasteImage: (base64: string) => void
+      /* Lookup input state (renderer → main: whether the Ask field has text) */
+      lookupInputChanged: (hasText: boolean) => void
       /* Lookup grow (main → renderer: animate the window larger to show the conversation) */
       lookupOnGrow: (cb: (width: number, height: number) => void) => void
       lookupClose: () => void

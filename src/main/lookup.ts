@@ -28,6 +28,7 @@ let lookupContextReady = false
 // a paste supersedes the current run. A late OCR result whose captured token
 // no longer matches is discarded (tesseract.js has no native cancel).
 let lookupOcrToken = 0
+let lookupHasText = false
 
 function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v
@@ -63,13 +64,15 @@ function createLookupWindow(cursorX: number, cursorY: number): BrowserWindow {
 
   // Per spec: blur only closes the window before the first ask. Once the window
   // has grown (post-ask), blur does not kill it; the window closes only via ✕.
+  // If the Ask field has text, blur also keeps the window open so the user
+  // doesn't lose a typed question.
 
   let hasBeenFocused = false
   window.once('focus', () => {
     hasBeenFocused = true
   })
   window.on('blur', () => {
-    if (hasBeenFocused && !lookupGrown && !window.isDestroyed()) {
+    if (hasBeenFocused && !lookupGrown && !lookupHasText && !window.isDestroyed()) {
       window.close()
     }
   })
@@ -80,6 +83,7 @@ function createLookupWindow(cursorX: number, cursorY: number): BrowserWindow {
       lookupContext = ''
       lookupGrown = false
       lookupContextReady = false
+      lookupHasText = false
       lookupOcrToken++
     }
   })
@@ -104,6 +108,10 @@ function createLookupWindow(cursorX: number, cursorY: number): BrowserWindow {
       const msg = err instanceof Error ? err.message : String(err)
       sendToWindow('ai-error', `OCR error: ${msg}`)
     })
+  })
+
+  window.webContents.ipc.on('lookup-input-changed', (_event, hasText: boolean) => {
+    lookupHasText = hasText
   })
 
   window.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(lookUpHTML))
@@ -247,7 +255,7 @@ function animateGrowWindow(targetWidth: number, targetHeight: number): void {
   if (startWidth === targetWidth && startHeight === targetHeight) return
 
   // Keep the top-left corner fixed so the window grows downward/rightward.
-  const [x, y] = win.getPosition()
+  const [startX, startY] = win.getPosition()
   const wDelta = targetWidth - startWidth
   const hDelta = targetHeight - startHeight
   const stepMs = Math.max(1, Math.floor(GROW_DURATION_MS / GROW_STEPS))
@@ -261,7 +269,12 @@ function animateGrowWindow(targetWidth: number, targetHeight: number): void {
     const w = Math.round(startWidth + wDelta * eased)
     const h = Math.round(startHeight + hDelta * eased)
     if (!win.isDestroyed()) {
-      win.setBounds({ x, y, width: w, height: h })
+      win.setBounds({
+        x: startX - Math.round((w - startWidth) / 2),
+        y: startY - Math.round((h - startHeight) / 2),
+        width: w,
+        height: h
+      })
     }
     if (step >= GROW_STEPS) {
       clearInterval(interval)

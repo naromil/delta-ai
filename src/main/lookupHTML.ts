@@ -73,7 +73,8 @@ export const lookUpHTML = `<!DOCTYPE html>
         font-style: italic;
       }
       .extracted.flash {
-        border-color: #4a90d9;
+        border-color: rgba(60, 118, 185, 0.45);
+        box-shadow: inset 0 0 0 1px rgba(60, 118, 185, 0.18);
       }
       .paste-tip {
         font-size: 11px;
@@ -185,6 +186,10 @@ export const lookUpHTML = `<!DOCTYPE html>
           askEl.value = '';
           w.lookupAsk(q);
         }
+      });
+
+      askEl.addEventListener('input', function () {
+        w.lookupInputChanged(askEl.value.length > 0);
       });
 
       /* ---- Paste handling: paste never goes into the Ask field. ---- */
