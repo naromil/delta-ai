@@ -17,7 +17,7 @@ const GROW_STEPS = 24
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let tesseractWorker: any = null
 let lookupWindow: BrowserWindow | null = null
-let lookupOcrContext = ''
+let lookupContext = ''
 let lookupGrown = false
 // Context-gating state machine. A question may be sent once the context is
 // "ready": OCR finished (from hotkey capture or image paste), or a text paste
@@ -77,7 +77,7 @@ function createLookupWindow(cursorX: number, cursorY: number): BrowserWindow {
   window.on('closed', () => {
     if (lookupWindow === window) {
       lookupWindow = null
-      lookupOcrContext = ''
+      lookupContext = ''
       lookupGrown = false
       lookupContextReady = false
       lookupOcrToken++
@@ -209,7 +209,7 @@ function handlePasteText(text: string): void {
   if (!doesLookupWindowExist()) return
   // Cancel any running OCR by superseding its generation token.
   lookupOcrToken++
-  lookupOcrContext = text
+  lookupContext = text
   lookupContextReady = true
   notifyContextState('ready', text, 'Pasted text')
 }
@@ -233,7 +233,7 @@ async function handlePasteImage(base64: string): Promise<void> {
 
   if (!doesLookupWindowExist()) return
 
-  lookupOcrContext = text
+  lookupContext = text
   lookupContextReady = true
   notifyContextState('ready', text, text ? '' : 'No text detected in pasted image')
 }
@@ -285,15 +285,28 @@ async function handleLookupAsk(question: string): Promise<void> {
   }
 
   const messages: ProviderMessage[] = []
+  // System instructions and rules
+  messages.push({
+    role: 'system',
+    content: [
+      'You are DeltaAI, a helpful assistant in the software\'s "lookup" window.',
+      'You will help the user approach something they are not familiar with conveniently and effectively.',
+      'The context will be extracted from the screen (often via OCR), and the user will ask you to analyze it or answer questions about it.',
+      'If the context is extracted via OCR, it may contain errors; ask for clarification when necessary, but do not mention about OCR.',
+      'Answer in simple and concise words.'
+    ].join('')
+  })
   // The OCR text as the context
-  if (lookupOcrContext) {
+  if (lookupContext) {
     messages.push({
       role: 'user',
-      content: `The following text was extracted via OCR from the screen near the user's cursor and is the context for their question:\n\n"${lookupOcrContext}"`
+      content: `The following context was extracted from my screen:\n\n"${lookupContext}"`
     })
   }
   // The user's question
-  messages.push({ role: 'user', content: question })
+  let completeQuestion = `Answer in simple and concise words:\n\n`
+  completeQuestion += !question ? 'summarize' : question
+  messages.push({ role: 'user', content: completeQuestion })
 
   try {
     const response = await callProvider(messages)
@@ -349,7 +362,7 @@ export async function handleHotkeyPressed(): Promise<void> {
   if (!doesLookupWindowExist()) return
   if (token !== lookupOcrToken) return // superseded by a paste; let the paste drive state
 
-  lookupOcrContext = ocrText
+  lookupContext = ocrText
   lookupContextReady = true
   notifyContextState('ready', ocrText, ocrText ? '' : 'No text detected on screen')
 }

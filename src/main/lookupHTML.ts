@@ -178,7 +178,7 @@ export const lookUpHTML = `<!DOCTYPE html>
             return;
           }
           var q = askEl.value.trim();
-          if (!q) return;
+          // Empty questions are accepted
           addTurn('user', q);
           var loadingEl = addTurn('ai', 'Thinking…');
           loadingEl.classList.add('loading');
