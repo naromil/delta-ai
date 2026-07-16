@@ -60,11 +60,25 @@ export const lookUpHTML = `<!DOCTYPE html>
         background: #222;
         border-radius: 6px;
         padding: 8px 10px;
-        margin-bottom: 12px;
+        margin-bottom: 6px;
         white-space: pre-wrap;
         word-break: break-word;
         max-height: 80px;
         overflow-y: auto;
+        border: 1px solid transparent;
+        transition: border-color 0.2s;
+      }
+      .extracted.hint {
+        color: #777;
+        font-style: italic;
+      }
+      .extracted.flash {
+        border-color: #4a90d9;
+      }
+      .paste-tip {
+        font-size: 11px;
+        color: #555;
+        margin-bottom: 12px;
       }
       .ask-wrap {
         flex-shrink: 0;
@@ -124,8 +138,9 @@ export const lookUpHTML = `<!DOCTYPE html>
       <span class="close" onclick="window.api.lookupClose()">✕</span>
     </div>
     <div class="content">
-      <div class="section-label">Extracted Text</div>
-      <div id="extracted" class="extracted scroll">Waiting for OCR…</div>
+      <div class="section-label">Context</div>
+      <div id="extracted" class="extracted hint scroll">Waiting for OCR…</div>
+      <div class="paste-tip">Ctrl+V to paste text or an image as context.</div>
       <div class="ask-wrap">
         <input id="ask" class="ask" type="text" placeholder="Ask DeltaAI…" autocomplete="off" />
       </div>
@@ -133,12 +148,15 @@ export const lookUpHTML = `<!DOCTYPE html>
     </div>
     <script>
       var w = window.api;
-      var ocrText = '';
       var askEl = document.getElementById('ask');
       var convEl = document.getElementById('conversation');
       var extractedEl = document.getElementById('extracted');
 
-      // Focus the input by default.
+      // Context-ready gate: Enter is blocked while this is false (OCR in flight
+      // and no paste has settled).
+      var contextReady = false;
+
+      // Escape closes the window at any time.
       window.addEventListener('keydown', function (e) {
         if (e.key === 'Escape') {
           e.preventDefault();
@@ -146,14 +164,19 @@ export const lookUpHTML = `<!DOCTYPE html>
         }
       });
 
+      // Focus the input by default.
       window.addEventListener('load', function () {
         askEl.focus();
       });
 
-      // Enter (without shift) sends the question.
+      // Enter sends the question, but only once the context is ready.
       askEl.addEventListener('keydown', function (e) {
         if (e.key === 'Enter') {
           e.preventDefault();
+          if (!contextReady) {
+            flashHint('Context is still being prepared…');
+            return;
+          }
           var q = askEl.value.trim();
           if (!q) return;
           addTurn('user', q);
@@ -164,9 +187,65 @@ export const lookUpHTML = `<!DOCTYPE html>
         }
       });
 
-      w.lookupOnOcr(function (text) {
-        ocrText = text || '';
-        extractedEl.textContent = ocrText || '(No text extracted)';
+      /* ---- Paste handling: paste never goes into the Ask field. ---- */
+      document.addEventListener('paste', function (e) {
+        e.preventDefault();
+        var cd = e.clipboardData;
+        if (!cd) return;
+
+        // Prefer a pasted image over text (an image copy usually omits text,
+        // but some apps attach a filename as text too — image wins here).
+        var imageItem = null;
+        for (var i = 0; i < cd.items.length; i++) {
+          var it = cd.items[i];
+          if (it.kind === 'file' && it.type.indexOf('image/') === 0) {
+            imageItem = it;
+            break;
+          }
+        }
+        if (imageItem) {
+          readFileAsBase64(imageItem.getAsFile(), function (b64) {
+            if (b64) w.lookupPasteImage(b64);
+          });
+          return;
+        }
+
+        var text = cd.getData('text/plain');
+        if (text && text.trim()) {
+          w.lookupPasteText(text);
+        }
+      });
+
+      function readFileAsBase64(file, cb) {
+        if (!file) { cb(null); return; }
+        var reader = new FileReader();
+        reader.onload = function () {
+          var arr = new Uint8Array(reader.result);
+          var bin = '';
+          for (var i = 0; i < arr.length; i++) bin += String.fromCharCode(arr[i]);
+          cb(btoa(bin));
+        };
+        reader.onerror = function () { cb(null); };
+        reader.readAsArrayBuffer(file);
+      }
+
+      /* ---- Context state from main ---- */
+      w.lookupOnContext(function (state) {
+        contextReady = state.status === 'ready';
+        if (state.status === 'ready') {
+          if (state.text) {
+            extractedEl.textContent = state.text;
+            extractedEl.classList.remove('hint');
+          } else {
+            extractedEl.textContent = state.hint || '(No context)';
+            extractedEl.classList.add('hint');
+          }
+        } else {
+          // processing
+          extractedEl.textContent = state.hint || 'Processing…';
+          extractedEl.classList.add('hint');
+        }
+        flashHint(null);
       });
 
       w.lookupOnResponse(function (response) {
@@ -174,7 +253,15 @@ export const lookUpHTML = `<!DOCTYPE html>
       });
 
       w.lookupOnError(function (err) {
-        replaceLastAi(err, 'error');
+        // An OCR-processing error arrives while the box is showing a hint; surface
+        // it in the conversation area once a question turn exists, else in the box.
+        var aiTurns = convEl.querySelectorAll('.turn.ai');
+        if (aiTurns.length) {
+          replaceLastAi(err, 'error');
+        } else {
+          extractedEl.textContent = err;
+          extractedEl.classList.remove('hint');
+        }
       });
 
       // Main tells us to grow the window so the conversation is visible.
@@ -206,6 +293,21 @@ export const lookUpHTML = `<!DOCTYPE html>
         el.textContent = text;
         el.className = 'turn ai' + (extraClass ? ' ' + extraClass : '');
         convEl.scrollTop = convEl.scrollHeight;
+      }
+
+      // Briefly outline the context box to draw attention (e.g. after a paste or
+      // when the user presses Enter too early). Pass null to just clear any flash.
+      var flashTimer = null;
+      function flashHint(msg) {
+        if (msg) {
+          extractedEl.textContent = msg;
+          extractedEl.classList.add('hint');
+        }
+        extractedEl.classList.add('flash');
+        if (flashTimer) clearTimeout(flashTimer);
+        flashTimer = setTimeout(function () {
+          extractedEl.classList.remove('flash');
+        }, 600);
       }
     </script>
   </body>

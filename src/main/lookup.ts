@@ -19,6 +19,15 @@ let tesseractWorker: any = null
 let lookupWindow: BrowserWindow | null = null
 let lookupOcrContext = ''
 let lookupGrown = false
+// Context-gating state machine. A question may be sent once the context is
+// "ready": OCR finished (from hotkey capture or image paste), or a text paste
+// was accepted. While OCR is in flight (and no paste has settled), this is
+// false and the renderer blocks Enter.
+let lookupContextReady = false
+// Generation token for OCR races. Incremented whenever a new OCR run starts or
+// a paste supersedes the current run. A late OCR result whose captured token
+// no longer matches is discarded (tesseract.js has no native cancel).
+let lookupOcrToken = 0
 
 function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v
@@ -70,6 +79,8 @@ function createLookupWindow(cursorX: number, cursorY: number): BrowserWindow {
       lookupWindow = null
       lookupOcrContext = ''
       lookupGrown = false
+      lookupContextReady = false
+      lookupOcrToken++
     }
   })
 
@@ -81,6 +92,17 @@ function createLookupWindow(cursorX: number, cursorY: number): BrowserWindow {
     handleLookupAsk(question).catch((err) => {
       const msg = err instanceof Error ? err.message : String(err)
       sendToWindow('ai-error', msg)
+    })
+  })
+
+  window.webContents.ipc.on('lookup-paste-text', (_event, text: string) => {
+    handlePasteText(text)
+  })
+
+  window.webContents.ipc.on('lookup-paste-image', (_event, base64: string) => {
+    handlePasteImage(base64).catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err)
+      sendToWindow('ai-error', `OCR error: ${msg}`)
     })
   })
 
@@ -151,12 +173,69 @@ async function runOCR(imageBuffer: Buffer): Promise<string> {
   return result.data.text.trim()
 }
 
+/* Tokened OCR: starts a new generation. Returns null if a newer OCR run or a
+   paste superseded this one while it was in flight, so the caller can drop the
+   stale result instead of clobbering a newer context. */
+async function runOCRTokened(imageBuffer: Buffer): Promise<string | null> {
+  const token = ++lookupOcrToken
+  const text = await runOCR(imageBuffer)
+  if (token !== lookupOcrToken) return null
+  return text
+}
+
 /* ---- Lookup window ---- */
 function sendToWindow(channel: string, ...args: unknown[]): void {
   const win = lookupWindow
   if (win && !win.isDestroyed()) {
     win.webContents.send(channel, ...args)
   }
+}
+
+/* ---- Context state machine ----
+   The single source of truth for what the "Extracted Text" box shows and whether
+   Enter may send a question. Pushes a { status, text, hint } payload to the
+   renderer via the 'lookup-context' channel.
+     status 'processing' -> OCR in flight; Enter blocked; box shows `hint`.
+     status 'ready'      -> context settled; Enter allowed; box shows `text`
+                            (or the hint as a placeholder when text is empty). */
+function notifyContextState(status: 'processing' | 'ready', text: string, hint: string): void {
+  sendToWindow('lookup-context', { status, text, hint })
+}
+
+/* ---- Paste handlers ----
+   Text paste: stop any in-flight OCR (token bump), accept the pasted text as
+   the context verbatim, and mark the context ready immediately. */
+function handlePasteText(text: string): void {
+  if (!doesLookupWindowExist()) return
+  // Cancel any running OCR by superseding its generation token.
+  lookupOcrToken++
+  lookupOcrContext = text
+  lookupContextReady = true
+  notifyContextState('ready', text, 'Pasted text')
+}
+
+/* Image paste: stop any in-flight OCR, then restart the OCR workflow on the
+   new image. The box shows a processing hint until that OCR resolves. */
+async function handlePasteImage(base64: string): Promise<void> {
+  if (!doesLookupWindowExist()) return
+  const buffer = Buffer.from(base64, 'base64')
+  if (buffer.length === 0) return
+
+  // Cancel the previous run and enter processing. runOCRTokened bumps the
+  // token again on its own start, but we bump first so a hotkey-capture result
+  // that lands in between cannot win.
+  lookupOcrToken++
+  lookupContextReady = false
+  notifyContextState('processing', '', 'OCR running on pasted image…')
+
+  const text = await runOCRTokened(buffer)
+  if (text === null) return // superseded by a newer paste / capture
+
+  if (!doesLookupWindowExist()) return
+
+  lookupOcrContext = text
+  lookupContextReady = true
+  notifyContextState('ready', text, text ? '' : 'No text detected in pasted image')
 }
 
 /* ---- Window grow animation ---- */
@@ -194,6 +273,9 @@ function animateGrowWindow(targetWidth: number, targetHeight: number): void {
 async function handleLookupAsk(question: string): Promise<void> {
   const win = lookupWindow
   if (!win || win.isDestroyed()) return
+  // Defense-in-depth: the renderer gates Enter on context readiness, but never
+  // send a question while OCR is still in flight and no context is settled.
+  if (!lookupContextReady) return
 
   if (!lookupGrown) {
     // Tell the page to grow its layout, and animate the native window to match.
@@ -203,12 +285,14 @@ async function handleLookupAsk(question: string): Promise<void> {
   }
 
   const messages: ProviderMessage[] = []
+  // The OCR text as the context
   if (lookupOcrContext) {
     messages.push({
-      role: 'system',
+      role: 'user',
       content: `The following text was extracted via OCR from the screen near the user's cursor and is the context for their question:\n\n"${lookupOcrContext}"`
     })
   }
+  // The user's question
   messages.push({ role: 'user', content: question })
 
   try {
@@ -241,28 +325,31 @@ export async function handleHotkeyPressed(): Promise<void> {
   lookupWindow = ensureLookupWindow(cursorPos.x, cursorPos.y)
   if (!doesLookupWindowExist()) return
 
-  // 3. OCR
+  // 3. OCR (tokened: a paste that lands while OCR is in flight supersedes this
+  //    run and discards its result). Signal "processing" so the renderer blocks
+  //    Enter until the context settles.
+  const token = ++lookupOcrToken
+  lookupContextReady = false
+  notifyContextState('processing', '', 'Waiting for OCR…')
+
   let ocrText = ''
   try {
     ocrText = await runOCR(imageBuffer)
   } catch (err) {
     if (!doesLookupWindowExist()) return
+    if (token !== lookupOcrToken) return // superseded by a paste
     const msg = err instanceof Error ? err.message : String(err)
-    sendToWindow('ai-error', `OCR error: ${msg}`)
+    // Settle the context (empty) so the user can still ask a free-form question;
+    // surface the failure in the context box rather than the conversation area.
+    lookupContextReady = true
+    notifyContextState('ready', '', `OCR error: ${msg}`)
     return
   }
 
   if (!doesLookupWindowExist()) return
+  if (token !== lookupOcrToken) return // superseded by a paste; let the paste drive state
 
   lookupOcrContext = ocrText
-  sendToWindow('ocr-result', ocrText)
-
-  if (!ocrText) {
-    // No context to send, but the window stays open so the user can still ask a
-    // free-form question. The page shows the "(No text extracted)" placeholder.
-    return
-  }
-
-  // 4. Wait for the user's question (handled by handleLookupAsk via the
-  // 'lookup-ask' IPC). The OCR text is kept as the default context.
+  lookupContextReady = true
+  notifyContextState('ready', ocrText, ocrText ? '' : 'No text detected on screen')
 }

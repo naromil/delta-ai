@@ -14,11 +14,14 @@ declare global {
       loadSettings: () => Promise<{ hotkey: string }>
       saveSettings: (settings: { hotkey: string }) => Promise<{ success: boolean }>
       /* Lookup overlay channels (one-way) */
-      lookupOnOcr: (cb: (text: string) => void) => void
+      lookupOnContext: (cb: (state: { status: string; text: string; hint: string }) => void) => void
       lookupOnResponse: (cb: (response: string) => void) => void
       lookupOnError: (cb: (err: string) => void) => void
       /* Lookup ask (renderer → main: send the user's question with OCR context) */
       lookupAsk: (question: string) => void
+      /* Lookup paste (renderer → main: user pasted context, text or image) */
+      lookupPasteText: (text: string) => void
+      lookupPasteImage: (base64: string) => void
       /* Lookup grow (main → renderer: animate the window larger to show the conversation) */
       lookupOnGrow: (cb: (width: number, height: number) => void) => void
       lookupClose: () => void
