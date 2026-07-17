@@ -1,45 +1,51 @@
-import { lookupState, doesLookupWindowExist, sendToWindow, notifyContextState } from './state'
-import { runOCRTokened } from './capture'
+import type { LookupSession } from './state'
+import { isSessionAlive, sendToSession, notifySessionState } from './state'
+import { runOCRTokenedFor } from './capture'
 import { callProvider, NoApiKeyError, UnsupportedProviderError } from '../provider'
 import type { ProviderMessage } from '../provider'
-import { animateGrowWindow, LOOKUP_GROWN_WIDTH, LOOKUP_GROWN_HEIGHT } from './window'
+import { animateGrowSession, LOOKUP_GROWN_WIDTH, LOOKUP_GROWN_HEIGHT } from './window'
 
-export function handlePasteText(text: string): void {
-  if (!doesLookupWindowExist()) return
-  lookupState.lookupOcrToken++
-  lookupState.lookupContext = text
-  lookupState.lookupContextReady = true
-  notifyContextState('ready', text, 'Pasted text')
+export function handlePasteText(session: LookupSession, text: string): void {
+  if (!isSessionAlive(session)) return
+  session.ocrToken++
+  session.context = text
+  session.contextReady = true
+  notifySessionState(session, 'ready', text, 'Pasted text')
 }
 
-export async function handlePasteImage(base64: string): Promise<void> {
-  if (!doesLookupWindowExist()) return
+export async function handlePasteImage(session: LookupSession, base64: string): Promise<void> {
+  if (!isSessionAlive(session)) return
   const buffer = Buffer.from(base64, 'base64')
   if (buffer.length === 0) return
 
-  lookupState.lookupOcrToken++
-  lookupState.lookupContextReady = false
-  notifyContextState('processing', '', 'OCR running on pasted image…')
+  session.ocrToken++
+  session.contextReady = false
+  notifySessionState(session, 'processing', '', 'OCR running on pasted image…')
 
-  const text = await runOCRTokened(buffer)
+  const text = await runOCRTokenedFor(session, buffer)
   if (text === null) return
 
-  if (!doesLookupWindowExist()) return
+  if (!isSessionAlive(session)) return
 
-  lookupState.lookupContext = text
-  lookupState.lookupContextReady = true
-  notifyContextState('ready', text, text ? '' : 'No text detected in pasted image')
+  session.context = text
+  session.contextReady = true
+  notifySessionState(session, 'ready', text, text ? '' : 'No text detected in pasted image')
 }
 
-export async function handleLookupAsk(question: string): Promise<void> {
-  const win = lookupState.lookupWindow
-  if (!win || win.isDestroyed()) return
-  if (!lookupState.lookupContextReady) return
+/**
+ * Handles a lookup ask request from the user.
+ * Processes the user's question against the session context and returns an AI response.
+ * @param session - The lookup session containing context and state
+ * @param question - The user's question to answer
+ */
+export async function handleLookupAsk(session: LookupSession, question: string): Promise<void> {
+  if (!isSessionAlive(session)) return
+  if (!session.contextReady) return
 
-  if (!lookupState.lookupGrown) {
-    sendToWindow('lookup-grow', LOOKUP_GROWN_WIDTH, LOOKUP_GROWN_HEIGHT)
-    animateGrowWindow(LOOKUP_GROWN_WIDTH, LOOKUP_GROWN_HEIGHT)
-    lookupState.lookupGrown = true
+  if (!session.grown) {
+    sendToSession(session, 'lookup-grow', LOOKUP_GROWN_WIDTH, LOOKUP_GROWN_HEIGHT)
+    animateGrowSession(session, LOOKUP_GROWN_WIDTH, LOOKUP_GROWN_HEIGHT)
+    session.grown = true
   }
 
   const messages: ProviderMessage[] = []
@@ -49,14 +55,15 @@ export async function handleLookupAsk(question: string): Promise<void> {
       'You are DeltaAI, a helpful assistant in the software\'s "lookup" window.',
       'You will help the user approach something they are not familiar with conveniently and effectively.',
       'The context will be extracted from the screen (often via OCR), and the user will ask you to analyze it or answer questions about it.',
+      "Always use web search to answer the user's questions if the answer cannot be determined from the context.",
       'If the context is extracted via OCR, it may contain errors; ask for clarification when necessary, but do not mention about OCR.',
       'Answer in simple and concise words.'
     ].join('')
   })
-  if (lookupState.lookupContext) {
+  if (session.context) {
     messages.push({
       role: 'user',
-      content: `The following context was extracted from my screen:\n\n"${lookupState.lookupContext}"`
+      content: `The following context was extracted from my screen:\n\n"${session.context}"`
     })
   }
   let completeQuestion = `Answer in simple and concise words:\n\n`
@@ -65,13 +72,14 @@ export async function handleLookupAsk(question: string): Promise<void> {
 
   try {
     const response = await callProvider(messages)
-    sendToWindow('ai-response', response)
+    sendToSession(session, 'ai-response', response)
   } catch (err) {
-    if (err instanceof NoApiKeyError || err instanceof UnsupportedProviderError) {
-      sendToWindow('ai-error', err.message)
-    } else {
-      const msg = err instanceof Error ? err.message : String(err)
-      sendToWindow('ai-error', msg)
-    }
+    const msg =
+      err instanceof NoApiKeyError || err instanceof UnsupportedProviderError
+        ? err.message
+        : err instanceof Error
+          ? err.message
+          : String(err)
+    sendToSession(session, 'ai-error', msg)
   }
 }

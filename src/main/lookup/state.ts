@@ -1,33 +1,34 @@
 import { BrowserWindow } from 'electron'
 
-export const lookupState = {
-  lookupWindow: null as BrowserWindow | null,
-  lookupContext: '',
-  lookupGrown: false,
-  lookupContextReady: false,
-  lookupOcrToken: 0,
-  lookupHasText: false
+export interface LookupSession {
+  window: BrowserWindow
+  context: string
+  grown: boolean
+  contextReady: boolean
+  ocrToken: number
+  hasText: boolean
 }
 
 export function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v
 }
 
-export function doesLookupWindowExist(): boolean {
-  return !!lookupState.lookupWindow && !lookupState.lookupWindow.isDestroyed()
-}
-
-export function sendToWindow(channel: string, ...args: unknown[]): void {
-  const win = lookupState.lookupWindow
-  if (win && !win.isDestroyed()) {
+export function sendToSession(session: LookupSession, channel: string, ...args: unknown[]): void {
+  const win = session.window
+  if (!win.isDestroyed()) {
     win.webContents.send(channel, ...args)
   }
 }
 
-export function notifyContextState(
+export function notifySessionState(
+  session: LookupSession,
   status: 'processing' | 'ready',
   text: string,
   hint: string
 ): void {
-  sendToWindow('lookup-context', { status, text, hint })
+  sendToSession(session, 'lookup-context', { status, text, hint })
+}
+
+export function isSessionAlive(session: LookupSession | null): boolean {
+  return !!session && !session.window.isDestroyed()
 }

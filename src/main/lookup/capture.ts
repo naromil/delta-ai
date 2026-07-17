@@ -1,6 +1,6 @@
 import { app, screen, desktopCapturer, nativeImage } from 'electron'
 import { join } from 'path/posix'
-import { lookupState } from './state'
+import type { LookupSession } from './state'
 import { captureScreenViaPortal, isScreenCapturePortalPreferred } from '../services/screen-capture'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -51,9 +51,12 @@ export async function runOCR(imageBuffer: Buffer): Promise<string> {
   return result.data.text.trim()
 }
 
-export async function runOCRTokened(imageBuffer: Buffer): Promise<string | null> {
-  const token = ++lookupState.lookupOcrToken
+export async function runOCRTokenedFor(
+  session: LookupSession,
+  imageBuffer: Buffer
+): Promise<string | null> {
+  const token = ++session.ocrToken
   const text = await runOCR(imageBuffer)
-  if (token !== lookupState.lookupOcrToken) return null
+  if (token !== session.ocrToken) return null
   return text
 }

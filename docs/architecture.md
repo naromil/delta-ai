@@ -75,11 +75,11 @@ Main process (Node)          src/main/
     ├── config.ts           Config persistence, Wayland detection, hotkey registry
     ├── provider.ts         Provider dispatch (callProvider, callOpenAICompatible)
     ├── lookup/
-    │   ├── lookup.ts      Orchestrator: IPC wiring + handleHotkeyPressed
+    │   ├── lookup.ts      Orchestrator: handleHotkeyPressed entry point
     │   ├── capture.ts     Screen capture + OCR (tesseract worker)
-    │   ├── handlers.ts    Paste + Ask handlers (builds messages, calls provider)
-    │   ├── state.ts       Shared mutable state (lookupState, sendToWindow, etc.)
-    │   └── window.ts      Lookup popup window + grow animation
+    │   ├── handlers.ts    Paste + Ask handlers (operate on per-session state)
+    │   ├── state.ts       Per-window LookupSession interface + helpers
+    │   └── window.ts      Lookup popup window + grow animation (per-session)
     └── services/
         ├── global-shortcut.ts   XDG GlobalShortcuts D-Bus (Wayland)
         └── screen-capture.ts    Freedesktop Screenshot D-Bus (KDE Wayland)
@@ -166,41 +166,53 @@ interface AppSettings {
 
 ### `lookup/` — OCR and lookup pipeline (subdirectory)
 
+Each hotkey press spawns a new lookup session; once a session has grown (a message was sent)
+it no longer closes on blur, so multiple lookup windows may coexist. State lives on a
+per-window `LookupSession` object in `state.ts`; handlers operate on the passed-in session.
+
 **`lookup.ts` (orchestrator):**
 
-- `setupLookupIPC(window)` — registers `lookup-ask`, `lookup-paste-text`, `lookup-paste-image` IPC handlers on the popup window
 - `handleHotkeyPressed()` — hotkey entry point:
   1. Get cursor position via `screen.getCursorScreenPoint()`
   2. Capture full screen (delegates to `capture.ts`)
-  3. Create popup window (delegates to `window.ts`)
-  4. Run OCR via tesseract.js (delegates to `capture.ts`)
-  5. Settle context state via `state.ts` helpers
+  3. Create a new popup session (delegates to `window.ts`); previous sessions stay open
+  4. Run OCR via tesseract.js (delegates to `capture.ts`). Bumps the session's `ocrToken` before OCR; if a paste supersedes it, the stale result is discarded.
+  5. Notify the popup of context state via `notifySessionState`
 
 **`capture.ts`:**
 
 - `captureScreen()` — returns full-screen PNG `Buffer` (portal first on KDE Wayland, `desktopCapturer` fallback)
 - `runOCR(imageBuffer)` — lazy-creates tesseract worker, returns OCR text
-- `runOCRTokened(imageBuffer)` — generation-gated OCR (discards if overshadowed by paste)
+- `runOCRTokenedFor(session, imageBuffer)` — bumps session's `ocrToken`, runs OCR; returns `null` if the token was superseded while OCR was in flight
 
 **`handlers.ts`:**
 
-- `handlePasteText(text)` — bumps token, accepts text as context, marks ready
-- `handlePasteImage(base64)` — bumps token, runs OCR on image, marks ready
-- `handleLookupAsk(question)` — builds `ProviderMessage[]`, grows window, calls `callProvider()` from `provider.ts`, sends result to popup
+- `handlePasteText(session, text)` — bumps session token, sets text as context, marks ready
+- `handlePasteImage(session, base64)` — bumps session token, runs OCR on image via `runOCRTokenedFor`, marks ready
+- `handleLookupAsk(session, question)` — builds `ProviderMessage[]`, triggers grow animation on the session's window, calls `callProvider()`, sends response to that session's popup
 
 **`state.ts`:**
 
-- `lookupState` — shared mutable object (`lookupWindow`, `lookupContext`, `lookupGrown`, `lookupContextReady`, `lookupOcrToken`, `lookupHasText`)
-- `sendToWindow(channel, ...args)` — safely sends IPC to lookup window
-- `notifyContextState(status, text, hint)` — pushes context state to popup renderer
+- `LookupSession` — per-session mutable object: `window`, `context`, `grown`, `contextReady`, `ocrToken`, `hasText`
+- `sendToSession(session, channel, ...args)` — safely sends IPC to a session's window
+- `notifySessionState(session, status, text, hint)` — pushes `{ status, text, hint }` to a popup renderer
 - `clamp(v, lo, hi)` — pure utility for window positioning
-- `doesLookupWindowExist()` — checks if popup is alive
+- `isSessionAlive(session)` — checks if a session's window is alive
 
 **`window.ts`:**
 
-- `createLookupWindow(x, y)` — 420×320 always-on-top frameless BrowserWindow near cursor, handles blur-to-close, window closed state reset
-- `ensureLookupWindow(x, y)` — reuses existing window or creates new
-- `animateGrowWindow(w, h)` — easeOutCubic animation from small popup to full conversation view
+- `createLookupSession(x, y)` — 420×320 always-on-top frameless BrowserWindow near cursor. Registers per-window IPC handlers. Blur closes only if not grown AND Ask field has no text (guard). On `closed`, removes itself from the sessions list. Listens for `lookup-close` and `lookup-input-changed` IPC.
+- `animateGrowSession(session, w, h)` — easeOutCubic animation expanding from the window's current position to 840×640. Exports `LOOKUP_GROWN_WIDTH` / `LOOKUP_GROWN_HEIGHT` for use by `handlers.ts`.
+
+**`html.ts`:**
+
+- Exports `lookUpHTML` — the inline HTML/JS loaded as a `data:` URL by each lookup session's popup. Key behaviors:
+  - Shows a "Context" box (driven by `lookupOnContext`) and an "Ask DeltaAI…" input
+  - Enter sends the question, but only when `contextReady` is true (the `lookupOnContext` callback gates it); pressing Enter too early flashes the box with "Context is still being prepared…"
+  - Paste intercept: `Ctrl+V` never enters the Ask field; text pastes go to the context (via `lookupPasteText`), image pastes run OCR on the clipboard image (via `lookupPasteImage`)
+  - `lookupInputChanged(hasText)` is emitted on every `input` event to tell main whether the Ask field has text (guards blur-to-close in `window.ts`)
+  - `lookupOnGrow(width, height)` resizes the document/body CSS height and reveals the conversation area; auto-focuses the input after the grow animation completes
+  - Each session owns its own DOM state; multiple sessions may coexist independently
 
 ### `services/global-shortcut.ts` — XDG GlobalShortcuts for Wayland
 
@@ -238,15 +250,15 @@ Exposes via `contextBridge`:
   sendMessage(messages)             // Send chat messages to AI
   loadSettings()                    // Load app settings (hotkey)
   saveSettings(settings)            // Save app settings
-  lookupOnContext(cb)               // One-way: context state → lookup popup
+  lookupOnContext(cb)               // One-way: {status, text, hint} → lookup popup (context state)
   lookupOnResponse(cb)              // One-way: AI response → lookup popup
   lookupOnError(cb)                 // One-way: Error → lookup popup
-  lookupOnGrow(cb)                  // One-way: grow dimensions → lookup popup
-  lookupAsk(question)               // Send question from lookup popup
-  lookupPasteText(text)             // Send pasted text from lookup popup
-  lookupPasteImage(base64)          // Send pasted image from lookup popup
-  lookupInputChanged(hasText)       // Notify main of input state
-  lookupClose()                     // Close lookup popup
+  lookupOnGrow(cb)                  // One-way: (width, height) → lookup popup (grow animation)
+  lookupAsk(question)               // Renderer→main: send user's question
+  lookupPasteText(text)             // Renderer→main: pasted text as context
+  lookupPasteImage(base64)          // Renderer→main: pasted image for OCR
+  lookupInputChanged(hasText)       // Renderer→main: whether Ask field has text (guards blur-to-close)
+  lookupClose()                     // Renderer→main: close the popup
 }
 ```
 

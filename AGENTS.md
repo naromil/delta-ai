@@ -42,12 +42,19 @@ Preload (contextBridge)      src/preload/index.ts (+ index.d.ts)
     │  ipcRenderer.invoke(...)
     ▼
 Main process (Node)          src/main/
-    ├── index.ts            Provider dispatch + callGoogleAI, main window, app lifecycle
-    ├── lookup.ts           OCR / screen-capture pipeline + lookup popup window
-    ├── config.ts           Persistence + Wayland detection + global-hotkey registry
-    ├── globalShortcutPortal.ts  XDG GlobalShortcuts D-Bus routing (Wayland)
-    ├── screenCapturePortal.ts   Freedesktop Screenshot D-Bus routing (KDE Wayland)
-    └── lookupHTML.ts       Inline HTML/JS for the lookup popup (data: URL)
+    ├── index.ts            App lifecycle, main window, send-message IPC handler
+    ├── config.ts           Persistence + Wayland detection + hotkey registry + IPC handlers
+    ├── provider.ts         Provider dispatch (callProvider + callOpenAICompatible)
+    ├── lookup/
+    │   ├── lookup.ts       Orchestrator: IPC wiring + handleHotkeyPressed entry point
+    │   ├── capture.ts      Screen capture + OCR pipeline (tesseract.js worker)
+    │   ├── handlers.ts     Paste handlers + Ask handler (builds messages, calls provider)
+    │   ├── html.ts         Inline HTML/JS for the lookup popup (data: URL)
+    │   ├── state.ts        Shared mutable state (lookupState object + helpers)
+    │   └── window.ts       Lookup popup BrowserWindow creation + grow animation
+    └── services/
+        ├── global-shortcut.ts     XDG GlobalShortcuts D-Bus routing (Wayland)
+        └── screen-capture.ts      Freedesktop Screenshot D-Bus routing (KDE Wayland)
     ▼
 OS  (fs config/, Google Gemini API, tesseract WASM, D-Bus portals, desktopCapturer)
 ```
@@ -60,10 +67,8 @@ main (cjs), preload (cjs), renderer (esm + HTML + CSS).
 The older `docs/architecture.md` describes a single `src/main/index.ts` holding everything.
 That is **stale** — the process is now split by concern:
 
-- `index.ts` — app lifecycle, main chat window, `callProvider` (provider dispatch) and
-  `callGoogleAI` (private). Callers should never branch on `config.provider` themselves;
-  they call `callProvider(messages)` and handle `NoApiKeyError` /
-  `UnsupportedProviderError`.
+- `index.ts` — app lifecycle, main chat window, `send-message` IPC handler. Provider
+  dispatch lives in `provider.ts` now; `index.ts` imports `callProvider` from there.
 - `lookup.ts` — the OCR → AI pipeline for the hotkey-driven lookup, plus its own popup
   `BrowserWindow`. Owns no provider logic.
 - `config.ts` — persists `config/providers.json` and `config/settings.json`, detects
@@ -118,9 +123,9 @@ Enforced by ESLint + Prettier config; match what already exists:
 
 | Task                                   | File                                                           |
 | -------------------------------------- | -------------------------------------------------------------- |
-| Add an AI provider                     | `index.ts` (`callProvider` switch)                             |
-| Change the OCR/capture pipeline        | `lookup.ts`                                                    |
-| Re-position / restyle the lookup popup | `lookup.ts` + `lookupHTML.ts`                                  |
+| Add an AI provider                     | `provider.ts` (`callProvider` switch)                          |
+| Change the OCR/capture pipeline        | `lookup/lookup.ts`                                             |
+| Re-position / restyle the lookup popup | `lookup/window.ts` + `lookup/html.ts`                          |
 | Persist or load user config/settings   | `config.ts`                                                    |
 | Wayland global-shortcut binding        | `globalShortcutPortal.ts`                                      |
 | KDE Wayland silent screenshot          | `screenCapturePortal.ts`                                       |
@@ -130,16 +135,20 @@ Enforced by ESLint + Prettier config; match what already exists:
 
 ## Conventions worth remembering
 
-- **Provider dispatch lives in `index.ts`.** `callProvider(messages)` reads the config
-  and selects the backend; everyone else (the `send-message` IPC handler, `lookup.ts`)
+- **Provider dispatch lives in `provider.ts`.** `callProvider(messages)` reads the config
+  and selects the backend; everyone else (the `send-message` IPC handler, `lookup/handlers.ts`)
   calls it and handles the sentinel errors. Don't duplicate the
   `loadProviderConfig()` + `config.provider === ...` branching elsewhere.
 - **The lookup popup is a normal 420×320 always-on-top `BrowserWindow`**
-  created inside `lookup.ts` (not exported). Position is best-effort near the
-  cursor via `new BrowserWindow({x, y})`; the compositor may center it on
-  Wayland, which is acceptable. Use `sendToWindow` rather than touching the
-  window ref directly. The window loads the shared preload and talks only via
-  `window.api.lookupOn*`.
+  created inside `lookup/window.ts` via `createLookupWindow`. Position is
+  best-effort near the cursor via `new BrowserWindow({x, y})`; the compositor may center
+  it on Wayland, which is acceptable. Use `sendToWindow`/`notifyContextState` rather
+  than touching the window ref directly. The window loads the shared preload and talks
+  only via `window.api.lookupOn*`.
+- **There is a single lookup window.** The global `lookupState` in `state.ts` owns
+  the window reference, context text, OCR token, and grown flag. Re-use via
+  `ensureLookupWindow` rather than creating fresh windows. Blur closes the window
+  only before it has grown and when the Ask field is empty.
 - **OCR captures the full screen, not a cropped region around the cursor.**
   `captureScreen()` grabs the entire display; `runOCR()` processes the whole
   image. Cursor position may fail on Wayland (`getCursorScreenPoint()` returns
@@ -155,7 +164,7 @@ Enforced by ESLint + Prettier config; match what already exists:
   GlobalShortcuts portal on Wayland. When `save-settings` changes the hotkey, it
   re-registers by calling `registerHotkey` with `handleHotkeyPressed` — keep that
   callback wiring intact.
-- **`path` vs `path/posix`**: `config.ts` uses `path`, `lookup.ts` uses `path/posix`. The
+- **`path` vs `path/posix`**: `config.ts` uses `path`, `lookup/capture.ts` and `lookup/window.ts` use `path/posix`. The
   tesseract cache path build uses `path/posix` deliberately — match the existing import
   in the file you're editing.
 
