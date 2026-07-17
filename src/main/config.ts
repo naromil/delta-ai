@@ -1,8 +1,8 @@
 import { join } from 'path'
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'fs'
 import { app, ipcMain, globalShortcut } from 'electron'
-import { registerGlobalShortcutPortal } from './globalShortcutPortal'
-import { handleHotkeyPressed } from './lookup'
+import { registerGlobalShortcutPortal } from './services/global-shortcut'
+import { handleHotkeyPressed } from './lookup/lookup'
 
 /* ---- Types ---- */
 interface ProviderConfig {

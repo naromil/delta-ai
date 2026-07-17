@@ -23,7 +23,7 @@
 import { sessionBus, Variant, Message, MessageBus } from 'dbus-next'
 import { readFileSync, unlinkSync } from 'fs'
 import { URL } from 'url'
-import { isKdeWaylandSession } from './config'
+import { isKdeWaylandSession } from '../config'
 
 const PORTAL_DEST = 'org.freedesktop.portal.Desktop'
 const PORTAL_PATH = '/org/freedesktop/portal/desktop'

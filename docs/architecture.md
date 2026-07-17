@@ -5,15 +5,15 @@
 
 ## High-level stack
 
-| Layer     | Technology                        |
-| --------- | --------------------------------- |
-| Shell     | Electron 34 (electron-vite 4)     |
-| Main      | TypeScript, Node.js               |
-| Preload   | TypeScript, contextBridge         |
-| Renderer  | React 19, TypeScript, vanilla CSS |
-| OCR       | tesseract.js (WASM)               |
+| Layer     | Technology                                           |
+| --------- | ---------------------------------------------------- |
+| Shell     | Electron 34 (electron-vite 4)                        |
+| Main      | TypeScript, Node.js                                  |
+| Preload   | TypeScript, contextBridge                            |
+| Renderer  | React 19, TypeScript, vanilla CSS                    |
+| OCR       | tesseract.js (WASM)                                  |
 | AI        | Multi-provider (Google AI Studio, OpenAI Compatible) |
-| Packaging | electron-builder                  |
+| Packaging | electron-builder                                     |
 
 ## Project tree
 
@@ -75,9 +75,11 @@ The main process is split by concern across multiple files (not monolithic):
 ### `index.ts` — App lifecycle and provider dispatch
 
 **Window management:**
+
 - `createWindow()` — creates main 960×640 BrowserWindow, loads renderer
 
 **Provider dispatch:**
+
 - `callProvider(messages)` — reads current provider config, routes to backend
 - `callOpenAICompatible(apiKey, model, messages, baseUrl)` — unified OpenAI-compatible client
   - Google AI Studio calls this with `baseUrl = 'https://generativelanguage.googleapis.com/v1beta'`
@@ -85,9 +87,11 @@ The main process is split by concern across multiple files (not monolithic):
 - `NoApiKeyError`, `UnsupportedProviderError` — sentinel error classes
 
 **IPC handlers:**
+
 - `send-message` — calls `callProvider`, returns `{ success, response?, error? }`
 
 **Lifecycle:**
+
 - `app.whenReady()` → creates window, registers hotkey
 - `app.on('will-quit')` → unregisters shortcuts
 - `app.on('window-all-closed')` → quits (except macOS)
@@ -96,6 +100,7 @@ The main process is split by concern across multiple files (not monolithic):
 ### `config.ts` — Configuration persistence and hotkey management
 
 **Types:**
+
 ```typescript
 interface ProviderConfig {
   apiKey: string
@@ -117,6 +122,7 @@ interface AppSettings {
 ```
 
 **Functions:**
+
 - `ensureConfigDir()` — returns `{userData}/config/`, creates if missing
 - `loadProviderConfig()` — reads `providers.json` → `AllProvidersConfig | null`
 - `loadCurrentProviderConfig()` — returns merged `{ provider, ...ProviderConfig }` for current provider
@@ -125,6 +131,7 @@ interface AppSettings {
 - `registerHotkey(accelerator, onPressed)` — async; routes through XDG portal on Wayland
 
 **IPC handlers:**
+
 - `save-config` — updates single provider, preserves others, sets `currentProvider`
 - `save-all-providers` — writes entire `AllProvidersConfig` at once
 - `load-config` — returns current provider's config merged with provider name
@@ -133,12 +140,14 @@ interface AppSettings {
 - `save-settings` — writes settings and re-registers hotkey
 
 **Wayland detection:**
+
 - `isWaylandSession()` — checks `XDG_SESSION_TYPE`, `WAYLAND_DISPLAY`, `ELECTRON_OZONE_PLATFORM_HINT`
 - `isKdeWaylandSession()` — additionally checks `XDG_CURRENT_DESKTOP` for KDE
 
 ### `lookup.ts` — OCR and lookup pipeline
 
 **Entry point:**
+
 - `handleHotkeyPressed()` — full pipeline:
   1. Get cursor position via `screen.getCursorScreenPoint()`
   2. Capture full screen (tries portal first on KDE Wayland, falls back to `desktopCapturer`)
@@ -148,6 +157,7 @@ interface AppSettings {
   6. Send AI response or error to popup
 
 **Functions:**
+
 - `captureScreen()` — returns full-screen PNG `Buffer`
 - `runOCR(imageBuffer)` — lazy-creates tesseract worker, returns OCR text
 - `createLookupWindow(x, y)` — 420×320 always-on-top frameless window near cursor
@@ -155,6 +165,7 @@ interface AppSettings {
 - `sendToWindow(channel, ...args)` — safely sends IPC to lookup window
 
 **Module state:**
+
 - `tesseractWorker` — cached worker instance
 - `lookupWindow` — current lookup popup reference
 
@@ -163,6 +174,7 @@ interface AppSettings {
 Routes global shortcut registration through `org.freedesktop.portal.GlobalShortcuts` on Wayland sessions where Electron's `globalShortcut.register()` fails silently.
 
 **Key functions:**
+
 - `registerGlobalShortcutPortal(accelerator, onActivated)` — creates portal session, binds shortcut, listens for `Activated` signal
 - `unregisterGlobalShortcutPortal()` — closes session on quit/settings change
 - `electronToGtkAccel(accelerator)` — converts Electron format (`Ctrl+Shift+D`) to GTK format (`<Control><Shift>D`)
@@ -172,6 +184,7 @@ Routes global shortcut registration through `org.freedesktop.portal.GlobalShortc
 **Why it exists:** On KDE Plasma Wayland, `desktopCapturer.getSources()` shows a "Choose what to share" prompt on every call, and the "remember my choice" checkbox is broken. The `Screenshot` portal with `interactive=false` captures silently after one-time consent.
 
 **Key functions:**
+
 - `captureScreenViaPortal()` — returns PNG `Buffer` from portal temp file
 - `isScreenCapturePortalPreferred()` — returns `true` only on KDE Wayland
 
@@ -182,19 +195,20 @@ Exposes via `contextBridge`:
 **`window.electron`** — `@electron-toolkit/preload` API
 
 **`window.api`** — custom IPC bridge:
+
 ```typescript
 {
-  saveConfig(config)              // Save single provider config
-  saveAllProviders(config)        // Save all providers at once
-  loadConfig()                    // Load current provider config
-  loadAllProviders()              // Load all providers (for Settings caching)
-  sendMessage(messages)           // Send chat messages to AI
-  loadSettings()                  // Load app settings (hotkey)
-  saveSettings(settings)          // Save app settings
-  lookupOnOcr(cb)                 // One-way: OCR result → lookup popup
-  lookupOnResponse(cb)            // One-way: AI response → lookup popup
-  lookupOnError(cb)               // One-way: Error → lookup popup
-  lookupClose()                   // Close lookup popup
+  saveConfig(config) // Save single provider config
+  saveAllProviders(config) // Save all providers at once
+  loadConfig() // Load current provider config
+  loadAllProviders() // Load all providers (for Settings caching)
+  sendMessage(messages) // Send chat messages to AI
+  loadSettings() // Load app settings (hotkey)
+  saveSettings(settings) // Save app settings
+  lookupOnOcr(cb) // One-way: OCR result → lookup popup
+  lookupOnResponse(cb) // One-way: AI response → lookup popup
+  lookupOnError(cb) // One-way: Error → lookup popup
+  lookupClose() // Close lookup popup
 }
 ```
 
@@ -203,12 +217,14 @@ Exposes via `contextBridge`:
 ### `App.tsx` — Main application shell
 
 **State:**
+
 - `view: 'chat' | 'settings'`
 - `messages: Message[]` — chat history
 - `input: string` — composer textarea
 - `loading: boolean` — AI response in progress
 
 **Behavior:**
+
 - Sidebar with "New chat" button (clears messages) and Settings toggle
 - Chat view: message list with auto-scroll, composer with Enter-to-send
 - Settings view: renders `<Settings onBack={() => setView('chat')} />`
@@ -216,20 +232,24 @@ Exposes via `contextBridge`:
 ### `Settings.tsx` — Provider and hotkey configuration
 
 **Structure:**
+
 - **Category tabs** (animation on switch):
   - **General** — Global hotkey configuration (key capture input)
   - **Providers** — Provider selection and credentials
 
 **Provider fields:**
+
 - **Google AI Studio**: API key, model dropdown (presets + custom), custom model text input
 - **OpenAI Compatible**: API key, base URL text input, model ID text input (no presets)
 
 **Caching behavior:**
+
 - All provider configs cached in-memory on mount via `loadAllProviders()`
 - Switching providers loads cached config instantly (no disk I/O)
 - All cached configs saved to disk together on Save button press
 
 **Key functions:**
+
 - `resolveModel(provider)` — returns effective model string
 - `flushToCache()` — writes current form state to in-memory cache
 - `loadFromCache(provider)` — loads cached config into form fields
@@ -237,11 +257,13 @@ Exposes via `contextBridge`:
 - `handleSave()` — flushes all providers to disk via `saveAllProviders()`
 
 **Leaf utilities extracted to module level:**
+
 - `renderCombo(e)` — keyboard event → Electron accelerator string
 
 ### CSS architecture
 
 Files in `assets/`:
+
 - `base.css` — CSS reset, `:root` color variables
 - `chat.css` — sidebar, message list, composer styles
 - `settings.css` — settings page, category tabs, form inputs
@@ -250,6 +272,7 @@ Files in `assets/`:
 ## Configuration file format
 
 **`{userData}/config/providers.json`:**
+
 ```json
 {
   "currentProvider": "google-ai-studio",
@@ -268,6 +291,7 @@ Files in `assets/`:
 ```
 
 **`{userData}/config/settings.json`:**
+
 ```json
 {
   "hotkey": "Ctrl+Shift+D"
@@ -287,24 +311,24 @@ electron.vite.config.ts
 
 ## Platform-specific behavior
 
-| Platform        | Hotkey registration           | Screen capture                    |
-| --------------- | ----------------------------- | --------------------------------- |
-| X11 / macOS / Windows | `globalShortcut.register()` | `desktopCapturer.getSources()`    |
-| KDE Plasma Wayland   | XDG GlobalShortcuts portal  | Screenshot portal (silent)        |
-| GNOME / Other Wayland | XDG GlobalShortcuts portal | `desktopCapturer.getSources()`   |
+| Platform              | Hotkey registration         | Screen capture                 |
+| --------------------- | --------------------------- | ------------------------------ |
+| X11 / macOS / Windows | `globalShortcut.register()` | `desktopCapturer.getSources()` |
+| KDE Plasma Wayland    | XDG GlobalShortcuts portal  | Screenshot portal (silent)     |
+| GNOME / Other Wayland | XDG GlobalShortcuts portal  | `desktopCapturer.getSources()` |
 
 ## Current feature status
 
-| Feature                           | Status     |
-| --------------------------------- | ---------- |
-| ChatGPT-like chat UI              | ✅ Complete |
-| Settings with category tabs       | ✅ Complete |
-| Multi-provider config (cached)    | ✅ Complete |
-| Google AI Studio provider         | ✅ Complete |
-| OpenAI Compatible provider        | ✅ Complete |
-| OCR from screen (full capture)    | ✅ Complete |
-| AI explanation popup              | ✅ Complete |
-| Global hotkey (X11 + Wayland)     | ✅ Complete |
-| Infinite recursive lookup         | ❌ Not started |
-| User knowledge base               | ❌ Not started |
-| Built-in local model              | ❌ Not started |
+| Feature                        | Status         |
+| ------------------------------ | -------------- |
+| ChatGPT-like chat UI           | ✅ Complete    |
+| Settings with category tabs    | ✅ Complete    |
+| Multi-provider config (cached) | ✅ Complete    |
+| Google AI Studio provider      | ✅ Complete    |
+| OpenAI Compatible provider     | ✅ Complete    |
+| OCR from screen (full capture) | ✅ Complete    |
+| AI explanation popup           | ✅ Complete    |
+| Global hotkey (X11 + Wayland)  | ✅ Complete    |
+| Infinite recursive lookup      | ❌ Not started |
+| User knowledge base            | ❌ Not started |
+| Built-in local model           | ❌ Not started |
