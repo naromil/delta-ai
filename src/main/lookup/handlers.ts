@@ -1,13 +1,8 @@
-import {
-  lookupState,
-  doesLookupWindowExist,
-  sendToWindow,
-  notifyContextState
-} from './state'
-import { runOCRTokened } from './lookup/lookup-capture'
-import { callProvider, NoApiKeyError, UnsupportedProviderError } from './provider'
-import type { ProviderMessage } from './provider'
-import { animateGrowWindow, LOOKUP_GROWN_WIDTH, LOOKUP_GROWN_HEIGHT } from './lookup/lookup-window'
+import { lookupState, doesLookupWindowExist, sendToWindow, notifyContextState } from './state'
+import { runOCRTokened } from './capture'
+import { callProvider, NoApiKeyError, UnsupportedProviderError } from '../provider'
+import type { ProviderMessage } from '../provider'
+import { animateGrowWindow, LOOKUP_GROWN_WIDTH, LOOKUP_GROWN_HEIGHT } from './window'
 
 export function handlePasteText(text: string): void {
   if (!doesLookupWindowExist()) return

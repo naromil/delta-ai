@@ -1,4 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
+import HotkeyInput from '../../components/settings/HotkeyInput'
+import GoogleAiForm from '../../components/settings/GoogleAiForm'
+import OpenAiForm from '../../components/settings/OpenAiForm'
 
 // ---- Types ----
 type Category = 'general' | 'providers'
@@ -21,30 +24,6 @@ interface SettingsProps {
   onBack: () => void
 }
 
-// ---- Constants ----
-const GOOGLE_MODELS = [
-  'gemini-3.5-flash',
-  'gemini-3.1-pro',
-  'gemini-3.1-flash-lite',
-  'gemini-2.5-flash',
-  'gemma-4-31b-it',
-  'Custom...'
-] as const
-
-// ---- Real-Time Key Pressed Rendering ----
-function renderCombo(e: React.KeyboardEvent<HTMLInputElement>): string {
-  const parts: string[] = []
-  if (e.ctrlKey) parts.push('Ctrl')
-  if (e.altKey) parts.push('Alt')
-  if (e.shiftKey) parts.push('Shift')
-  if (e.metaKey) parts.push('Meta')
-  const key = e.key
-  if (!['Control', 'Alt', 'Shift', 'Meta'].includes(key)) {
-    parts.push(key.length === 1 ? key.toUpperCase() : key)
-  }
-  return parts.join('+')
-}
-
 function Settings({ onBack }: SettingsProps): React.JSX.Element {
   // ---- State declarations ----
   const [activeCategory, setActiveCategory] = useState<Category>('general')
@@ -57,7 +36,6 @@ function Settings({ onBack }: SettingsProps): React.JSX.Element {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [hotkey, setHotkey] = useState('Ctrl+Shift+D')
-  const [capturingHotkey, setCapturingHotkey] = useState(false)
   const hotkeyRef = useRef(hotkey)
 
   const cacheRef = useRef<AllProvidersConfig>({
@@ -99,7 +77,13 @@ function Settings({ onBack }: SettingsProps): React.JSX.Element {
     if (entry.baseUrl) setBaseUrl(entry.baseUrl)
     if (entry.model) {
       if (provider === 'google-ai-studio') {
-        const known = (GOOGLE_MODELS as readonly string[]).slice(0, -1)
+        const known = [
+          'gemini-3.5-flash',
+          'gemini-3.1-pro',
+          'gemini-3.1-flash-lite',
+          'gemini-2.5-flash',
+          'gemma-4-31b-it'
+        ]
         if (known.includes(entry.model)) {
           setModel(entry.model)
           setIsCustomModel(false)
@@ -116,7 +100,6 @@ function Settings({ onBack }: SettingsProps): React.JSX.Element {
 
   const handleSave = async (): Promise<void> => {
     setSaving(true)
-    // Flush the currently-edited provider into the cache first
     flushToCache()
     cacheRef.current.currentProvider = selectedProvider
 
@@ -133,25 +116,17 @@ function Settings({ onBack }: SettingsProps): React.JSX.Element {
     }
   }
 
-  // ---- Hotkey capture ----
-  const handleHotkeyKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
-    if (!capturingHotkey) return
-    e.preventDefault()
-    e.stopPropagation()
-    const combo = renderCombo(e)
-    if (combo) {
-      hotkeyRef.current = combo
-      setHotkey(combo)
-    }
-  }
-
   // ---- Event handlers ----
   const switchProvider = (provider: string): void => {
-    // Stash the current provider's form state before swapping
     flushToCache()
     setSelectedProvider(provider)
     setSaved(false)
     loadFromCache(provider)
+  }
+
+  const handleHotkeyChange = (combo: string): void => {
+    setHotkey(combo)
+    hotkeyRef.current = combo
   }
 
   /* load existing config + settings on mount */
@@ -183,33 +158,7 @@ function Settings({ onBack }: SettingsProps): React.JSX.Element {
   // ---- Render a category on switch ----
   const renderCategoryContent = (): React.JSX.Element => {
     if (activeCategory === 'general') {
-      return (
-        <>
-          {/* ---- Hotkey settings ---- */}
-          <div className="settings-section">
-            <label className="settings-label" htmlFor="hotkey-input">
-              Global Hotkey
-            </label>
-            <div className="hotkey-row">
-              <input
-                id="hotkey-input"
-                type="text"
-                className="settings-input settings-input--hotkey"
-                value={hotkey}
-                readOnly
-                onKeyDown={handleHotkeyKeyDown}
-                onFocus={() => setCapturingHotkey(true)}
-                onBlur={() => setCapturingHotkey(false)}
-                placeholder={capturingHotkey ? 'Press a key combination…' : 'Click to capture…'}
-              />
-            </div>
-            <p className="settings-hint">
-              Click the field, then press a key combination (e.g. Ctrl+Shift+D). Saved via the Save
-              button below.
-            </p>
-          </div>
-        </>
-      )
+      return <HotkeyInput value={hotkey} onChange={handleHotkeyChange} />
     }
 
     // providers category
@@ -236,111 +185,29 @@ function Settings({ onBack }: SettingsProps): React.JSX.Element {
 
         {/* ---- Provider-specific fields ---- */}
         {selectedProvider === 'google-ai-studio' && (
-          <div className="settings-section provider-config">
-            <label className="settings-label" htmlFor="api-key-input">
-              API Key
-            </label>
-            <input
-              id="api-key-input"
-              type="password"
-              className="settings-input"
-              value={apiKey}
-              onChange={(e) => {
-                setApiKey(e.target.value)
-                setSaved(false)
-              }}
-              placeholder="Enter your Google AI API key…"
-            />
-
-            <label className="settings-label" htmlFor="model-select">
-              Model
-            </label>
-            <select
-              id="model-select"
-              className="settings-select"
-              value={isCustomModel ? 'Custom...' : model}
-              onChange={(e) => {
-                if (e.target.value === 'Custom...') {
-                  setIsCustomModel(true)
-                } else {
-                  setModel(e.target.value)
-                  setIsCustomModel(false)
-                }
-                setSaved(false)
-              }}
-            >
-              {GOOGLE_MODELS.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </select>
-
-            {isCustomModel && (
-              <input
-                type="text"
-                className="settings-input settings-input--custom"
-                spellCheck="false"
-                value={customModel}
-                onChange={(e) => {
-                  setCustomModel(e.target.value)
-                  setSaved(false)
-                }}
-                placeholder="Enter custom model name…"
-              />
-            )}
-          </div>
+          <GoogleAiForm
+            apiKey={apiKey}
+            model={model}
+            customModel={customModel}
+            isCustomModel={isCustomModel}
+            onApiKeyChange={setApiKey}
+            onModelChange={setModel}
+            onCustomModelChange={setCustomModel}
+            onIsCustomModelChange={setIsCustomModel}
+            onDirty={() => setSaved(false)}
+          />
         )}
 
         {selectedProvider === 'openai-compatible' && (
-          <div className="settings-section provider-config">
-            <label className="settings-label" htmlFor="api-key-input">
-              API Key
-            </label>
-            <input
-              id="api-key-input"
-              type="password"
-              className="settings-input"
-              value={apiKey}
-              onChange={(e) => {
-                setApiKey(e.target.value)
-                setSaved(false)
-              }}
-              placeholder="Enter your API key…"
-            />
-
-            <label className="settings-label" htmlFor="base-url-input">
-              Base URL
-            </label>
-            <input
-              id="base-url-input"
-              type="text"
-              className="settings-input"
-              spellCheck="false"
-              value={baseUrl}
-              onChange={(e) => {
-                setBaseUrl(e.target.value)
-                setSaved(false)
-              }}
-              placeholder="https://api.example.com/v1"
-            />
-
-            <label className="settings-label" htmlFor="model-input">
-              Model
-            </label>
-            <input
-              id="model-input"
-              type="text"
-              className="settings-input"
-              spellCheck="false"
-              value={customModel}
-              onChange={(e) => {
-                setCustomModel(e.target.value)
-                setSaved(false)
-              }}
-              placeholder="Enter model ID (e.g. gpt-4)"
-            />
-          </div>
+          <OpenAiForm
+            apiKey={apiKey}
+            baseUrl={baseUrl}
+            customModel={customModel}
+            onApiKeyChange={setApiKey}
+            onBaseUrlChange={setBaseUrl}
+            onCustomModelChange={setCustomModel}
+            onDirty={() => setSaved(false)}
+          />
         )}
       </>
     )
