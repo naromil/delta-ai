@@ -36,6 +36,7 @@ function Settings({ onBack }: SettingsProps): React.JSX.Element {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [hotkey, setHotkey] = useState('Ctrl+Shift+D')
+  const [closeToTray, setCloseToTray] = useState(true)
   const hotkeyRef = useRef(hotkey)
 
   const cacheRef = useRef<AllProvidersConfig>({
@@ -105,7 +106,10 @@ function Settings({ onBack }: SettingsProps): React.JSX.Element {
 
     const allConfig = cacheRef.current
     const saveCfgProm = window.api.saveAllProviders(allConfig)
-    const saveSettingsProm = window.api.saveSettings({ hotkey: hotkeyRef.current })
+    const saveSettingsProm = window.api.saveSettings({
+      hotkey: hotkeyRef.current,
+      closeToTray
+    })
     const [cfgRes] = await Promise.all([saveCfgProm, saveSettingsProm])
     setSaving(false)
     if (cfgRes.success) {
@@ -150,6 +154,9 @@ function Settings({ onBack }: SettingsProps): React.JSX.Element {
         setHotkey(s.hotkey)
         hotkeyRef.current = s.hotkey
       }
+      if (s?.closeToTray !== undefined) {
+        setCloseToTray(s.closeToTray)
+      }
     })
   }, [])
 
@@ -158,7 +165,28 @@ function Settings({ onBack }: SettingsProps): React.JSX.Element {
   // ---- Render a category on switch ----
   const renderCategoryContent = (): React.JSX.Element => {
     if (activeCategory === 'general') {
-      return <HotkeyInput value={hotkey} onChange={handleHotkeyChange} />
+      return (
+        <>
+          <HotkeyInput value={hotkey} onChange={handleHotkeyChange} />
+          <div className="settings-section">
+            <label className="settings-label">Close to system tray</label>
+            <label className="toggle-row">
+              <input
+                type="checkbox"
+                className="toggle-input"
+                checked={closeToTray}
+                onChange={(e) => setCloseToTray(e.target.checked)}
+              />
+              <span className="toggle-track">
+                <span className="toggle-thumb" />
+              </span>
+              <span className="toggle-label">
+                {closeToTray ? 'Closing hides to tray' : 'Closing quits the app'}
+              </span>
+            </label>
+          </div>
+        </>
+      )
     }
 
     // providers category

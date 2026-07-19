@@ -12,9 +12,12 @@ const api = {
     messages: Array<{ role: string; content: string }>
   ): Promise<{ success: boolean; response?: string; error?: string }> =>
     ipcRenderer.invoke('send-message', messages),
-  loadSettings: (): Promise<{ hotkey: string }> => ipcRenderer.invoke('load-settings'),
-  saveSettings: (settings: { hotkey: string }): Promise<{ success: boolean }> =>
-    ipcRenderer.invoke('save-settings', settings),
+  loadSettings: (): Promise<{ hotkey: string; closeToTray: boolean }> =>
+    ipcRenderer.invoke('load-settings'),
+  saveSettings: (settings: {
+    hotkey: string
+    closeToTray: boolean
+  }): Promise<{ success: boolean }> => ipcRenderer.invoke('save-settings', settings),
 
   /* Lookup-overlay channels (one-way, main → overlay page) */
   lookupOnContext: (cb: (state: { status: string; text: string; hint: string }) => void) =>

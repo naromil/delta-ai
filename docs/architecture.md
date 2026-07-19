@@ -243,22 +243,22 @@ Exposes via `contextBridge`:
 
 ```typescript
 {
-  saveConfig(config)                // Save single provider config
-  saveAllProviders(config)          // Save all providers at once
-  loadConfig()                      // Load current provider config
-  loadAllProviders()                // Load all providers (for Settings caching)
-  sendMessage(messages)             // Send chat messages to AI
-  loadSettings()                    // Load app settings (hotkey)
-  saveSettings(settings)            // Save app settings
-  lookupOnContext(cb)               // One-way: {status, text, hint} → lookup popup (context state)
-  lookupOnResponse(cb)              // One-way: AI response → lookup popup
-  lookupOnError(cb)                 // One-way: Error → lookup popup
-  lookupOnGrow(cb)                  // One-way: (width, height) → lookup popup (grow animation)
-  lookupAsk(question)               // Renderer→main: send user's question
-  lookupPasteText(text)             // Renderer→main: pasted text as context
-  lookupPasteImage(base64)          // Renderer→main: pasted image for OCR
-  lookupInputChanged(hasText)       // Renderer→main: whether Ask field has text (guards blur-to-close)
-  lookupClose()                     // Renderer→main: close the popup
+  saveConfig(config) // Save single provider config
+  saveAllProviders(config) // Save all providers at once
+  loadConfig() // Load current provider config
+  loadAllProviders() // Load all providers (for Settings caching)
+  sendMessage(messages) // Send chat messages to AI
+  loadSettings() // Load app settings (hotkey)
+  saveSettings(settings) // Save app settings
+  lookupOnContext(cb) // One-way: {status, text, hint} → lookup popup (context state)
+  lookupOnResponse(cb) // One-way: AI response → lookup popup
+  lookupOnError(cb) // One-way: Error → lookup popup
+  lookupOnGrow(cb) // One-way: (width, height) → lookup popup (grow animation)
+  lookupAsk(question) // Renderer→main: send user's question
+  lookupPasteText(text) // Renderer→main: pasted text as context
+  lookupPasteImage(base64) // Renderer→main: pasted image for OCR
+  lookupInputChanged(hasText) // Renderer→main: whether Ask field has text (guards blur-to-close)
+  lookupClose() // Renderer→main: close the popup
 }
 ```
 

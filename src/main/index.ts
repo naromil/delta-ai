@@ -1,9 +1,9 @@
-import { app, shell, BrowserWindow, ipcMain, globalShortcut } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, globalShortcut, Tray, Menu } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { unregisterGlobalShortcutPortal } from './services/global-shortcut'
-import { loadAppSettings, registerHotkey } from './config'
+import { loadAppSettings, registerHotkey, currentCloseToTray } from './config'
 import { handleHotkeyPressed } from './lookup/lookup'
 import { callProvider } from './provider'
 import type { ProviderMessage } from './provider'
@@ -53,6 +53,47 @@ app.on('window-all-closed', () => {
   }
 })
 
+/* ---- Tray ---- */
+let tray: Tray | null = null
+let isQuitting = false
+
+app.on('before-quit', () => {
+  isQuitting = true
+})
+
+function createTray(mainWindow: BrowserWindow): void {
+  tray = new Tray(icon)
+  tray.setToolTip('Delta AI')
+
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: 'Show Delta AI',
+      click: () => {
+        mainWindow.show()
+        mainWindow.focus()
+      }
+    },
+    { type: 'separator' },
+    {
+      label: 'Quit',
+      click: () => {
+        app.quit()
+      }
+    }
+  ])
+
+  tray.setContextMenu(contextMenu)
+
+  tray.on('click', () => {
+    if (mainWindow.isVisible()) {
+      mainWindow.focus()
+    } else {
+      mainWindow.show()
+      mainWindow.focus()
+    }
+  })
+}
+
 /* ---- Main window ---- */
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -72,6 +113,13 @@ function createWindow(): void {
     mainWindow.show()
   })
 
+  mainWindow.on('close', (event) => {
+    if (currentCloseToTray && !isQuitting) {
+      event.preventDefault()
+      mainWindow.hide()
+    }
+  })
+
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)
     return { action: 'deny' }
@@ -82,4 +130,6 @@ function createWindow(): void {
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
+
+  createTray(mainWindow)
 }

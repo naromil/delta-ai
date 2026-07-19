@@ -21,6 +21,7 @@ interface AllProvidersConfig {
 
 interface AppSettings {
   hotkey: string
+  closeToTray: boolean
 }
 
 /* ---- Wayland detection ----
@@ -71,13 +72,17 @@ export async function registerHotkey(accelerator: string, onPressed: () => void)
   return success
 }
 
+export let currentCloseToTray = true
+
 export function loadAppSettings(): AppSettings {
-  const defaults: AppSettings = { hotkey: 'Ctrl+Shift+D' }
+  const defaults: AppSettings = { hotkey: 'Ctrl+Shift+D', closeToTray: true }
   try {
     const settingsPath = join(app.getPath('userData'), 'config', 'settings.json')
     if (existsSync(settingsPath)) {
       const loaded = JSON.parse(readFileSync(settingsPath, 'utf-8'))
-      return { ...defaults, ...loaded }
+      const settings = { ...defaults, ...loaded }
+      currentCloseToTray = settings.closeToTray
+      return settings
     }
   } catch {
     // ignore
@@ -132,6 +137,7 @@ app.whenReady().then(() => {
     async (_event, settings: AppSettings): Promise<{ success: boolean }> => {
       const ok = saveAppSettings(settings)
       if (ok) {
+        currentCloseToTray = settings.closeToTray
         // Re-register hotkey
         await registerHotkey(settings.hotkey, handleHotkeyPressed)
       }

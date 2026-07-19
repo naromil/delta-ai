@@ -11,8 +11,11 @@ declare global {
       sendMessage: (
         messages: Array<{ role: string; content: string }>
       ) => Promise<{ success: boolean; response?: string; error?: string }>
-      loadSettings: () => Promise<{ hotkey: string }>
-      saveSettings: (settings: { hotkey: string }) => Promise<{ success: boolean }>
+      loadSettings: () => Promise<{ hotkey: string; closeToTray: boolean }>
+      saveSettings: (settings: {
+        hotkey: string
+        closeToTray: boolean
+      }) => Promise<{ success: boolean }>
       /* Lookup overlay channels (one-way) */
       lookupOnContext: (cb: (state: { status: string; text: string; hint: string }) => void) => void
       lookupOnResponse: (cb: (response: string) => void) => void
