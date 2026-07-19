@@ -1,5 +1,29 @@
 import { loadCurrentProviderConfig } from './config'
 
+const FETCH_TIMEOUT_MS = 30_000
+
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit & { timeout?: number }
+): Promise<Response> {
+  const timeout = options.timeout ?? FETCH_TIMEOUT_MS
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeout)
+  try {
+    const res = await fetch(url, { ...options, signal: options.signal ?? controller.signal })
+    return res
+  } catch (err) {
+    if ((err as DOMException)?.name == 'AbortError') {
+      throw new Error(
+        `Request timed out after ${timeout / 1000}s. Check your API endpoint and network connection.`
+      )
+    }
+    throw err
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 export interface ProviderMessage {
   role: string
   content: string
@@ -104,7 +128,7 @@ async function* callOpenAICompatibleStream(
     body.tools = [{ type: 'web_search' }]
   }
 
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -156,7 +180,7 @@ async function* callGeminiWithSearchStream(
     body.system_instruction = { parts: [{ text: systemInstruction }] }
   }
 
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
@@ -233,7 +257,7 @@ async function callOpenAICompatible(
     body.tools = [{ type: 'web_search' }]
   }
 
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -284,7 +308,7 @@ async function callGeminiWithSearch(
     body.system_instruction = { parts: [{ text: systemInstruction }] }
   }
 
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
