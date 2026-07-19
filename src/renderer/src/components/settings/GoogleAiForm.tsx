@@ -12,10 +12,12 @@ interface GoogleAiFormProps {
   model: string
   customModel: string
   isCustomModel: boolean
+  webSearchEnabled: boolean
   onApiKeyChange: (v: string) => void
   onModelChange: (v: string) => void
   onCustomModelChange: (v: string) => void
   onIsCustomModelChange: (v: boolean) => void
+  onWebSearchChange: (v: boolean) => void
   onDirty: () => void
 }
 
@@ -24,10 +26,12 @@ function GoogleAiForm({
   model,
   customModel,
   isCustomModel,
+  webSearchEnabled,
   onApiKeyChange,
   onModelChange,
   onCustomModelChange,
   onIsCustomModelChange,
+  onWebSearchChange,
   onDirty
 }: GoogleAiFormProps): React.JSX.Element {
   return (
@@ -84,6 +88,25 @@ function GoogleAiForm({
           placeholder="Enter custom model name…"
         />
       )}
+
+      <label className="settings-label">Web Search</label>
+      <label className="toggle-row">
+        <input
+          type="checkbox"
+          className="toggle-input"
+          checked={webSearchEnabled}
+          onChange={(e) => {
+            onWebSearchChange(e.target.checked)
+            onDirty()
+          }}
+        />
+        <span className="toggle-track">
+          <span className="toggle-thumb" />
+        </span>
+        <span className="toggle-label">
+          {webSearchEnabled ? 'Uses Google Search grounding via Gemini API' : 'Disabled'}
+        </span>
+      </label>
     </div>
   )
 }

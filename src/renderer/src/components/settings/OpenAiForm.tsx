@@ -2,9 +2,11 @@ interface OpenAiFormProps {
   apiKey: string
   baseUrl: string
   customModel: string
+  webSearchEnabled: boolean
   onApiKeyChange: (v: string) => void
   onBaseUrlChange: (v: string) => void
   onCustomModelChange: (v: string) => void
+  onWebSearchChange: (v: boolean) => void
   onDirty: () => void
 }
 
@@ -12,9 +14,11 @@ function OpenAiForm({
   apiKey,
   baseUrl,
   customModel,
+  webSearchEnabled,
   onApiKeyChange,
   onBaseUrlChange,
   onCustomModelChange,
+  onWebSearchChange,
   onDirty
 }: OpenAiFormProps): React.JSX.Element {
   return (
@@ -65,6 +69,27 @@ function OpenAiForm({
         }}
         placeholder="Enter model ID (e.g. gpt-4)"
       />
+
+      <label className="settings-label">Web Search</label>
+      <label className="toggle-row">
+        <input
+          type="checkbox"
+          className="toggle-input"
+          checked={webSearchEnabled}
+          onChange={(e) => {
+            onWebSearchChange(e.target.checked)
+            onDirty()
+          }}
+        />
+        <span className="toggle-track">
+          <span className="toggle-thumb" />
+        </span>
+        <span className="toggle-label">{webSearchEnabled ? 'Enabled' : 'Disabled'}</span>
+      </label>
+      <p className="settings-warning">
+        Web search is a provider-specific extension. Many OpenAI-compatible endpoints do not support
+        it. Check your provider&apos;s documentation before enabling.
+      </p>
     </div>
   )
 }

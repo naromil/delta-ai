@@ -3,6 +3,7 @@ import { isSessionAlive, sendToSession, notifySessionState } from './state'
 import { runOCRTokenedFor } from './capture'
 import { callProvider, NoApiKeyError, UnsupportedProviderError } from '../provider'
 import type { ProviderMessage } from '../provider'
+import { loadCurrentProviderConfig } from '../config'
 import { animateGrowSession, LOOKUP_GROWN_WIDTH, LOOKUP_GROWN_HEIGHT } from './window'
 
 export function handlePasteText(session: LookupSession, text: string): void {
@@ -71,7 +72,9 @@ export async function handleLookupAsk(session: LookupSession, question: string):
   messages.push({ role: 'user', content: completeQuestion })
 
   try {
-    const response = await callProvider(messages)
+    const providerCfg = loadCurrentProviderConfig()
+    const webSearchEnabled = providerCfg?.webSearchEnabled ?? false
+    const response = await callProvider(messages, webSearchEnabled)
     sendToSession(session, 'ai-response', response)
   } catch (err) {
     const msg =

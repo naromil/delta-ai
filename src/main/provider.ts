@@ -8,7 +8,10 @@ export interface ProviderMessage {
 export class NoApiKeyError extends Error {}
 export class UnsupportedProviderError extends Error {}
 
-export async function callProvider(messages: ProviderMessage[]): Promise<string> {
+export async function callProvider(
+  messages: ProviderMessage[],
+  webSearchEnabled = false
+): Promise<string> {
   const config = loadCurrentProviderConfig()
   if (!config || !config.apiKey) {
     throw new NoApiKeyError('No API key configured. Open Settings to add your provider API key.')
@@ -16,6 +19,9 @@ export async function callProvider(messages: ProviderMessage[]): Promise<string>
 
   switch (config.provider) {
     case 'google-ai-studio':
+      if (webSearchEnabled) {
+        return await callGeminiWithSearch(config.apiKey, config.model, messages)
+      }
       return await callOpenAICompatible(
         config.apiKey,
         config.model,
@@ -26,7 +32,13 @@ export async function callProvider(messages: ProviderMessage[]): Promise<string>
       if (!config.baseUrl) {
         throw new NoApiKeyError('Base URL is required for OpenAI Compatible provider.')
       }
-      return await callOpenAICompatible(config.apiKey, config.model, messages, config.baseUrl)
+      return await callOpenAICompatible(
+        config.apiKey,
+        config.model,
+        messages,
+        config.baseUrl,
+        webSearchEnabled
+      )
     default:
       throw new UnsupportedProviderError(`Provider "${config.provider}" is not supported yet.`)
   }
@@ -36,10 +48,20 @@ async function callOpenAICompatible(
   apiKey: string,
   model: string,
   messages: ProviderMessage[],
-  baseUrl: string
+  baseUrl: string,
+  webSearchEnabled = false
 ): Promise<string> {
   const normalizedBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl
   const url = `${normalizedBaseUrl}/chat/completions`
+
+  const body: Record<string, unknown> = {
+    model,
+    messages
+  }
+
+  if (webSearchEnabled) {
+    body.tools = [{ type: 'web_search' }]
+  }
 
   const res = await fetch(url, {
     method: 'POST',
@@ -47,10 +69,7 @@ async function callOpenAICompatible(
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`
     },
-    body: JSON.stringify({
-      model,
-      messages
-    })
+    body: JSON.stringify(body)
   })
 
   if (!res.ok) {
@@ -60,5 +79,67 @@ async function callOpenAICompatible(
 
   const data = await res.json()
   const text: string = data?.choices?.[0]?.message?.content ?? '(No response received)'
+  return text
+}
+
+async function callGeminiWithSearch(
+  apiKey: string,
+  model: string,
+  messages: ProviderMessage[]
+): Promise<string> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
+
+  let systemInstruction: string | null = null
+  const contents: Array<{ role: string; parts: Array<{ text: string }> }> = []
+
+  for (const msg of messages) {
+    if (msg.role === 'system' && !systemInstruction) {
+      systemInstruction = msg.content
+    } else if (msg.role === 'system') {
+      contents.push({ role: 'user', parts: [{ text: msg.content }] })
+    } else {
+      contents.push({
+        role: msg.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: msg.content }]
+      })
+    }
+  }
+
+  const body: Record<string, unknown> = {
+    contents,
+    tools: [{ googleSearch: {} }]
+  }
+
+  if (systemInstruction) {
+    body.system_instruction = { parts: [{ text: systemInstruction }] }
+  }
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  })
+
+  if (!res.ok) {
+    const errText = await res.text()
+    throw new Error(`Gemini API error ${res.status}: ${errText}`)
+  }
+
+  const data = await res.json()
+
+  if (data.promptFeedback?.blockReason) {
+    throw new Error(`Request blocked: ${data.promptFeedback.blockReason}`)
+  }
+
+  const candidate = data?.candidates?.[0]
+  if (!candidate) {
+    throw new Error('No response from Gemini API')
+  }
+
+  if (candidate.finishReason && candidate.finishReason !== 'STOP') {
+    throw new Error(`Gemini request terminated: ${candidate.finishReason}`)
+  }
+
+  const text: string = candidate?.content?.parts?.[0]?.text ?? '(No response received)'
   return text
 }

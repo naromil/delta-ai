@@ -10,6 +10,7 @@ type ProviderConfig = {
   apiKey: string
   model: string
   baseUrl?: string
+  webSearchEnabled?: boolean
 }
 
 type AllProvidersConfig = {
@@ -33,6 +34,7 @@ function Settings({ onBack }: SettingsProps): React.JSX.Element {
   const [model, setModel] = useState('gemini-3.5-flash')
   const [customModel, setCustomModel] = useState('')
   const [isCustomModel, setIsCustomModel] = useState(false)
+  const [webSearchEnabled, setWebSearchEnabled] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [hotkey, setHotkey] = useState('Ctrl+Shift+D')
@@ -58,6 +60,7 @@ function Settings({ onBack }: SettingsProps): React.JSX.Element {
     const entry: ProviderConfig = {
       apiKey,
       model: finalModel,
+      webSearchEnabled,
       ...(provider === 'openai-compatible' && baseUrl ? { baseUrl } : {})
     }
     cacheRef.current.providers[provider as keyof typeof cacheRef.current.providers] = entry
@@ -72,10 +75,12 @@ function Settings({ onBack }: SettingsProps): React.JSX.Element {
     setModel('gemini-3.5-flash')
     setCustomModel('')
     setIsCustomModel(false)
+    setWebSearchEnabled(false)
 
     if (!entry) return
     if (entry.apiKey) setApiKey(entry.apiKey)
     if (entry.baseUrl) setBaseUrl(entry.baseUrl)
+    if (entry.webSearchEnabled) setWebSearchEnabled(entry.webSearchEnabled)
     if (entry.model) {
       if (provider === 'google-ai-studio') {
         const known = [
@@ -218,10 +223,12 @@ function Settings({ onBack }: SettingsProps): React.JSX.Element {
             model={model}
             customModel={customModel}
             isCustomModel={isCustomModel}
+            webSearchEnabled={webSearchEnabled}
             onApiKeyChange={setApiKey}
             onModelChange={setModel}
             onCustomModelChange={setCustomModel}
             onIsCustomModelChange={setIsCustomModel}
+            onWebSearchChange={setWebSearchEnabled}
             onDirty={() => setSaved(false)}
           />
         )}
@@ -231,9 +238,11 @@ function Settings({ onBack }: SettingsProps): React.JSX.Element {
             apiKey={apiKey}
             baseUrl={baseUrl}
             customModel={customModel}
+            webSearchEnabled={webSearchEnabled}
             onApiKeyChange={setApiKey}
             onBaseUrlChange={setBaseUrl}
             onCustomModelChange={setCustomModel}
+            onWebSearchChange={setWebSearchEnabled}
             onDirty={() => setSaved(false)}
           />
         )}

@@ -9,6 +9,7 @@ interface ProviderConfig {
   apiKey: string
   model: string
   baseUrl?: string
+  webSearchEnabled?: boolean
 }
 
 interface AllProvidersConfig {
@@ -154,7 +155,13 @@ app.whenReady().then(() => {
     'save-config',
     (
       _event,
-      config: { provider: string; apiKey: string; model: string; baseUrl?: string }
+      config: {
+        provider: string
+        apiKey: string
+        model: string
+        baseUrl?: string
+        webSearchEnabled?: boolean
+      }
     ): { success: boolean } => {
       try {
         const configDir = ensureConfigDir()
@@ -180,6 +187,7 @@ app.whenReady().then(() => {
         allConfig.providers[config.provider as keyof typeof allConfig.providers] = {
           apiKey: config.apiKey,
           model: config.model,
+          webSearchEnabled: config.webSearchEnabled ?? false,
           ...(config.baseUrl ? { baseUrl: config.baseUrl } : {})
         }
 
