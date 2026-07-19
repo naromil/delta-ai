@@ -22,6 +22,8 @@ const api = {
   /* Lookup-overlay channels (one-way, main → overlay page) */
   lookupOnContext: (cb: (state: { status: string; text: string; hint: string }) => void) =>
     ipcRenderer.on('lookup-context', (_e, state) => cb(state)),
+  lookupOnChunk: (cb: (text: string) => void) =>
+    ipcRenderer.on('lookup-ai-chunk', (_e, text) => cb(text)),
   lookupOnResponse: (cb: (response: string) => void) =>
     ipcRenderer.on('ai-response', (_e, response) => cb(response)),
   lookupOnError: (cb: (err: string) => void) => ipcRenderer.on('ai-error', (_e, err) => cb(err)),

@@ -18,6 +18,7 @@ declare global {
       }) => Promise<{ success: boolean }>
       /* Lookup overlay channels (one-way) */
       lookupOnContext: (cb: (state: { status: string; text: string; hint: string }) => void) => void
+      lookupOnChunk: (cb: (text: string) => void) => void
       lookupOnResponse: (cb: (response: string) => void) => void
       lookupOnError: (cb: (err: string) => void) => void
       /* Lookup ask (renderer → main: send the user's question with OCR context) */

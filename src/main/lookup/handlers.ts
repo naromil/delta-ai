@@ -1,7 +1,7 @@
 import type { LookupSession } from './state'
 import { isSessionAlive, sendToSession, notifySessionState } from './state'
 import { runOCRTokenedFor } from './capture'
-import { callProvider, NoApiKeyError, UnsupportedProviderError } from '../provider'
+import { callProviderStream, NoApiKeyError, UnsupportedProviderError } from '../provider'
 import type { ProviderMessage } from '../provider'
 import { loadCurrentProviderConfig } from '../config'
 import { animateGrowSession, LOOKUP_GROWN_WIDTH, LOOKUP_GROWN_HEIGHT } from './window'
@@ -74,8 +74,13 @@ export async function handleLookupAsk(session: LookupSession, question: string):
   try {
     const providerCfg = loadCurrentProviderConfig()
     const webSearchEnabled = providerCfg?.webSearchEnabled ?? false
-    const response = await callProvider(messages, webSearchEnabled)
-    sendToSession(session, 'ai-response', response)
+
+    let fullResponse = ''
+    for await (const chunk of callProviderStream(messages, webSearchEnabled)) {
+      fullResponse += chunk
+      sendToSession(session, 'lookup-ai-chunk', fullResponse)
+    }
+    sendToSession(session, 'ai-response', fullResponse)
   } catch (err) {
     const msg =
       err instanceof NoApiKeyError || err instanceof UnsupportedProviderError

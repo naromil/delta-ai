@@ -253,7 +253,16 @@ export const lookUpHTML = `<!DOCTYPE html>
         flashHint(null);
       });
 
+      w.lookupOnChunk(function (text) {
+        var turns = convEl.querySelectorAll('.turn.ai');
+        var el = turns.length ? turns[turns.length - 1] : addTurn('ai', '');
+        el.textContent = text;
+        el.classList.remove('loading');
+        convEl.scrollTop = convEl.scrollHeight;
+      });
+
       w.lookupOnResponse(function (response) {
+        // Streaming already delivered the full text; this is a safety net.
         replaceLastAi(response, '');
       });
 
