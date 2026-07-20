@@ -2,7 +2,7 @@ import { screen, BrowserWindow } from 'electron'
 import { join } from 'path/posix'
 import { lookUpHTML } from './html'
 import { clamp, type LookupSession } from './state'
-import { handleLookupAsk, handlePasteText, handlePasteImage } from './handlers'
+import { handleLookupAsk, handleLookupExpand, handlePasteText, handlePasteImage } from './handlers'
 
 /* ---- Constants ---- */
 export const LOOKUP_WINDOW_WIDTH = 420
@@ -74,6 +74,30 @@ export function createLookupSession(cursorX: number, cursorY: number): LookupSes
     })
   })
 
+  window.webContents.ipc.on(
+    'lookup-expand',
+    (
+      _event,
+      payload: {
+        context: string
+        question: string
+        answer: string
+        selection: string
+        expansionId: number
+      }
+    ) => {
+      handleLookupExpand(session, payload).catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err)
+        if (!session.window.isDestroyed()) {
+          session.window.webContents.send('lookup-expand-chunk', {
+            expansionId: payload.expansionId,
+            error: msg
+          })
+        }
+      })
+    }
+  )
+
   window.webContents.ipc.on('lookup-paste-text', (_event, text: string) => {
     handlePasteText(session, text)
   })
@@ -109,7 +133,9 @@ export const lookupSessions: LookupSession[] = []
 export function animateGrowSession(
   session: LookupSession,
   targetWidth: number,
-  targetHeight: number
+  targetHeight: number,
+  targetX?: number,
+  targetY?: number
 ): void {
   const win = session.window
   if (win.isDestroyed()) return
@@ -118,6 +144,13 @@ export function animateGrowSession(
   if (startWidth === targetWidth && startHeight === targetHeight) return
 
   const [startX, startY] = win.getPosition()
+  // If a target position is not provided, re-center around the original
+  // window center (the Ask-flow grow behaviour). If it is provided,
+  // animate position toward that target.
+  const endX = targetX !== undefined ? targetX : startX - (targetWidth - startWidth) / 2
+  const endY = targetY !== undefined ? targetY : startY - (targetHeight - startHeight) / 2
+  const xDelta = endX - startX
+  const yDelta = endY - startY
   const wDelta = targetWidth - startWidth
   const hDelta = targetHeight - startHeight
   const stepMs = Math.max(1, Math.floor(GROW_DURATION_MS / GROW_STEPS))
@@ -129,13 +162,16 @@ export function animateGrowSession(
     const eased = 1 - Math.pow(1 - t, 3)
     const w = Math.round(startWidth + wDelta * eased)
     const h = Math.round(startHeight + hDelta * eased)
+    const x =
+      targetX !== undefined
+        ? Math.round(startX + xDelta * eased)
+        : startX - Math.round((w - startWidth) / 2)
+    const y =
+      targetY !== undefined
+        ? Math.round(startY + yDelta * eased)
+        : startY - Math.round((h - startHeight) / 2)
     if (!win.isDestroyed()) {
-      win.setBounds({
-        x: startX - Math.round((w - startWidth) / 2),
-        y: startY - Math.round((h - startHeight) / 2),
-        width: w,
-        height: h
-      })
+      win.setBounds({ x, y, width: w, height: h })
     }
     if (step >= GROW_STEPS) {
       clearInterval(interval)

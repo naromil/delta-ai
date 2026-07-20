@@ -30,6 +30,18 @@ declare global {
       lookupInputChanged: (hasText: boolean) => void
       /* Lookup grow (main → renderer: animate the window larger to show the conversation) */
       lookupOnGrow: (cb: (width: number, height: number) => void) => void
+      /* Lookup expand (renderer → main: user asked to expand a word/excerpt in the answer) */
+      lookupExpand: (payload: {
+        context: string
+        question: string
+        answer: string
+        selection: string
+        expansionId: number
+      }) => void
+      /* Lookup expand-chunk (main → renderer: streaming expansion keyed by expansionId) */
+      lookupOnExpandChunk: (
+        cb: (chunk: { expansionId: number; text?: string; error?: string }) => void
+      ) => void
       lookupClose: () => void
     }
   }

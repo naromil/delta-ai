@@ -6,6 +6,14 @@ import type { ProviderMessage } from '../provider'
 import { loadCurrentProviderConfig } from '../config'
 import { animateGrowSession, LOOKUP_GROWN_WIDTH, LOOKUP_GROWN_HEIGHT } from './window'
 
+export interface ExpandPayload {
+  context: string
+  question: string
+  answer: string
+  selection: string
+  expansionId: number
+}
+
 export function handlePasteText(session: LookupSession, text: string): void {
   if (!isSessionAlive(session)) return
   session.ocrToken++
@@ -89,5 +97,80 @@ export async function handleLookupAsk(session: LookupSession, question: string):
           ? err.message
           : String(err)
     sendToSession(session, 'ai-error', msg)
+  }
+}
+
+/**
+ * Handles an "expand" request from the lookup window: the user has selected
+ * a word/excerpt inside an AI answer and asked for an inline expansion.
+ *
+ * On the first expansion we grow the window to its centered work-area max
+ * (per spec point 2). The expansion request itself is a tame prompt built
+ * from the original context + question + surrounding answer + the selected
+ * excerpt, and the streaming chunk is delivered back tagged with the
+ * caller's expansionId.
+ */
+export async function handleLookupExpand(
+  session: LookupSession,
+  payload: ExpandPayload
+): Promise<void> {
+  const { context, question, answer, selection, expansionId } = payload
+  if (!isSessionAlive(session)) return
+  if (!selection.trim()) return
+
+  const messages: ProviderMessage[] = []
+  messages.push({
+    role: 'system',
+    content: [
+      'You are DeltaAI, a helpful assistant in the software\'s "lookup" window.',
+      'You will help the user approach something they are not familiar with conveniently and effectively.',
+      'The context will be extracted from the screen (often via OCR), and the user will ask you to analyze it or answer questions about it.',
+      "Always use web search to answer the user's questions if the answer cannot be determined from the context.",
+      'If the context is extracted via OCR, it may contain errors; ask for clarification when necessary, but do not mention about OCR.',
+      'Answer in simple and concise words.'
+    ].join('')
+  })
+  if (context) {
+    messages.push({
+      role: 'user',
+      content: `The following context was extracted from my screen:\n\n"${context}"`
+    })
+  }
+  if (question) {
+    messages.push({
+      role: 'user',
+      content: `My initial question was: ${question}`
+    })
+  }
+  messages.push({
+    role: 'assistant',
+    content: answer || '(empty answer)'
+  })
+  messages.push({
+    role: 'user',
+    content: [
+      `Explain just the word "${selection}" from the text above.`,
+      'Only explain this specific word — do not explain other words or surrounding context.',
+      'Keep it to one or two short sentences. Respond in inline text only.'
+    ].join(' ')
+  })
+
+  try {
+    const providerCfg = loadCurrentProviderConfig()
+    const webSearchEnabled = providerCfg?.webSearchEnabled ?? false
+
+    let fullResponse = ''
+    for await (const chunk of callProviderStream(messages, webSearchEnabled)) {
+      fullResponse += chunk
+      sendToSession(session, 'lookup-expand-chunk', { expansionId, text: fullResponse })
+    }
+  } catch (err) {
+    const msg =
+      err instanceof NoApiKeyError || err instanceof UnsupportedProviderError
+        ? err.message
+        : err instanceof Error
+          ? err.message
+          : String(err)
+    sendToSession(session, 'lookup-expand-chunk', { expansionId, error: msg })
   }
 }

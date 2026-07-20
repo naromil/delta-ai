@@ -151,19 +151,19 @@ Enforced by ESLint + Prettier config; match what already exists:
 
 ## Key modules (what to touch when)
 
-| Task                                   | File(s)                                                                 |
-| -------------------------------------- | ----------------------------------------------------------------------- |
-| Add an AI provider                     | `provider.ts` (`callProvider` switch)                                   |
-| Change the OCR/capture pipeline        | `lookup/capture.ts`                                                     |
-| Change the hotkey response flow        | `lookup/lookup.ts` (`handleHotkeyPressed`)                              |
-| Re-position / restyle the lookup popup | `lookup/window.ts` + `lookup/html.ts`                                   |
-| Persist or load user config/settings   | `config.ts`                                                             |
-| Wayland global-shortcut binding        | `services/global-shortcut.ts`                                           |
-| KDE Wayland silent screenshot          | `services/screen-capture.ts`                                            |
-| Renderer chat UI                       | `src/renderer/src/views/chat/ChatView.tsx`                              |
-| Settings form                          | `src/renderer/src/views/settings/Settings.tsx`                          |
+| Task                                   | File(s)                                                                    |
+| -------------------------------------- | -------------------------------------------------------------------------- |
+| Add an AI provider                     | `provider.ts` (`callProvider` switch)                                      |
+| Change the OCR/capture pipeline        | `lookup/capture.ts`                                                        |
+| Change the hotkey response flow        | `lookup/lookup.ts` (`handleHotkeyPressed`)                                 |
+| Re-position / restyle the lookup popup | `lookup/window.ts` + `lookup/html.ts`                                      |
+| Persist or load user config/settings   | `config.ts`                                                                |
+| Wayland global-shortcut binding        | `services/global-shortcut.ts`                                              |
+| KDE Wayland silent screenshot          | `services/screen-capture.ts`                                               |
+| Renderer chat UI                       | `src/renderer/src/views/chat/ChatView.tsx`                                 |
+| Settings form                          | `src/renderer/src/views/settings/Settings.tsx`                             |
 | Provider config form                   | `src/renderer/src/components/settings/GoogleAiForm.tsx` / `OpenAiForm.tsx` |
-| Add a new IPC channel                  | preload `index.ts` + `.d.ts`, then main `index.ts`/`config.ts`          |
+| Add a new IPC channel                  | preload `index.ts` + `.d.ts`, then main `index.ts`/`config.ts`             |
 
 ## Conventions worth remembering
 
