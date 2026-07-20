@@ -1,7 +1,7 @@
 # Delta AI — Architecture
 
 > Auto-generated from source as built. Update after major changes to provide essential context about the project.
-> Last updated: 2026-07-17
+> Last updated: 2026-07-20
 
 ## High-level stack
 
@@ -73,16 +73,17 @@ Preload (contextBridge)      src/preload/index.ts (+ index.d.ts)
 Main process (Node)          src/main/
     ├── index.ts            App lifecycle + main window + send-message IPC
     ├── config.ts           Config persistence, Wayland detection, hotkey registry
-    ├── provider.ts         Provider dispatch (callProvider, callOpenAICompatible)
+    ├── provider.ts         Provider dispatch (callProvider, callProviderStream)
     ├── lookup/
     │   ├── lookup.ts      Orchestrator: handleHotkeyPressed entry point
     │   ├── capture.ts     Screen capture + OCR (tesseract worker)
-    │   ├── handlers.ts    Paste + Ask handlers (operate on per-session state)
+    │   ├── handlers.ts    Paste, Ask, and Expand handlers (operate on per-session state)
+    │   ├── html.ts        Inline HTML/CSS/JS for lookup popup (data: URL)
     │   ├── state.ts       Per-window LookupSession interface + helpers
-    │   └── window.ts      Lookup popup window + grow animation (per-session)
+    │   └── window.ts      Lookup popup window + grow animation + IPC wiring (per-session)
     └── services/
         ├── global-shortcut.ts   XDG GlobalShortcuts D-Bus (Wayland)
-        └── screen-capture.ts    Freedesktop Screenshot D-Bus (KDE Wayland)
+        └── screen-capture.ts    Freedesktop Screenshot (KDE Wayland)
     ▼
 OS  (fs {userData}/config/, Google Gemini API / OpenAI-compatible endpoints,
      tesseract WASM, D-Bus portals, desktopCapturer)
@@ -189,7 +190,9 @@ per-window `LookupSession` object in `state.ts`; handlers operate on the passed-
 
 - `handlePasteText(session, text)` — bumps session token, sets text as context, marks ready
 - `handlePasteImage(session, base64)` — bumps session token, runs OCR on image via `runOCRTokenedFor`, marks ready
-- `handleLookupAsk(session, question)` — builds `ProviderMessage[]`, triggers grow animation on the session's window, calls `callProvider()`, sends response to that session's popup
+- `handleLookupAsk(session, question)` — builds `ProviderMessage[]`, triggers grow animation on the session's window, calls `callProviderStream()`, sends streamed response to that session's popup
+- `handleLookupExpand(session, payload)` — handles inline word-expansion requests from the popup's context menu. Builds a tame `ProviderMessage[]` with the original context/question + surrounding answer + the selected word, calls `callProviderStream()`, sends streamed chunks tagged with `expansionId` back to the popup
+- `ExpandPayload` interface — `{ context, question, answer, selection, expansionId }`
 
 **`state.ts`:**
 
@@ -201,18 +204,46 @@ per-window `LookupSession` object in `state.ts`; handlers operate on the passed-
 
 **`window.ts`:**
 
-- `createLookupSession(x, y)` — 420×320 always-on-top frameless BrowserWindow near cursor. Registers per-window IPC handlers. Blur closes only if not grown AND Ask field has no text (guard). On `closed`, removes itself from the sessions list. Listens for `lookup-close` and `lookup-input-changed` IPC.
-- `animateGrowSession(session, w, h)` — easeOutCubic animation expanding from the window's current position to 840×640. Exports `LOOKUP_GROWN_WIDTH` / `LOOKUP_GROWN_HEIGHT` for use by `handlers.ts`.
+- `createLookupSession(x, y)` — 420×320 always-on-top frameless BrowserWindow near cursor. Registers per-window IPC handlers: `lookup-ask`, `lookup-expand`, `lookup-paste-text`, `lookup-paste-image`, `lookup-close`, `lookup-input-changed`. Blur closes only if not grown AND Ask field has no text. On `closed`, removes itself from the sessions list.
+- `animateGrowSession(session, w, h, targetX?, targetY?)` — easeOutCubic animation from current bounds to target. When `targetX`/`targetY` are provided, animates position as well as size. Exports `LOOKUP_GROWN_WIDTH` / `LOOKUP_GROWN_HEIGHT` for use by `handlers.ts`. Used only by the Ask flow (the first question after OCR/paste).
 
 **`html.ts`:**
 
-- Exports `lookUpHTML` — the inline HTML/JS loaded as a `data:` URL by each lookup session's popup. Key behaviors:
-  - Shows a "Context" box (driven by `lookupOnContext`) and an "Ask DeltaAI…" input
-  - Enter sends the question, but only when `contextReady` is true (the `lookupOnContext` callback gates it); pressing Enter too early flashes the box with "Context is still being prepared…"
-  - Paste intercept: `Ctrl+V` never enters the Ask field; text pastes go to the context (via `lookupPasteText`), image pastes run OCR on the clipboard image (via `lookupPasteImage`)
-  - `lookupInputChanged(hasText)` is emitted on every `input` event to tell main whether the Ask field has text (guards blur-to-close in `window.ts`)
-  - `lookupOnGrow(width, height)` resizes the document/body CSS height and reveals the conversation area; auto-focuses the input after the grow animation completes
-  - Each session owns its own DOM state; multiple sessions may coexist independently
+- Exports `CSS_STYLES` (separate `const`) and interpolates it into `lookUpHTML` — the inline HTML/CSS/JS loaded as a `data:` URL by each lookup session's popup.
+- **Layout:** Header with "Delta AI" title and close button, Context box (`#extracted`), Ask input (`#ask`), conversation area (`#conversation`), and a hidden custom context menu (`#ctxMenu`).
+- **CSS sections:** Base reset/layout, header, content area, extracted-text box, ask input, conversation turns (user/ai with framing), expansion frames (`.frame`, `.frame-inner`, `.fold-toggle`, `.queried`), and the custom context menu.
+- **Context / Ask flow:**
+  - `lookupOnContext(state)` drives the Context box visibility and hint text
+  - Enter in the Ask input calls `w.lookupAsk(q)`, only after `contextReady` is true; early Enter flashes the box with "Context is still being prepared…"
+  - `lookupInputChanged(hasText)` emitted on every `input` event to guard blur-to-close
+  - `lookupOnGrow(width, height)` resizes document/body CSS height and reveals `#conversation`
+- **Paste interception:** `Ctrl+V` never enters the Ask field — text pastes go to context (`w.lookupPasteText`), image pastes run OCR (`w.lookupPasteImage`)
+- **Turn rendering:** `addTurn(kind, text)` appends a `.turn` div; `replaceLastAi(text)` updates the last `.turn.ai` with tokenized inline content via `renderInline()`
+- **Custom context menu (`#ctxMenu`):**
+  - Appears on right-click inside a `.turn.ai` with items: Expand, Copy, Select All
+  - Expand is disabled when the selection spans multiple frames (prevents DOM corruption)
+  - Single-word auto-selection: `caretRangeFromPoint` detects the `.word` or `.queried` span under the cursor, replaces `window.getSelection()` with that span's range
+  - Drag-selection path: snapshots both the selection text (`ctxSelection`) and the live `Range` (`ctxRange`) at right-click time, before the menu-item click collapses the DOM selection
+  - Copy action restores the cached range before calling `document.execCommand('copy')`
+  - Ctrl+C keyboard shortcut: `keydown` listener calls `execCommand('copy')` when selection exists outside form inputs
+- **Inline expansion frames:**
+  - `expandSelection(selection, cachedWordSpan?, cachedRange?)` — creates a `.frame.expanded.loading` element with `data-expansion-id`, a `.frame-inner` (initially "Thinking…"), and a `.fold-toggle` button. Replaces the selected `.word` span in-place via `replaceChild`, or inserts via `range.insertNode`. Sends `w.lookupExpand({ context, question, answer, selection, expansionId })` to the main process.
+    - For nested expansions (within another frame), the context/question fields are sent empty — only the parent frame's answer text is included.
+    - Animates the frame in via `animateFrameIn()`.
+  - `foldExpansion(id)` — replaces the `.frame` with a `.queried` pill (tinted `rgba(74,144,217,0.18)` background). The frame DOM element (including any nested sub-frames) is preserved in `expansionCache[id].frame`. Fades out via `animateFrameOut()` before the DOM swap.
+  - `reexpandExpansion(id)` — replaces the `.queried` pill with the cached `.frame` element (restoring nested children intact). Falls back to recreating the frame from `cachedText` if the cache entry was invalidated.
+- **Markdown processing:**
+  - `flattenMarkdown(text)` — strips headings, bold/italic, inline code, links, list markers, blockquotes, horizontal rules. Produces bare inline text.
+  - `tokenizeText(text)` — splits text on whitespace, wraps each word in a `.word` span (for right-click targeting).
+  - `renderInline(text)` — applies `flattenMarkdown`, splits on double-newlines for paragraph breaks, tokenizes each paragraph.
+- **Animations:**
+  - `animateFrameIn(frame)` — sets `opacity: 0`, double `requestAnimationFrame` tick, then `opacity: 1` with CSS transition.
+  - `animateFrameOut(frame, callback)` — sets `opacity: 0` with `transition: opacity 0.25s ease`, calls `callback` after 280ms.
+- **Cross-frame guard:** `selectionSpansFrames(range)` compares `startContainer` and `endContainer` ancestors' innermost `.frame[data-expansion-id]`. Used in the context menu to disable Expand, and defensively in `expandSelection`'s range-insertion path.
+- **Triple-click:** `mousedown` listener with `e.detail === 3` selects the innermost `.frame-inner` contents, overriding the browser's default paragraph selection.
+- **Streaming expansion via IPC:**
+  - `lookupOnExpandChunk(chunk)` receives `{ expansionId, text }` (or `{ expansionId, error }`). Updates `.frame-inner` with tokenized content via `renderInline()`. Removes `.loading` class. On error, sets `.error` class and hides `.fold-toggle`.
+  - Each session owns its own DOM state; multiple sessions may coexist independently.
 
 ### `services/global-shortcut.ts` — XDG GlobalShortcuts for Wayland
 
@@ -243,6 +274,7 @@ Exposes via `contextBridge`:
 
 ```typescript
 {
+  // Chat / config (renderer)
   saveConfig(config) // Save single provider config
   saveAllProviders(config) // Save all providers at once
   loadConfig() // Load current provider config
@@ -250,15 +282,20 @@ Exposes via `contextBridge`:
   sendMessage(messages) // Send chat messages to AI
   loadSettings() // Load app settings (hotkey)
   saveSettings(settings) // Save app settings
-  lookupOnContext(cb) // One-way: {status, text, hint} → lookup popup (context state)
-  lookupOnResponse(cb) // One-way: AI response → lookup popup
-  lookupOnError(cb) // One-way: Error → lookup popup
-  lookupOnGrow(cb) // One-way: (width, height) → lookup popup (grow animation)
-  lookupAsk(question) // Renderer→main: send user's question
-  lookupPasteText(text) // Renderer→main: pasted text as context
-  lookupPasteImage(base64) // Renderer→main: pasted image for OCR
-  lookupInputChanged(hasText) // Renderer→main: whether Ask field has text (guards blur-to-close)
-  lookupClose() // Renderer→main: close the popup
+  // Lookup popup: main → renderer (one-way)
+  lookupOnContext(cb) // {status, text, hint} → lookup popup (context state)
+  lookupOnChunk(cb) // Streaming AI chunk → lookup popup (plain text during stream)
+  lookupOnResponse(cb) // Final AI response → lookup popup (tokenized)
+  lookupOnError(cb) // Error → lookup popup
+  lookupOnGrow(cb) // (width, height) → lookup popup (grow animation)
+  lookupOnExpandChunk(cb) // {expansionId, text|error} → lookup popup (expansion stream)
+  // Lookup popup: renderer → main
+  lookupAsk(question) // Send user's question from Ask input
+  lookupExpand(payload) // Request inline word expansion from context menu
+  lookupPasteText(text) // Pasted text as context
+  lookupPasteImage(base64) // Pasted image for OCR
+  lookupInputChanged(hasText) // Whether Ask field has text (guards blur-to-close)
+  lookupClose() // Close the popup
 }
 ```
 
@@ -401,6 +438,6 @@ electron.vite.config.ts
 | OCR from screen (full capture) | ✅ Complete    |
 | AI explanation popup           | ✅ Complete    |
 | Global hotkey (X11 + Wayland)  | ✅ Complete    |
-| Infinite recursive lookup      | ❌ Not started |
+| Infinite recursive lookup      | ✅ Complete    |
 | User knowledge base            | ❌ Not started |
 | Built-in local model           | ❌ Not started |

@@ -34,82 +34,34 @@ will fail on typecheck errors, so fix them before committing.
 
 ## Architecture (layers)
 
-```
-Renderer (React 19)          src/renderer/src/
-    │  window.api.{sendMessage, saveConfig, loadConfig, saveAllProviders, loadAllProviders,
-    │              loadSettings, saveSettings, lookupAsk, lookupPasteText, lookupPasteImage,
-    │              lookupClose, lookupInputChanged, lookupOnContext, lookupOnResponse,
-    │              lookupOnError, lookupOnGrow}
-    ▼
-Preload (contextBridge)      src/preload/index.ts (+ index.d.ts)
-    │  ipcRenderer.invoke / ipcRenderer.send / ipcRenderer.on
-    ▼
-Main process (Node)          src/main/
-    ├── index.ts            App lifecycle, main window + tray, send-message IPC handler
-    ├── config.ts           Persistence + Wayland detection + hotkey registry + IPC handlers
-    ├── provider.ts         Provider dispatch (callProvider + callOpenAICompatible + callGeminiWithSearch)
-    ├── lookup/
-    │   ├── lookup.ts       Orchestrator: handleHotkeyPressed entry point (no IPC wiring)
-    │   ├── window.ts       Lookup popup BrowserWindow creation (420×320 → 840×640 grow), IPC wiring
-    │   ├── capture.ts      Screen capture pipeline (desktopCapturer or KDE portal) + tesseract.js OCR
-    │   ├── handlers.ts     Paste handlers + lookup Ask handler (builds messages, calls provider)
-    │   ├── html.ts         Inline HTML/CSS/JS for the lookup popup (loaded as data: URL)
-    │   └── state.ts        LookupSession interface + lookupSessions array + helpers
-    └── services/
-        ├── global-shortcut.ts  XDG GlobalShortcuts D-Bus portal routing (Wayland)
-        └── screen-capture.ts   Freedesktop Screenshot D-Bus portal routing (KDE Wayland)
-    ▼
-OS  (fs config/, Google Gemini API, tesseract WASM, D-Bus portals, desktopCapturer)
-```
-
-Build orchestration lives in `electron.vite.config.ts`, which builds three bundles:
-main (cjs), preload (cjs), renderer (esm + HTML + CSS).
-
-### Renderer directory layout
+See `docs/architecture.md` for a detailed data-flow diagram, full project tree, and per-module documentation. The high-level call chain is:
 
 ```
-src/renderer/src/
-├── main.tsx              React entry point (StrictMode)
-├── App.tsx               Root component: chat/settings view routing, message state
-├── assets/
-│   ├── main.css          Aggregator: @imports base.css, chat.css, settings.css
-│   ├── base.css          CSS custom properties (dark theme :root vars)
-│   ├── chat.css          Chat UI styles
-│   └── settings.css      Settings page styles
-├── views/
-│   ├── chat/
-│   │   └── ChatView.tsx      Chat UI: message list, textarea input, auto-scroll
-│   └── settings/
-│       └── Settings.tsx      Settings page: provider selection, hotkey, general settings
-└── components/
-    └── settings/
-        ├── GoogleAiForm.tsx  Google AI Studio provider form (API key, model, web search toggle)
-        ├── OpenAiForm.tsx    OpenAI-compatible provider form (API key, baseUrl, model)
-        └── HotkeyInput.tsx   Hotkey capture input widget
+Renderer (React 19)  →  Preload (contextBridge)  →  Main process (Node)
+                                                            ├── provider.ts     AI dispatch
+                                                            ├── lookup/         OCR → popup → expand
+                                                            └── services/      Wayland D-Bus portals
 ```
 
-### Why the main process is split across files
+Key files in the Main process:
 
-The older `docs/architecture.md` describes a single `src/main/index.ts` holding everything.
-That is **stale** — the process is now split by concern:
+| Module | Path | Role |
+|--------|------|------|
+| App lifecycle | `index.ts` | Main window, tray, send-message IPC |
+| Config | `config.ts` | Persistence, hotkey registry, Wayland detection |
+| Provider | `provider.ts` | AI dispatch (`callProviderStream`) |
+| Lookup orchestrator | `lookup/lookup.ts` | Hotkey entry point |
+| Lookup popup | `lookup/window.ts` | BrowserWindow + IPC wiring |
+| Capture + OCR | `lookup/capture.ts` | Screen capture + tesseract.js |
+| Handlers | `lookup/handlers.ts` | Paste, Ask, Expand handlers |
+| Popup UI | `lookup/html.ts` | Inline HTML/CSS/JS (data: URL) |
+| Session state | `lookup/state.ts` | LookupSession interface + helpers |
+| Wayland shortcut | `services/global-shortcut.ts` | XDG GlobalShortcuts portal |
+| KDE screenshot | `services/screen-capture.ts` | Screenshot portal (silent) |
 
-- `index.ts` — app lifecycle, main chat window + tray, `send-message` IPC handler.
-  Provider dispatch lives in `provider.ts` now; `index.ts` imports `callProvider` from
-  there and imports `handleHotkeyPressed` from `lookup/lookup`.
-- `config.ts` — persists `config/providers.json` and `config/settings.json`, detects
-  Wayland/KDE sessions, registers the global hotkey (routing to the portal on
-  Wayland, to Electron's `globalShortcut` elsewhere). Owns IPC handlers:
-  `save-settings`, `load-settings`, `save-config`, `load-config`, `save-all-providers`,
-  `load-all-providers`.
-- `lookup/` module — the OCR → AI pipeline for the hotkey-driven lookup, plus its own
-  popup `BrowserWindow`. Entry point is `lookup/lookup.ts` (`handleHotkeyPressed`);
-  window creation and IPC wiring is in `window.ts`. Owns no provider logic.
-- `services/` — `global-shortcut.ts` and `screen-capture.ts`: D-Bus talk to the
-  Freedesktop portals. These exist specifically to dodge broken remember-choice
-  dialogs on KDE Plasma Wayland.
+Build orchestration lives in `electron.vite.config.ts` (main cjs, preload cjs, renderer esm).
 
-When adding main-process logic, put it where its concern lives — do not re-grow
-`index.ts` into a monolith.
+See `docs/architecture.md` for the renderer directory layout, component hierarchy, and styled-component conventions.
 
 ## Coding style
 
@@ -164,6 +116,9 @@ Enforced by ESLint + Prettier config; match what already exists:
 | Settings form                          | `src/renderer/src/views/settings/Settings.tsx`                             |
 | Provider config form                   | `src/renderer/src/components/settings/GoogleAiForm.tsx` / `OpenAiForm.tsx` |
 | Add a new IPC channel                  | preload `index.ts` + `.d.ts`, then main `index.ts`/`config.ts`             |
+| Change the expand prompt               | `lookup/handlers.ts` (`handleLookupExpand`)                                |
+| Change frame fold/reopen behaviour     | `lookup/html.ts` (`foldExpansion` / `reexpandExpansion`)                   |
+| Change the expansion targeting logic   | `lookup/html.ts` (`expandSelection`, contextmenu listener)                 |
 
 ## Conventions worth remembering
 
@@ -210,6 +165,19 @@ Enforced by ESLint + Prettier config; match what already exists:
   (Show/Quit). `config.ts:currentCloseToTray` controls whether closing the main window
   hides to tray instead of quitting. The `close` handler in `createWindow` checks
   `currentCloseToTray && !isQuitting` to decide.
+- **Inline expansion frames are renderer-only DOM cache.**
+  When a frame is folded, the `.frame` element stays in `expansionCache[id].frame` — no
+  IPC is sent to the main process. Re-expand re-attaches the cached frame (nested children
+  intact). See `html.ts` `foldExpansion`/`reexpandExpansion`.
+- **Context menu snapshots both text and Range at right-click time.**
+  The menu-item click collapses the DOM selection. `expandSelection` receives cached
+  `cachedWordSpan` (single `.word` element) and `cachedRange` (drag-selection `Range`)
+  saved in local variables before `hideCtxMenu()` nulls the globals. See
+  `html.ts` `ctxMenu.addEventListener('click', ...)`.
+- **Cross-frame selection disables Expand.**
+  `selectionSpansFrames(range)` in `html.ts` checks whether a selection crosses `.frame`
+  boundaries. `deleteContents()` on a cross-frame Range would corrupt the DOM, so the
+  context menu greys out Expand (and `expandSelection` defensively aborts).
 
 ## Do not
 
