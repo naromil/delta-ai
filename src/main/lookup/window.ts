@@ -1,8 +1,9 @@
-import { screen, BrowserWindow } from 'electron'
+import { screen, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path/posix'
-import { lookUpHTML } from './html'
+import { lookupHTML } from './html'
 import { clamp, type LookupSession } from './state'
 import { handleLookupAsk, handleLookupExpand, handlePasteText, handlePasteImage } from './handlers'
+import { ocrImageBuffer } from './capture'
 
 /* ---- Constants ---- */
 export const LOOKUP_WINDOW_WIDTH = 420
@@ -65,6 +66,7 @@ export function createLookupSession(cursorX: number, cursorY: number): LookupSes
   window.on('closed', () => {
     const idx = lookupSessions.indexOf(session)
     if (idx >= 0) lookupSessions.splice(idx, 1)
+    ipcMain.removeHandler('lookup-ocr-image')
   })
 
   window.webContents.ipc.on('lookup-ask', (_event, question: string) => {
@@ -119,7 +121,18 @@ export function createLookupSession(cursorX: number, cursorY: number): LookupSes
     session.hasText = hasText
   })
 
-  window.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(lookUpHTML))
+  ipcMain.handle('lookup-ocr-image', async (_event, base64: string) => {
+    const buffer = Buffer.from(base64, 'base64')
+    if (buffer.length === 0) return { text: '' }
+    try {
+      const text = await ocrImageBuffer(buffer)
+      return { text }
+    } catch (err) {
+      return { text: '', error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  window.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(lookupHTML))
   window.once('ready-to-show', () => {
     window.show()
   })

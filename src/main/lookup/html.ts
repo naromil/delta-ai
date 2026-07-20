@@ -77,6 +77,13 @@ const CSS_STYLES = `<style>
     color: #555;
     margin-bottom: 12px;
   }
+  .ocr-hint {
+    font-size: 11px;
+    color: #888;
+    margin-top: 4px;
+    display: none;
+  }
+  .ocr-hint.visible { display: block; }
   .ask-wrap {
     flex-shrink: 0;
     margin-bottom: 8px;
@@ -211,7 +218,7 @@ const CSS_STYLES = `<style>
   #ctxMenu .sep { height: 1px; background: #333; margin: 4px 0; }
 </style>`
 
-export const lookUpHTML = `<!DOCTYPE html>
+export const lookupHTML = `<!DOCTYPE html>
 <html>
   <head>
     <meta charset="utf-8">
@@ -228,6 +235,7 @@ export const lookUpHTML = `<!DOCTYPE html>
       <div class="paste-tip">Ctrl+V to paste text or an image as context.</div>
       <div class="ask-wrap">
         <input id="ask" class="ask" type="text" placeholder="Ask DeltaAI…" autocomplete="off" />
+        <div id="ocr-hint" class="ocr-hint">Recognizing pasted image through OCR…</div>
       </div>
       <div id="conversation" class="conversation scroll"></div>
     </div>
@@ -242,9 +250,11 @@ export const lookUpHTML = `<!DOCTYPE html>
       var askEl = document.getElementById('ask');
       var convEl = document.getElementById('conversation');
       var extractedEl = document.getElementById('extracted');
+      var ocrHintEl = document.getElementById('ocr-hint');
       var ctxMenu = document.getElementById('ctxMenu');
 
       var contextReady = false;
+      var grown = false;
       var originalContext = '';
       var originalQuestion = '';
       var lastAnswer = '';
@@ -747,7 +757,6 @@ export const lookUpHTML = `<!DOCTYPE html>
 
       /* ---- Paste handling ---- */
       document.addEventListener('paste', function (e) {
-        e.preventDefault();
         var cd = e.clipboardData;
         if (!cd) return;
 
@@ -759,6 +768,32 @@ export const lookUpHTML = `<!DOCTYPE html>
             break;
           }
         }
+
+        // After the first question is sent, paste into the question field
+        // instead of replacing the context.
+        if (grown) {
+          if (imageItem) {
+            e.preventDefault();
+            ocrHintEl.classList.add('visible');
+            readFileAsBase64(imageItem.getAsFile(), function (b64) {
+              if (!b64) { ocrHintEl.classList.remove('visible'); return; }
+              w.lookupOcrImage(b64).then(function (result) {
+                ocrHintEl.classList.remove('visible');
+                if (result.text && !result.error) {
+                  var val = askEl.value;
+                  var start = askEl.selectionStart;
+                  var end = askEl.selectionEnd;
+                  askEl.value = val.slice(0, start) + result.text + val.slice(end);
+                  askEl.selectionStart = askEl.selectionEnd = start + result.text.length;
+                  w.lookupInputChanged(askEl.value.length > 0);
+                }
+              }).catch(function () { ocrHintEl.classList.remove('visible'); });
+            });
+          }
+          return;
+        }
+
+        e.preventDefault();
         if (imageItem) {
           readFileAsBase64(imageItem.getAsFile(), function (b64) {
             if (b64) w.lookupPasteImage(b64);
@@ -832,6 +867,7 @@ export const lookUpHTML = `<!DOCTYPE html>
       });
 
       w.lookupOnGrow(function (width, height) {
+        grown = true;
         document.documentElement.style.transition =
           'height 0.35s cubic-bezier(0.2, 0.8, 0.2, 1)';
         document.body.style.transition =

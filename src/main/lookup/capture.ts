@@ -6,6 +6,23 @@ import { captureScreenViaPortal, isScreenCapturePortalPreferred } from '../servi
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let tesseractWorker: any = null
 
+/** Run OCR on a raw image buffer and return the recognized text. */
+export async function ocrImageBuffer(imageBuffer: Buffer): Promise<string> {
+  return runOCR(imageBuffer)
+}
+
+/** Terminate the current tesseract worker, if any. Frees the worker for a new OCR job. */
+export async function cancelOCR(): Promise<void> {
+  if (tesseractWorker) {
+    try {
+      await tesseractWorker.terminate()
+    } catch {
+      // worker may have been terminated already
+    }
+    tesseractWorker = null
+  }
+}
+
 async function captureScreenImage(display: Electron.Display): Promise<Electron.NativeImage | null> {
   if (isScreenCapturePortalPreferred()) {
     const portalPng = await captureScreenViaPortal()
