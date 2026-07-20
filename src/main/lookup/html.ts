@@ -1,219 +1,221 @@
+const CSS_STYLES = `<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%;
+    transition: height 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    background: #1a1a1a;
+    color: #e0e0e0;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+    user-select: text;
+  }
+  .header {
+    background: #2a2a2a;
+    padding: 8px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #aaa;
+    border-bottom: 1px solid #333;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    -webkit-app-region: drag;
+    flex-shrink: 0;
+  }
+  .header .close {
+    -webkit-app-region: no-drag;
+    cursor: pointer;
+    color: #888;
+    font-size: 18px;
+    line-height: 1;
+  }
+  .header .close:hover { color: #fff; }
+  .content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+  }
+  .section-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #666;
+    margin-bottom: 4px;
+    font-weight: 600;
+  }
+  .extracted {
+    font-size: 13px;
+    color: #ccc;
+    background: #222;
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin-bottom: 6px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 80px;
+    overflow-y: auto;
+    border: 1px solid transparent;
+    transition: border-color 0.2s;
+  }
+  .extracted.hint {
+    color: #777;
+    font-style: italic;
+  }
+  .extracted.flash {
+    border-color: rgba(60, 118, 185, 0.45);
+    box-shadow: inset 0 0 0 1px rgba(60, 118, 185, 0.18);
+  }
+  .paste-tip {
+    font-size: 11px;
+    color: #555;
+    margin-bottom: 12px;
+  }
+  .ask-wrap {
+    flex-shrink: 0;
+    margin-bottom: 8px;
+  }
+  .ask {
+    width: 100%;
+    background: #232323;
+    border: 1px solid #333;
+    border-radius: 8px;
+    color: #e0e0e0;
+    font-size: 14px;
+    font-family: inherit;
+    padding: 10px 12px;
+    outline: none;
+  }
+  .ask:focus { border-color: #4a90d9; box-shadow: 0 0 0 2px rgba(74,144,217,0.2); }
+  .ask::placeholder { color: #666; }
+  .conversation {
+    display: none;
+    flex: 1;
+    overflow-y: auto;
+    flex-direction: column;
+    gap: 10px;
+    padding-bottom: 4px;
+  }
+  .conversation.visible { display: flex; }
+  .turn {
+    font-size: 15px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+    padding: 8px 10px;
+    border-radius: 8px;
+  }
+  .turn.user {
+    background: #2c3a4a;
+    color: #d6e4ff;
+    align-self: flex-end;
+    max-width: 92%;
+  }
+  .turn.ai {
+    background: #222;
+    color: #e0e0e0;
+    align-self: flex-start;
+    max-width: 96%;
+  }
+  .turn.loading { color: #666; font-style: italic; }
+  .turn.error   { color: #ff6b6b; }
+  .scroll::-webkit-scrollbar { width: 6px; }
+  .scroll::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+
+  /* ---- Infinite-query expansion ---- */
+  .turn.ai .word { cursor: text; }
+  /* Inline expansion frame. The frame wraps the explanation text and
+      participates in the parent paragraph flow (no block boxes). */
+  .frame.expanded {
+    display: inline;
+    background: rgba(74, 144, 217, 0.06);
+    border: 1px solid rgba(74, 144, 217, 0.55);
+    border-radius: 4px;
+    padding: 2px 4px;
+    margin: 0 2px;
+    vertical-align: baseline;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+    transition: opacity 0.25s ease;
+  }
+  .frame.loading { border-color: rgba(120, 120, 120, 0.55); background: rgba(120, 120, 120, 0.06); }
+  .frame.loading .frame-inner { color: #888; font-style: italic; }
+  .frame.error { border-color: rgba(255, 107, 107, 0.55); background: rgba(255, 107, 107, 0.05); }
+  .frame.error .frame-inner { color: #ff6b6b; }
+  .frame.error .fold-toggle { display: none; }
+  .frame-inner {
+    display: inline;
+    font-size: 15px;
+    line-height: 1.5;
+    white-space: normal;
+    word-break: break-word;
+  }
+  .frame-inner p { display: inline; margin: 0; }
+  .frame-inner p + p::before { content: ' '; }
+  /* Click target to fold/unfold an expansion frame.
+      Selector with space means: .fold-toggle that is a descendant of .frame. */
+  .frame .fold-toggle {
+    display: inline;
+    margin-left: 4px;
+    margin-right: 2px;
+    font-size: 12px;
+    color: #4a90d9;
+    cursor: pointer;
+    vertical-align: baseline;
+    user-select: none;
+    line-height: 1.5;
+    padding: 2px;
+  }
+  .frame .fold-toggle:hover { color: #fff; }
+  /* Folded queried-word pill. Clicking re-opens the cached frame. */
+  .queried {
+    background: rgba(74, 144, 217, 0.18);
+    border-radius: 2px;
+    padding: 0 2px;
+    cursor: pointer;
+    vertical-align: baseline;
+  }
+  .queried:hover { background: rgba(74, 144, 217, 0.32); }
+
+  /* Custom context menu */
+  #ctxMenu {
+    position: fixed;
+    z-index: 1000;
+    background: #2a2a2a;
+    border: 1px solid #333;
+    border-radius: 6px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    padding: 4px 0;
+    font-size: 13px;
+    min-width: 140px;
+    display: none;
+  }
+  #ctxMenu.visible { display: block; }
+  #ctxMenu .item {
+    padding: 6px 14px;
+    cursor: pointer;
+    color: #ddd;
+  }
+  #ctxMenu .item:hover { background: #3a3a3a; color: #fff; }
+  #ctxMenu .item.disabled {
+    color: #555;
+    cursor: default;
+  }
+  #ctxMenu .item.disabled:hover { background: transparent; color: #555; }
+  #ctxMenu .sep { height: 1px; background: #333; margin: 4px 0; }
+</style>`
+
 export const lookUpHTML = `<!DOCTYPE html>
 <html>
   <head>
     <meta charset="utf-8">
-    <style>
-      * { box-sizing: border-box; margin: 0; padding: 0; }
-      html, body {
-        height: 100%;
-        transition: height 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
-      }
-      body {
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-        background: #1a1a1a;
-        color: #e0e0e0;
-        display: flex;
-        flex-direction: column;
-        height: 100vh;
-        overflow: hidden;
-        user-select: text;
-      }
-      .header {
-        background: #2a2a2a;
-        padding: 8px 14px;
-        font-size: 13px;
-        font-weight: 600;
-        color: #aaa;
-        border-bottom: 1px solid #333;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        -webkit-app-region: drag;
-        flex-shrink: 0;
-      }
-      .header .close {
-        -webkit-app-region: no-drag;
-        cursor: pointer;
-        color: #888;
-        font-size: 18px;
-        line-height: 1;
-      }
-      .header .close:hover { color: #fff; }
-      .content {
-        flex: 1;
-        overflow-y: auto;
-        padding: 12px 14px;
-        display: flex;
-        flex-direction: column;
-      }
-      .section-label {
-        font-size: 11px;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        color: #666;
-        margin-bottom: 4px;
-        font-weight: 600;
-      }
-      .extracted {
-        font-size: 13px;
-        color: #ccc;
-        background: #222;
-        border-radius: 6px;
-        padding: 8px 10px;
-        margin-bottom: 6px;
-        white-space: pre-wrap;
-        word-break: break-word;
-        max-height: 80px;
-        overflow-y: auto;
-        border: 1px solid transparent;
-        transition: border-color 0.2s;
-      }
-      .extracted.hint {
-        color: #777;
-        font-style: italic;
-      }
-      .extracted.flash {
-        border-color: rgba(60, 118, 185, 0.45);
-        box-shadow: inset 0 0 0 1px rgba(60, 118, 185, 0.18);
-      }
-      .paste-tip {
-        font-size: 11px;
-        color: #555;
-        margin-bottom: 12px;
-      }
-      .ask-wrap {
-        flex-shrink: 0;
-        margin-bottom: 8px;
-      }
-      .ask {
-        width: 100%;
-        background: #232323;
-        border: 1px solid #333;
-        border-radius: 8px;
-        color: #e0e0e0;
-        font-size: 14px;
-        font-family: inherit;
-        padding: 10px 12px;
-        outline: none;
-      }
-      .ask:focus { border-color: #4a90d9; box-shadow: 0 0 0 2px rgba(74,144,217,0.2); }
-      .ask::placeholder { color: #666; }
-      .conversation {
-        display: none;
-        flex: 1;
-        overflow-y: auto;
-        flex-direction: column;
-        gap: 10px;
-        padding-bottom: 4px;
-      }
-      .conversation.visible { display: flex; }
-      .turn {
-        font-size: 14px;
-        line-height: 1.5;
-        white-space: pre-wrap;
-        word-break: break-word;
-        padding: 8px 10px;
-        border-radius: 8px;
-      }
-      .turn.user {
-        background: #2c3a4a;
-        color: #d6e4ff;
-        align-self: flex-end;
-        max-width: 92%;
-      }
-      .turn.ai {
-        background: #222;
-        color: #e0e0e0;
-        align-self: flex-start;
-        max-width: 96%;
-      }
-      .turn.loading { color: #666; font-style: italic; }
-      .turn.error   { color: #ff6b6b; }
-      .scroll::-webkit-scrollbar { width: 6px; }
-      .scroll::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
-
-      /* ---- Infinite-query expansion ---- */
-      .turn.ai .word { cursor: text; }
-      /* Inline expansion frame. The frame wraps the explanation text and
-         participates in the parent paragraph flow (no block boxes). */
-      .frame.expanded {
-        display: inline;
-        background: rgba(74, 144, 217, 0.06);
-        border: 1px solid rgba(74, 144, 217, 0.55);
-        border-radius: 4px;
-        padding: 2px 4px;
-        margin: 0 2px;
-        vertical-align: baseline;
-        box-decoration-break: clone;
-        -webkit-box-decoration-break: clone;
-        transition: opacity 0.25s ease;
-      }
-      .frame.loading { border-color: rgba(120, 120, 120, 0.55); background: rgba(120, 120, 120, 0.06); }
-      .frame.loading .frame-inner { color: #888; font-style: italic; }
-      .frame.error { border-color: rgba(255, 107, 107, 0.55); background: rgba(255, 107, 107, 0.05); }
-      .frame.error .frame-inner { color: #ff6b6b; }
-      .frame.error .fold-toggle { display: none; }
-      .frame-inner {
-        display: inline;
-        font-size: 14px;
-        line-height: 1.5;
-        white-space: normal;
-        word-break: break-word;
-      }
-      .frame-inner p { display: inline; margin: 0; }
-      .frame-inner p + p::before { content: ' '; }
-      /* Click target to fold/unfold an expansion frame.
-         Selector with space means: .fold-toggle that is a descendant of .frame. */
-      .frame .fold-toggle {
-        display: inline;
-        margin-left: 4px;
-        margin-right: 2px;
-        font-size: 12px;
-        color: #4a90d9;
-        cursor: pointer;
-        vertical-align: baseline;
-        user-select: none;
-        line-height: 1.5;
-        padding: 2px;
-      }
-      .frame .fold-toggle:hover { color: #fff; }
-      /* Folded queried-word pill. Clicking re-opens the cached frame. */
-      .queried {
-        background: rgba(74, 144, 217, 0.18);
-        border-radius: 2px;
-        padding: 0 2px;
-        cursor: pointer;
-        vertical-align: baseline;
-      }
-      .queried:hover { background: rgba(74, 144, 217, 0.32); }
-
-      /* Custom context menu */
-      #ctxMenu {
-        position: fixed;
-        z-index: 1000;
-        background: #2a2a2a;
-        border: 1px solid #333;
-        border-radius: 6px;
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-        padding: 4px 0;
-        font-size: 13px;
-        min-width: 140px;
-        display: none;
-      }
-      #ctxMenu.visible { display: block; }
-      #ctxMenu .item {
-        padding: 6px 14px;
-        cursor: pointer;
-        color: #ddd;
-      }
-      #ctxMenu .item:hover { background: #3a3a3a; color: #fff; }
-      #ctxMenu .item.disabled {
-        color: #555;
-        cursor: default;
-      }
-      #ctxMenu .item.disabled:hover { background: transparent; color: #555; }
-      #ctxMenu .sep { height: 1px; background: #333; margin: 4px 0; }
-    </style>
+    ${CSS_STYLES}
   </head>
   <body>
     <div class="header">
@@ -254,6 +256,20 @@ export const lookUpHTML = `<!DOCTYPE html>
       var ctxSelection = '';
       var ctxWordSpan = null;
       var ctxRange = null;
+
+      /* ---- Helpers ---- */
+
+      function getInnermostFrame(node) {
+        var el = node.nodeType === 3 ? node.parentElement : node;
+        return el ? el.closest('.frame[data-expansion-id]') : null;
+      }
+
+      function selectionSpansFrames(range) {
+        if (!range) return false;
+        var startFrame = getInnermostFrame(range.startContainer);
+        var endFrame = getInnermostFrame(range.endContainer);
+        return startFrame !== endFrame;
+      }
 
       /* ---- Markdown / token helpers ---- */
 
@@ -408,7 +424,10 @@ export const lookUpHTML = `<!DOCTYPE html>
           if (sel.rangeCount > 0) {
             ctxRange = sel.getRangeAt(0).cloneRange();
           }
-          showCtxMenu(e.clientX, e.clientY, true);
+          // Disable Expand when the selection spans multiple frames —
+          // deleteContents() on a cross-frame Range would corrupt the DOM.
+          var canExpand = !selectionSpansFrames(ctxRange);
+          showCtxMenu(e.clientX, e.clientY, canExpand);
           return;
         }
 
@@ -571,6 +590,9 @@ export const lookUpHTML = `<!DOCTYPE html>
         if (wordSpan && wordSpan.parentNode && selection === wordSpan.textContent.trim()) {
           wordSpan.parentNode.replaceChild(frameOuter, wordSpan);
         } else if (range) {
+          // Defensive: refuse to delete across frame boundaries — would
+          // corrupt the DOM and invalidate the expansion cache.
+          if (selectionSpansFrames(range)) return;
           range.deleteContents();
           range.insertNode(frameOuter);
         } else {
