@@ -28,7 +28,7 @@ src/
       lookup.ts              # Orchestrator: IPC wiring + handleHotkeyPressed entry point
       capture.ts             # Screen capture + OCR pipeline (tesseract.js worker)
       handlers.ts            # Paste handlers + Ask handler (builds messages, calls provider)
-      html.ts                # Inline HTML for lookup popup (data: URL)
+      html.ts                # Inline HTML for lookup popup (data: URL), restyled with CSS vars
       state.ts               # Shared mutable state (lookupState object + helpers)
       window.ts              # Lookup popup BrowserWindow creation + grow animation
     services/
@@ -40,17 +40,28 @@ src/
   renderer/
     index.html               # Single-page shell (mounts #root)
     src/
-      main.tsx               # ReactDOM.createRoot entry
-      App.tsx                # Shell: sidebar + view routing + send orchestration
+      main.tsx               # ReactDOM.createRoot entry, imports base.css
+      App.tsx                # Shell: sidebar + 5-view routing + send orchestration
       env.d.ts               # Vite env type shim
       assets/
-        base.css             # CSS reset/font defaults
-        main.css             # Re-exports other CSS files
-        chat.css             # Chat UI styles
-        settings.css         # Settings page styles
+        base.css             # CSS entry point: imports home.css, chat.css, settings.css;
+                             # defines design tokens (:root), CSS reset, legacy aliases
+        home.css             # App layout, sidebar (brand + nav + footer), view-shell
+                             # (shared header/content), KB canvas placeholder, responsive
+        chat.css             # Chat view: toolbar with New-chat button, message list,
+                             # composer, loading dots, scrollbar
+        settings.css         # Settings page: category tabs, forms, toggle switch,
+                             # save button, scrollbar
       views/
+        home/
+          HomeView.tsx       # Dashboard shell with KB canvas placeholder
         chat/
-          ChatView.tsx       # Message list + empty state + composer + auto-scroll
+          ChatView.tsx       # Message list + empty state + composer + auto-scroll +
+                             # own toolbar with New chat button
+        knowledge/
+          KnowledgeView.tsx  # Empty-state stub for Knowledge Base (Coming soon)
+        lookup-guide/
+          LookupGuideView.tsx  # Empty-state stub for Look-Up Guide (Coming soon)
         settings/
           Settings.tsx       # Settings page orchestrator (categories + cache + save)
       components/
@@ -210,6 +221,7 @@ per-window `LookupSession` object in `state.ts`; handlers operate on the passed-
 **`html.ts`:**
 
 - Exports `CSS_STYLES` (separate `const`) and interpolates it into `lookUpHTML` — the inline HTML/CSS/JS loaded as a `data:` URL by each lookup session's popup.
+- **CSS variables:** Mirrors the renderer design tokens (`--bg`, `--surface-1`, `--accent`, etc.) inside a `:root` block so the popup visually matches the main window.
 - **Layout:** Header with "Delta AI" title and close button, Context box (`#extracted`), Ask input (`#ask`), conversation area (`#conversation`), and a hidden custom context menu (`#ctxMenu`).
 - **CSS sections:** Base reset/layout, header, content area, extracted-text box, ask input, conversation turns (user/ai with framing), expansion frames (`.frame`, `.frame-inner`, `.fold-toggle`, `.queried`), and the custom context menu.
 - **Context / Ask flow:**
@@ -230,7 +242,7 @@ per-window `LookupSession` object in `state.ts`; handlers operate on the passed-
   - `expandSelection(selection, cachedWordSpan?, cachedRange?)` — creates a `.frame.expanded.loading` element with `data-expansion-id`, a `.frame-inner` (initially "Thinking…"), and a `.fold-toggle` button. Replaces the selected `.word` span in-place via `replaceChild`, or inserts via `range.insertNode`. Sends `w.lookupExpand({ context, question, answer, selection, expansionId })` to the main process.
     - For nested expansions (within another frame), the context/question fields are sent empty — only the parent frame's answer text is included.
     - Animates the frame in via `animateFrameIn()`.
-  - `foldExpansion(id)` — replaces the `.frame` with a `.queried` pill (tinted `rgba(74,144,217,0.18)` background). The frame DOM element (including any nested sub-frames) is preserved in `expansionCache[id].frame`. Fades out via `animateFrameOut()` before the DOM swap.
+  - `foldExpansion(id)` — replaces the `.frame` with a `.queried` pill. The frame DOM element (including any nested sub-frames) is preserved in `expansionCache[id].frame`. Fades out via `animateFrameOut()` before the DOM swap.
   - `reexpandExpansion(id)` — replaces the `.queried` pill with the cached `.frame` element (restoring nested children intact). Falls back to recreating the frame from `cachedText` if the cache entry was invalidated.
 - **Markdown processing:**
   - `flattenMarkdown(text)` — strips headings, bold/italic, inline code, links, list markers, blockquotes, horizontal rules. Produces bare inline text.
@@ -305,27 +317,47 @@ Exposes via `contextBridge`:
 
 **State:**
 
-- `view: 'chat' | 'settings'` — which view is showing
+- `view: 'home' | 'chat' | 'knowledge' | 'lookup-guide' | 'settings'` — which view is showing (default `'home'`)
 - `messages: Message[]` — chat history
 - `loading: boolean` — AI response in progress
 
 **Behavior:**
 
-- Sidebar with "New chat" button (clears messages) and Settings toggle
+- Persistent sidebar with brand wordmark and 5 nav entries (Home, Chat, Knowledge Base, Look-Up Guide, Settings), rendered from a `navEntries` array with inline SVG icons
+- Each entry switches `view` state; `.sidebar-nav-item.active` uses the dusty-blue accent fill
 - `handleSend(content)` — creates user/assistant messages, calls `window.api.sendMessage()`, updates state
-- Routes view: renders `<Settings>` or `<ChatView>` based on `view` state
+- Routes the active view into `.app-main`:
+  - `home` → `<HomeView />`
+  - `chat` → `<ChatView>` with `onNewChat` to clear messages
+  - `knowledge` → `<KnowledgeView />`
+  - `lookup-guide` → `<LookupGuideView />`
+  - `settings` → `<Settings>` with `onBack` that returns to chat
+
+### `views/home/HomeView.tsx` — Home dashboard
+
+- Brand header "Delta AI"
+- Empty KB canvas placeholder (`<div class="kb-canvas">`) — the central visualization area for the user's knowledge base, ready to be filled when the KB feature is built
 
 ### `views/chat/ChatView.tsx` — Chat message list and composer
 
-**Props:** `messages`, `loading`, `onSend`
+**Props:** `messages`, `loading`, `onSend`, `onNewChat`
 
 **Owns:**
 
 - `input` state for the textarea
+- In-view toolbar with "New chat" button (moved from the sidebar in the IA restructure)
 - Auto-scroll to bottom on new messages
 - Empty state (`"How can I help you today?"`)
 - Message list with role avatars and loading-dots animation
 - Composer with Enter-to-send and send button
+
+### `views/knowledge/KnowledgeView.tsx` — Knowledge Base placeholder
+
+- Empty-state stub with "Coming soon.", ready for the KB feature implementation
+
+### `views/lookup-guide/LookupGuideView.tsx` — Look-Up Guide placeholder
+
+- Empty-state stub with "Coming soon.", ready for the lookup-guide feature implementation
 
 ### `views/settings/Settings.tsx` — Settings orchestrator
 
@@ -369,14 +401,37 @@ Exposes via `contextBridge`:
 - Base URL text input
 - Model ID text input
 
-### CSS architecture
+### Design tokens and CSS architecture
 
-Files in `assets/`:
+**`base.css`** is the single CSS entry point (imported by `main.tsx`). It uses `@import` to load all sub-stylesheets, then declares the design token `:root` block and the CSS reset:
 
-- `base.css` — CSS reset, `:root` color variables
-- `chat.css` — sidebar, message list, composer styles
-- `settings.css` — settings page, category tabs, form inputs
-- `main.css` — re-exports all other CSS files
+```
+base.css  (imported by main.tsx)
+  ├── @import 'home.css'        →  App layout (.app), sidebar (.sidebar, .sidebar-brand,
+  │                                  .sidebar-nav, .sidebar-nav-item), view-shell
+  │                                  (.view-shell, .view-shell-header, .view-shell-content,
+  │                                  .view-empty-state), KB canvas (.kb-canvas), responsive
+  ├── @import 'chat.css'        →  Chat toolbar, message list, avatar, composer,
+  │                                  loading dots, scrollbar, empty state
+  └── @import 'settings.css'    →  Settings page, category tabs, form inputs, toggle,
+                                    save button, scrollbar
+```
+
+Design tokens are declared as CSS custom properties in `:root` inside `base.css`:
+
+| Category      | Tokens (examples)                                    |
+| ------------- | ---------------------------------------------------- |
+| Surfaces      | `--bg`, `--surface-1`, `--surface-2`, `--surface-3` |
+| Borders       | `--border`, `--border-strong`                        |
+| Text          | `--text-1`, `--text-2`, `--text-3`, `--text-muted`  |
+| Accent        | `--accent`, `--accent-strong`, `--accent-soft`, `--accent-ring` |
+| Semantic      | `--success`, `--error`                               |
+| Shape         | `--radius-sm`, `--radius-md`, `--radius-lg`          |
+| Shadows       | `--shadow-1`, `--shadow-2`                           |
+
+Legacy variables (`--ev-c-*`, `--chat-*`, `--color-*`) are aliased to the new tokens for backward compatibility during the transition.
+
+**`chat.css`** additionally imports the DM Serif Display font from Google Fonts (for the serif accent typeface used in KB / dashboard contexts).
 
 ## Configuration file format
 
@@ -426,11 +481,20 @@ electron.vite.config.ts
 | KDE Plasma Wayland    | XDG GlobalShortcuts portal  | Screenshot portal (silent)     |
 | GNOME / Other Wayland | XDG GlobalShortcuts portal  | `desktopCapturer.getSources()` |
 
+## UI restyle (2026-07-20)
+
+The renderer and lookup popup were restyled to align with the README "Look and Feel" initiative:
+
+- **Visual direction:** Soft dark (`#20212a` deep slate base), dusty blue accent (`#8aa0b8`), reduced contrast, soft shadows, rounded surfaces.
+- **Information architecture:** A persistent sidebar with 5 destinations (Home, Chat, Knowledge Base, Look-Up Guide, Settings) replaces the previous sidebar with only New-chat and Settings. The Home view acts as a dashboard for the future Knowledge Base feature.
+- **CSS architecture:** Consolidated to a single entry point (`base.css`) that imports all sub-stylesheets via `@import`. Design tokens live in a single `:root` block.
+- **Lookup popup:** Mirrors the same design tokens via a `:root` block in its `CSS_STYLES` constant, ensuring visual consistency between the main window and the always-on-top popup.
+
 ## Current feature status
 
 | Feature                        | Status         |
 | ------------------------------ | -------------- |
-| ChatGPT-like chat UI           | ✅ Complete    |
+| Chat UI (chat view + send)     | ✅ Complete    |
 | Settings with category tabs    | ✅ Complete    |
 | Multi-provider config (cached) | ✅ Complete    |
 | Google AI Studio provider      | ✅ Complete    |
@@ -439,5 +503,7 @@ electron.vite.config.ts
 | AI explanation popup           | ✅ Complete    |
 | Global hotkey (X11 + Wayland)  | ✅ Complete    |
 | Infinite recursive lookup      | ✅ Complete    |
-| User knowledge base            | ❌ Not started |
+| Home dashboard (KB canvas)     | ✅ Complete    |
+| Knowledge Base                 | ❌ Not started |
 | Built-in local model           | ❌ Not started |
+| Look-Up Guide view             | ❌ Not started |

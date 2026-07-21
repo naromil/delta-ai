@@ -26,7 +26,13 @@ We respect your privacy. All your data stay on your machine except for the AI re
   - The details of everything about the users are selected and summarized before sending to cloud (if it is) providers to get personalized results for the look-up.
 - ### Look and Feel
   - Simplicity is preferred to ensure the users adopt the tool itself smoothly.
-  - The colors and shapes will be simplistic and psychologically peaceful.
-  - They will give the users a feeling of soothing and reliability.
+  - The colors and shapes are simplistic and psychologically peaceful.
+  - They give the users a feeling of soothing and reliability.
   - It makes users want to share their overall personal growth with the app.
   - Less academic/paper/traditional feel, more cool/stable/reliable feel.
+  - **Shipped design:**
+    - Deep slate background (`#20212a`) with raised surfaces in slightly lighter tones — calm, not harsh.
+    - Dusty blue accent (`#8aa0b8`) replaces bright purple/green for buttons, active nav, and focus rings — understated and trustful.
+    - Low-contrast text (`rgba 0.92` max) to reduce visual fatigue during extended sessions.
+    - Soft rounded corners (8–12px) and subtle shadows give a gentle, approachable feel.
+    - The always-on-top lookup popup shares the exact same palette, so the brand feels unified whether the user is in the main window or a popup over another application.
