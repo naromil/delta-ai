@@ -11,9 +11,10 @@ interface ChatViewProps {
   messages: Message[]
   loading: boolean
   onSend: (content: string) => void
+  onNewChat: () => void
 }
 
-function ChatView({ messages, loading, onSend }: ChatViewProps): React.JSX.Element {
+function ChatView({ messages, loading, onSend, onNewChat }: ChatViewProps): React.JSX.Element {
   const [input, setInput] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -38,10 +39,23 @@ function ChatView({ messages, loading, onSend }: ChatViewProps): React.JSX.Eleme
 
   return (
     <main className="chat">
+      <div className="chat-toolbar">
+        <button className="new-chat-button" onClick={onNewChat}>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M12 4v16M4 12h16"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+            />
+          </svg>
+          New chat
+        </button>
+      </div>
       <div className="chat-scroll" ref={scrollRef}>
         {messages.length === 0 ? (
           <div className="empty-state">
-            <h1 className="empty-title">How can I help you today?</h1>
+            <h1 className="empty-title">Sync with me</h1>
           </div>
         ) : (
           <div className="message-list">
@@ -71,7 +85,7 @@ function ChatView({ messages, loading, onSend }: ChatViewProps): React.JSX.Eleme
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Send a message..."
+            placeholder="Message Delta AI..."
             rows={1}
           />
           <button

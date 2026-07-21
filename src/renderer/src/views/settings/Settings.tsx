@@ -21,11 +21,7 @@ type AllProvidersConfig = {
   }
 }
 
-interface SettingsProps {
-  onBack: () => void
-}
-
-function Settings({ onBack }: SettingsProps): React.JSX.Element {
+function Settings(): React.JSX.Element {
   // ---- State declarations ----
   const [activeCategory, setActiveCategory] = useState<Category>('general')
   const [selectedProvider, setSelectedProvider] = useState('')
@@ -253,18 +249,10 @@ function Settings({ onBack }: SettingsProps): React.JSX.Element {
   return (
     <div className="settings">
       <div className="settings-header">
-        <button className="settings-back" onClick={onBack} aria-label="Back to chat">
-          <svg viewBox="0 0 24 24" className="icon" aria-hidden="true">
-            <path
-              d="M15 18l-6-6 6-6"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </button>
         <h2 className="settings-title">Settings</h2>
+        <button className="settings-header-save" onClick={handleSave} disabled={!canSave || saving}>
+          {saving ? 'Saving…' : saved ? '✓ Saved' : 'Save'}
+        </button>
       </div>
 
       {/* ---- Category tabs ---- */}
@@ -285,13 +273,6 @@ function Settings({ onBack }: SettingsProps): React.JSX.Element {
 
       {/* ---- Category content with animation ---- */}
       <div className="settings-content">{renderCategoryContent()}</div>
-
-      {/* ---- Save ---- */}
-      <div className="settings-footer">
-        <button className="settings-save" onClick={handleSave} disabled={!canSave || saving}>
-          {saving ? 'Saving…' : saved ? '✓ Saved' : 'Save'}
-        </button>
-      </div>
     </div>
   )
 }

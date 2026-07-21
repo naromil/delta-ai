@@ -25,6 +25,8 @@ We respect your privacy. All your data stay on your machine except for the AI re
   - The users are able to see and manage their AI models and their knowledge bases.
   - The details of everything about the users are selected and summarized before sending to cloud (if it is) providers to get personalized results for the look-up.
 - ### Look and Feel
-  - Simplicity are preferred to ensure the users adopt the tool itself smoothly.
+  - Simplicity is preferred to ensure the users adopt the tool itself smoothly.
   - The colors and shapes will be simplistic and psychologically peaceful.
-  - They will give the users a feeling of safety.
+  - They will give the users a feeling of soothing and reliability.
+  - It makes users want to share their overall personal growth with the app.
+  - Less academic/paper/traditional feel, more cool/stable/reliable feel.

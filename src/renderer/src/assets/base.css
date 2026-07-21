@@ -1,34 +1,81 @@
+/* Main CSS entry point that imports all application stylesheets */
+@import 'home.css';
+@import 'chat.css';
+@import 'settings.css';
+
 :root {
+  /* Surfaces */
+  --bg: #20212a;
+  --surface-1: #25262e;
+  --surface-2: #2c2d36;
+  --surface-3: #34354a;
+
+  /* Borders / dividers (low contrast) */
+  --border: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.12);
+
+  /* Text (reduced contrast for calm) */
+  --text-1: rgba(238, 238, 245, 0.92);
+  --text-2: rgba(228, 230, 240, 0.62);
+  --text-3: rgba(228, 230, 240, 0.4);
+  --text-muted: rgba(228, 230, 240, 0.45);
+
+  /* Accent — dusty blue */
+  --accent: #8aa0b8;
+  --accent-strong: #7a91a8;
+  --accent-soft: rgba(138, 160, 184, 0.18);
+  --accent-ring: rgba(138, 160, 184, 0.28);
+
+  /* Semantic (kept gentle) */
+  --success: #7fb08a;
+  --error: #cf7b6e;
+
+  /* Shape */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+
+  /* Shadows (soft, low lift) */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.18);
+  --shadow-2: 0 6px 22px rgba(0, 0, 0, 0.22);
+
+  /* ---- Legacy aliases (transitional) ---- */
   --ev-c-white: #ffffff;
   --ev-c-white-soft: #f8f8f8;
   --ev-c-white-mute: #f2f2f2;
 
-  --ev-c-black: #1b1b1f;
-  --ev-c-black-soft: #222222;
-  --ev-c-black-mute: #282828;
+  --ev-c-black: var(--bg);
+  --ev-c-black-soft: var(--surface-1);
+  --ev-c-black-mute: var(--surface-2);
 
-  --ev-c-gray-1: #515c67;
-  --ev-c-gray-2: #414853;
-  --ev-c-gray-3: #32363f;
+  --ev-c-gray-1: var(--border-strong);
+  --ev-c-gray-2: var(--border);
+  --ev-c-gray-3: var(--surface-3);
 
-  --ev-c-text-1: rgba(255, 255, 245, 0.86);
-  --ev-c-text-2: rgba(235, 235, 245, 0.6);
-  --ev-c-text-3: rgba(235, 235, 245, 0.38);
+  --ev-c-text-1: var(--text-1);
+  --ev-c-text-2: var(--text-2);
+  --ev-c-text-3: var(--text-3);
 
   --ev-button-alt-border: transparent;
-  --ev-button-alt-text: var(--ev-c-text-1);
-  --ev-button-alt-bg: var(--ev-c-gray-3);
+  --ev-button-alt-text: var(--text-1);
+  --ev-button-alt-bg: var(--surface-3);
   --ev-button-alt-hover-border: transparent;
-  --ev-button-alt-hover-text: var(--ev-c-text-1);
-  --ev-button-alt-hover-bg: var(--ev-c-gray-2);
-}
+  --ev-button-alt-hover-text: var(--text-1);
+  --ev-button-alt-hover-bg: var(--surface-2);
 
-:root {
-  --color-background: var(--ev-c-black);
-  --color-background-soft: var(--ev-c-black-soft);
-  --color-background-mute: var(--ev-c-black-mute);
+  --color-background: var(--bg);
+  --color-background-soft: var(--surface-1);
+  --color-background-mute: var(--surface-2);
 
-  --color-text: var(--ev-c-text-1);
+  --color-text: var(--text-1);
+
+  --chat-sidebar-bg: var(--surface-1);
+  --chat-bg: var(--bg);
+  --chat-border: var(--border);
+  --chat-input-bg: var(--surface-2);
+  --chat-hover: var(--surface-2);
+  --chat-accent: var(--accent);
+  --chat-muted: var(--text-muted);
 }
 
 *,
@@ -45,8 +92,8 @@ ul {
 
 body {
   min-height: 100vh;
-  color: var(--color-text);
-  background: var(--color-background);
+  color: var(--text-1);
+  background: var(--bg);
   line-height: 1.6;
   font-family:
     Inter,

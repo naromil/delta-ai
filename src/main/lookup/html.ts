@@ -1,26 +1,52 @@
 const CSS_STYLES = `<style>
+  :root {
+    --bg: #20212a;
+    --surface-1: #25262e;
+    --surface-2: #2c2d36;
+    --surface-3: #34354a;
+    --border: rgba(255,255,255,0.07);
+    --border-strong: rgba(255,255,255,0.12);
+    --text-1: rgba(238,238,245,0.92);
+    --text-2: rgba(228,230,240,0.62);
+    --text-3: rgba(228,230,240,0.40);
+    --text-muted: rgba(228,230,240,0.45);
+    --accent: #8aa0b8;
+    --accent-strong: #7a91a8;
+    --accent-soft: rgba(138,160,184,0.18);
+    --accent-ring: rgba(138,160,184,0.28);
+    --success: #7fb08a;
+    --error: #cf7b6e;
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 16px;
+    --shadow-1: 0 1px 2px rgba(0,0,0,0.18);
+    --shadow-2: 0 6px 22px rgba(0,0,0,0.22);
+  }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body {
+  html {
     height: 100%;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
     transition: height 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
   }
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-    background: #1a1a1a;
-    color: #e0e0e0;
+    background: var(--bg);
+    color: var(--text-1);
     display: flex;
     flex-direction: column;
     height: 100vh;
+    border-radius: var(--radius-sm);
     overflow: hidden;
     user-select: text;
   }
   .header {
-    background: #2a2a2a;
+    background: var(--surface-1);
     padding: 8px 14px;
     font-size: 13px;
     font-weight: 600;
-    color: #aaa;
-    border-bottom: 1px solid #333;
+    color: var(--text-2);
+    border-bottom: 1px solid var(--border-strong);
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -30,11 +56,25 @@ const CSS_STYLES = `<style>
   .header .close {
     -webkit-app-region: no-drag;
     cursor: pointer;
-    color: #888;
-    font-size: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    margin-right: -4px;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--text-3);
+    font-size: 14px;
     line-height: 1;
+    transition:
+      background 150ms ease,
+      color 150ms ease;
   }
-  .header .close:hover { color: #fff; }
+  .header .close:hover {
+    background: var(--surface-3);
+    color: var(--text-1);
+  }
   .content {
     flex: 1;
     overflow-y: auto;
@@ -46,15 +86,15 @@ const CSS_STYLES = `<style>
     font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    color: #666;
+    color: var(--text-3);
     margin-bottom: 4px;
     font-weight: 600;
   }
   .extracted {
     font-size: 13px;
-    color: #ccc;
-    background: #222;
-    border-radius: 6px;
+    color: var(--text-2);
+    background: var(--surface-2);
+    border-radius: var(--radius-sm);
     padding: 8px 10px;
     margin-bottom: 6px;
     white-space: pre-wrap;
@@ -65,21 +105,21 @@ const CSS_STYLES = `<style>
     transition: border-color 0.2s;
   }
   .extracted.hint {
-    color: #777;
+    color: var(--text-muted);
     font-style: italic;
   }
   .extracted.flash {
-    border-color: rgba(60, 118, 185, 0.45);
-    box-shadow: inset 0 0 0 1px rgba(60, 118, 185, 0.18);
+    border-color: var(--accent-ring);
+    box-shadow: inset 0 0 0 1px var(--accent-soft);
   }
   .paste-tip {
     font-size: 11px;
-    color: #555;
+    color: var(--text-3);
     margin-bottom: 12px;
   }
   .ocr-hint {
     font-size: 11px;
-    color: #888;
+    color: var(--text-3);
     margin-top: 4px;
     display: none;
   }
@@ -90,17 +130,17 @@ const CSS_STYLES = `<style>
   }
   .ask {
     width: 100%;
-    background: #232323;
-    border: 1px solid #333;
-    border-radius: 8px;
-    color: #e0e0e0;
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    color: var(--text-1);
     font-size: 14px;
     font-family: inherit;
     padding: 10px 12px;
     outline: none;
   }
-  .ask:focus { border-color: #4a90d9; box-shadow: 0 0 0 2px rgba(74,144,217,0.2); }
-  .ask::placeholder { color: #666; }
+  .ask:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-ring); }
+  .ask::placeholder { color: var(--text-3); }
   .conversation {
     display: none;
     flex: 1;
@@ -116,24 +156,24 @@ const CSS_STYLES = `<style>
     white-space: pre-wrap;
     word-break: break-word;
     padding: 8px 10px;
-    border-radius: 8px;
+    border-radius: var(--radius-sm);
   }
   .turn.user {
-    background: #2c3a4a;
-    color: #d6e4ff;
+    background: var(--accent-soft);
+    color: var(--text-1);
     align-self: flex-end;
     max-width: 92%;
   }
   .turn.ai {
-    background: #222;
-    color: #e0e0e0;
+    background: var(--surface-2);
+    color: var(--text-1);
     align-self: flex-start;
     max-width: 96%;
   }
-  .turn.loading { color: #666; font-style: italic; }
-  .turn.error   { color: #ff6b6b; }
+  .turn.loading { color: var(--text-3); font-style: italic; }
+  .turn.error   { color: var(--error); }
   .scroll::-webkit-scrollbar { width: 6px; }
-  .scroll::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+  .scroll::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
 
   /* ---- Infinite-query expansion ---- */
   .turn.ai .word { cursor: text; }
@@ -141,8 +181,8 @@ const CSS_STYLES = `<style>
       participates in the parent paragraph flow (no block boxes). */
   .frame.expanded {
     display: inline;
-    background: rgba(74, 144, 217, 0.06);
-    border: 1px solid rgba(74, 144, 217, 0.55);
+    background: var(--accent-soft);
+    border: 1px solid var(--accent);
     border-radius: 4px;
     padding: 2px 4px;
     margin: 0 2px;
@@ -151,10 +191,10 @@ const CSS_STYLES = `<style>
     -webkit-box-decoration-break: clone;
     transition: opacity 0.25s ease;
   }
-  .frame.loading { border-color: rgba(120, 120, 120, 0.55); background: rgba(120, 120, 120, 0.06); }
-  .frame.loading .frame-inner { color: #888; font-style: italic; }
-  .frame.error { border-color: rgba(255, 107, 107, 0.55); background: rgba(255, 107, 107, 0.05); }
-  .frame.error .frame-inner { color: #ff6b6b; }
+  .frame.loading { border-color: var(--text-3); background: rgba(120, 120, 120, 0.06); }
+  .frame.loading .frame-inner { color: var(--text-3); font-style: italic; }
+  .frame.error { border-color: var(--error); background: rgba(207, 123, 110, 0.08); }
+  .frame.error .frame-inner { color: var(--error); }
   .frame.error .fold-toggle { display: none; }
   .frame-inner {
     display: inline;
@@ -172,32 +212,32 @@ const CSS_STYLES = `<style>
     margin-left: 4px;
     margin-right: 2px;
     font-size: 12px;
-    color: #4a90d9;
+    color: var(--accent);
     cursor: pointer;
     vertical-align: baseline;
     user-select: none;
     line-height: 1.5;
     padding: 2px;
   }
-  .frame .fold-toggle:hover { color: #fff; }
+  .frame .fold-toggle:hover { color: var(--text-1); }
   /* Folded queried-word pill. Clicking re-opens the cached frame. */
   .queried {
-    background: rgba(74, 144, 217, 0.18);
+    background: var(--accent-soft);
     border-radius: 2px;
     padding: 0 2px;
     cursor: pointer;
     vertical-align: baseline;
   }
-  .queried:hover { background: rgba(74, 144, 217, 0.32); }
+  .queried:hover { background: rgba(138, 160, 184, 0.32); }
 
   /* Custom context menu */
   #ctxMenu {
     position: fixed;
     z-index: 1000;
-    background: #2a2a2a;
-    border: 1px solid #333;
-    border-radius: 6px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-2);
     padding: 4px 0;
     font-size: 13px;
     min-width: 140px;
@@ -207,15 +247,15 @@ const CSS_STYLES = `<style>
   #ctxMenu .item {
     padding: 6px 14px;
     cursor: pointer;
-    color: #ddd;
+    color: var(--text-2);
   }
-  #ctxMenu .item:hover { background: #3a3a3a; color: #fff; }
+  #ctxMenu .item:hover { background: var(--surface-3); color: var(--text-1); }
   #ctxMenu .item.disabled {
-    color: #555;
+    color: var(--text-3);
     cursor: default;
   }
-  #ctxMenu .item.disabled:hover { background: transparent; color: #555; }
-  #ctxMenu .sep { height: 1px; background: #333; margin: 4px 0; }
+  #ctxMenu .item.disabled:hover { background: transparent; color: var(--text-3); }
+  #ctxMenu .sep { height: 1px; background: var(--border-strong); margin: 4px 0; }
 </style>`
 
 export const lookupHTML = `<!DOCTYPE html>
