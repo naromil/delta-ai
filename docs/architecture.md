@@ -5,16 +5,16 @@
 
 ## High-level stack
 
-| Layer     | Technology                                           |
-| --------- | ---------------------------------------------------- |
-| Shell     | Electron 34 (electron-vite 4)                        |
-| Main      | TypeScript, Node.js                                  |
-| Preload   | TypeScript, contextBridge                            |
-| Shared    | TypeScript (pure types + registries, no runtime deps) |
-| Renderer  | React 19, TypeScript, vanilla CSS                    |
-| OCR       | tesseract.js (WASM)                                  |
+| Layer     | Technology                                                                               |
+| --------- | ---------------------------------------------------------------------------------------- |
+| Shell     | Electron 34 (electron-vite 4)                                                            |
+| Main      | TypeScript, Node.js                                                                      |
+| Preload   | TypeScript, contextBridge                                                                |
+| Shared    | TypeScript (pure types + registries, no runtime deps)                                    |
+| Renderer  | React 19, TypeScript, vanilla CSS                                                        |
+| OCR       | tesseract.js (WASM)                                                                      |
 | AI        | Multi-provider (Google AI Studio, OpenAI Compatible; OpenAI, Ollama, OpenRouter planned) |
-| Packaging | electron-builder                                     |
+| Packaging | electron-builder                                                                         |
 
 ## Project tree
 
@@ -222,12 +222,12 @@ The app uses a **role-based model assignment** system. Instead of a single globa
 
 **Roles** (`roleRegistry` in `src/shared/models.ts`):
 
-| Role ID              | Label                       | Locked | Web search | Used by                          |
-| -------------------- | --------------------------- | ------ | ---------- | -------------------------------- |
-| `chat`               | Chat                        | No     | Yes        | `send-message` IPC (main chat)   |
-| `lookup`             | Lookup                      | No     | Yes        | `handleLookupAsk` / `handleLookupExpand` |
-| `kb-maintenance`     | Knowledge Base Maintenance  | Yes    | No         | (planned: KB processing)         |
-| `context-injection`  | Context Injection           | Yes    | No         | (planned: KB → lookup injection) |
+| Role ID             | Label                      | Locked | Web search | Used by                                  |
+| ------------------- | -------------------------- | ------ | ---------- | ---------------------------------------- |
+| `chat`              | Chat                       | No     | Yes        | `send-message` IPC (main chat)           |
+| `lookup`            | Lookup                     | No     | Yes        | `handleLookupAsk` / `handleLookupExpand` |
+| `kb-maintenance`    | Knowledge Base Maintenance | Yes    | No         | (planned: KB processing)                 |
+| `context-injection` | Context Injection          | Yes    | No         | (planned: KB → lookup injection)         |
 
 Locked roles are shown greyed in Settings with a "🔒 Locked" indicator; their dispatch is not wired until the KB feature ships.
 
@@ -235,13 +235,13 @@ Locked roles are shown greyed in Settings with a "🔒 Locked" indicator; their 
 
 **Provider types** (`providerRegistry`):
 
-| Provider type        | Auth    | Default base URL                                     | Implemented |
-| -------------------- | ------- | ---------------------------------------------------- | ----------- |
-| `google-ai-studio`   | API key | `https://generativelanguage.googleapis.com/v1beta`  | ✅          |
-| `openai-compatible`  | API key | (user-specified)                                     | ✅          |
-| `openai`             | API key | `https://api.openai.com/v1`                          | ⛔ (selectable) |
-| `ollama`             | Host    | (uses `host` field, e.g. `http://localhost:11434`)   | ⛔ (selectable) |
-| `openrouter`         | API key | `https://openrouter.ai/api/v1`                       | ⛔ (selectable) |
+| Provider type       | Auth    | Default base URL                                   | Implemented     |
+| ------------------- | ------- | -------------------------------------------------- | --------------- |
+| `google-ai-studio`  | API key | `https://generativelanguage.googleapis.com/v1beta` | ✅              |
+| `openai-compatible` | API key | (user-specified)                                   | ✅              |
+| `openai`            | API key | `https://api.openai.com/v1`                        | ⛔ (selectable) |
+| `ollama`            | Host    | (uses `host` field, e.g. `http://localhost:11434`) | ⛔ (selectable) |
+| `openrouter`        | API key | `https://openrouter.ai/api/v1`                     | ⛔ (selectable) |
 
 **Resolution flow:** Callers pass a `roleId` to `callProvider`/`callProviderStream`. The provider module calls `resolveRole(roleId)` from `config.ts`, which returns `{ connection, model, webSearchEnabled }` or `null`. On `null`, `RoleUnassignedError` is thrown with a role-specific message. The `webSearchEnabled` flag is read from the role assignment (not passed by callers), so callers no longer need to know about web search configuration.
 
@@ -539,8 +539,16 @@ Legacy variables (`--ev-c-*`, `--chat-*`, `--color-*`) are aliased to the new to
     }
   },
   "roles": {
-    "chat": { "connectionId": "conn_1721568938473_a1b2", "model": "gemini-3.5-flash", "webSearchEnabled": false },
-    "lookup": { "connectionId": "conn_1721568938473_a1b2", "model": "gemini-3.5-flash", "webSearchEnabled": true },
+    "chat": {
+      "connectionId": "conn_1721568938473_a1b2",
+      "model": "gemini-3.5-flash",
+      "webSearchEnabled": false
+    },
+    "lookup": {
+      "connectionId": "conn_1721568938473_a1b2",
+      "model": "gemini-3.5-flash",
+      "webSearchEnabled": true
+    },
     "kb-maintenance": { "connectionId": null, "model": "", "webSearchEnabled": false },
     "context-injection": { "connectionId": null, "model": "", "webSearchEnabled": false }
   }
@@ -586,21 +594,21 @@ The renderer and lookup popup were restyled to align with the README "Look and F
 
 ## Current feature status
 
-| Feature                        | Status         |
-| ------------------------------ | -------------- |
-| Chat UI (chat view + send)     | ✅ Complete    |
-| Settings with 3 tabs (General/Models/About) | ✅ Complete |
+| Feature                                          | Status                        |
+| ------------------------------------------------ | ----------------------------- |
+| Chat UI (chat view + send)                       | ✅ Complete                   |
+| Settings with 3 tabs (General/Models/About)      | ✅ Complete                   |
 | Role-based model config (chat, lookup, KB roles) | ✅ Complete (KB roles locked) |
-| Provider connections (CRUD, per-role model) | ✅ Complete |
-| Google AI Studio provider      | ✅ Complete    |
-| OpenAI Compatible provider     | ✅ Complete    |
-| OpenAI / Ollama / OpenRouter providers | ✅ Complete |
-| Shared types/registry module    | ✅ Complete    |
-| OCR from screen (full capture) | ✅ Complete    |
-| AI explanation popup           | ✅ Complete    |
-| Global hotkey (X11 + Wayland)  | ✅ Complete    |
-| Infinite recursive lookup      | ✅ Complete    |
-| Home dashboard (KB canvas)     | ✅ Complete    |
-| Knowledge Base                 | ❌ Not started |
-| Built-in local model           | ❌ Not started |
-| Look-Up Guide view             | ❌ Not started |
+| Provider connections (CRUD, per-role model)      | ✅ Complete                   |
+| Google AI Studio provider                        | ✅ Complete                   |
+| OpenAI Compatible provider                       | ✅ Complete                   |
+| OpenAI / Ollama / OpenRouter providers           | ✅ Complete                   |
+| Shared types/registry module                     | ✅ Complete                   |
+| OCR from screen (full capture)                   | ✅ Complete                   |
+| AI explanation popup                             | ✅ Complete                   |
+| Global hotkey (X11 + Wayland)                    | ✅ Complete                   |
+| Infinite recursive lookup                        | ✅ Complete                   |
+| Home dashboard (KB canvas)                       | ✅ Complete                   |
+| Knowledge Base                                   | ❌ Not started                |
+| Built-in local model                             | ❌ Not started                |
+| Look-Up Guide view                               | ❌ Not started                |

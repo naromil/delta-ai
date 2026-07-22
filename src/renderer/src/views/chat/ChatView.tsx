@@ -61,7 +61,34 @@ function ChatView({ messages, loading, onSend, onNewChat }: ChatViewProps): Reac
           <div className="message-list">
             {messages.map((m) => (
               <div key={m.id} className={`message message-${m.role}`}>
-                <div className="message-avatar">{m.role === 'user' ? 'You' : 'AI'}</div>
+                <div className="message-avatar">
+                  {m.role === 'user' ? (
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                      <circle cx="12" cy="7" r="4" />
+                    </svg>
+                  ) : (
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M12 2L2 22h20L12 2z" />
+                    </svg>
+                  )}
+                </div>
                 {m.content === '' && loading && m.role === 'assistant' ? (
                   <div className="message-content">
                     <div className="loading-dots">

@@ -113,24 +113,25 @@ body {
 }
 
 .message-avatar {
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
-  font-weight: 600;
-  color: #fff;
+  box-shadow: var(--shadow-1);
 }
 
-.message-user .message-avatar {
-  background: var(--accent);
+.message-avatar svg {
+  width: 16px;
+  height: 16px;
 }
 
+.message-user .message-avatar,
 .message-assistant .message-avatar {
-  background: var(--success);
+  background: var(--surface-3);
+  color: var(--accent);
 }
 
 .message-content {
@@ -221,10 +222,16 @@ body {
   max-height: 200px;
   padding: 8px 0;
   font-family: inherit;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 
 .composer-input::placeholder {
   color: var(--text-muted);
+}
+
+.composer-input::-webkit-scrollbar {
+  display: none;
 }
 
 .composer-send {
