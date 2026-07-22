@@ -1,119 +1,92 @@
-import { useState, useEffect, useRef } from 'react'
-import HotkeyInput from '../../components/settings/HotkeyInput'
-import GoogleAiForm from '../../components/settings/GoogleAiForm'
-import OpenAiForm from '../../components/settings/OpenAiForm'
+import { useEffect, useRef, useState } from 'react'
+import type { Connection, ModelConfig, RoleAssignment, RoleId } from '../../../../shared/models'
+import { createDefaultModelConfig } from '../../../../shared/models'
+import GeneralTab from './GeneralTab'
+import ModelsTab from '../../components/settings/models/ModelsTab'
 
-// ---- Types ----
-type Category = 'general' | 'providers'
-
-type ProviderConfig = {
-  apiKey: string
-  model: string
-  baseUrl?: string
-  webSearchEnabled?: boolean
-}
-
-type AllProvidersConfig = {
-  currentProvider: string
-  providers: {
-    'google-ai-studio'?: ProviderConfig
-    'openai-compatible'?: ProviderConfig
-  }
-}
+/* ---- Component ---- */
 
 function Settings(): React.JSX.Element {
-  // ---- State declarations ----
-  const [activeCategory, setActiveCategory] = useState<Category>('general')
-  const [selectedProvider, setSelectedProvider] = useState('')
-  const [apiKey, setApiKey] = useState('')
-  const [baseUrl, setBaseUrl] = useState('')
-  const [model, setModel] = useState('gemini-3.5-flash')
-  const [customModel, setCustomModel] = useState('')
-  const [isCustomModel, setIsCustomModel] = useState(false)
-  const [webSearchEnabled, setWebSearchEnabled] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [saved, setSaved] = useState(false)
+  const [activeTab, setActiveTab] = useState<'general' | 'models' | 'about'>('general')
+  const [modelConfig, setModelConfig] = useState<ModelConfig>(createDefaultModelConfig)
   const [hotkey, setHotkey] = useState('Ctrl+Shift+D')
   const [closeToTray, setCloseToTray] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
   const hotkeyRef = useRef(hotkey)
 
-  const cacheRef = useRef<AllProvidersConfig>({
-    currentProvider: '',
-    providers: {}
-  })
-
-  // ---- Return the correct model name for save ----
-  const resolveModel = (provider: string): string => {
-    if (provider === 'google-ai-studio' && !isCustomModel) return model
-    return customModel.trim()
-  }
-
-  // ---- Cache Management ----
-  const flushToCache = (): void => {
-    const provider = selectedProvider
-    if (!provider) return
-    const finalModel = resolveModel(provider)
-    const entry: ProviderConfig = {
-      apiKey,
-      model: finalModel,
-      webSearchEnabled,
-      ...(provider === 'openai-compatible' && baseUrl ? { baseUrl } : {})
-    }
-    cacheRef.current.providers[provider as keyof typeof cacheRef.current.providers] = entry
-  }
-
-  const loadFromCache = (provider: string): void => {
-    const providers = cacheRef.current.providers as Record<string, ProviderConfig | undefined>
-    const entry = providers[provider]
-
-    setApiKey('')
-    setBaseUrl('')
-    setModel('gemini-3.5-flash')
-    setCustomModel('')
-    setIsCustomModel(false)
-    setWebSearchEnabled(false)
-
-    if (!entry) return
-    if (entry.apiKey) setApiKey(entry.apiKey)
-    if (entry.baseUrl) setBaseUrl(entry.baseUrl)
-    if (entry.webSearchEnabled) setWebSearchEnabled(entry.webSearchEnabled)
-    if (entry.model) {
-      if (provider === 'google-ai-studio') {
-        const known = [
-          'gemini-3.5-flash',
-          'gemini-3.1-pro',
-          'gemini-3.1-flash-lite',
-          'gemini-2.5-flash',
-          'gemma-4-31b-it'
-        ]
-        if (known.includes(entry.model)) {
-          setModel(entry.model)
-          setIsCustomModel(false)
-        } else {
-          setCustomModel(entry.model)
-          setIsCustomModel(true)
-        }
-      } else {
-        setCustomModel(entry.model)
-        setIsCustomModel(true)
+  /* Load existing config on mount */
+  useEffect(() => {
+    window.api.loadModelConfig().then((cfg) => {
+      if (cfg && typeof cfg === 'object') {
+        setModelConfig(cfg as ModelConfig)
       }
-    }
+    })
+
+    window.api.loadSettings().then((s) => {
+      const settings = s as { hotkey?: string; closeToTray?: boolean } | null
+      if (settings?.hotkey) {
+        setHotkey(settings.hotkey)
+        hotkeyRef.current = settings.hotkey
+      }
+      if (settings?.closeToTray !== undefined) {
+        setCloseToTray(settings.closeToTray)
+      }
+    })
+  }, [])
+
+  /* ---- Mutation helpers ---- */
+
+  const updateRole = (roleId: RoleId, updates: Partial<RoleAssignment>): void => {
+    setModelConfig((prev) => ({
+      ...prev,
+      roles: { ...prev.roles, [roleId]: { ...prev.roles[roleId], ...updates } }
+    }))
   }
+
+  const updateConnection = (connId: string, updates: Partial<Connection>): void => {
+    setModelConfig((prev) => ({
+      ...prev,
+      connections: {
+        ...prev.connections,
+        [connId]: { ...prev.connections[connId], ...updates }
+      }
+    }))
+  }
+
+  const addConnection = (connection: Connection): void => {
+    setModelConfig((prev) => ({
+      ...prev,
+      connections: { ...prev.connections, [connection.id]: connection }
+    }))
+  }
+
+  const deleteConnection = (connId: string): void => {
+    setModelConfig((prev) => {
+      const next = { ...prev, connections: { ...prev.connections } }
+      delete next.connections[connId]
+      const roles = { ...next.roles } as Record<RoleId, RoleAssignment>
+      for (const key of Object.keys(roles) as RoleId[]) {
+        if (roles[key].connectionId === connId) {
+          roles[key] = { connectionId: null, model: '', webSearchEnabled: false }
+        }
+      }
+      next.roles = roles
+      return next
+    })
+  }
+
+  /* ---- Save ---- */
 
   const handleSave = async (): Promise<void> => {
     setSaving(true)
-    flushToCache()
-    cacheRef.current.currentProvider = selectedProvider
-
-    const allConfig = cacheRef.current
-    const saveCfgProm = window.api.saveAllProviders(allConfig)
-    const saveSettingsProm = window.api.saveSettings({
+    const cfgRes = await window.api.saveModelConfig(modelConfig)
+    const settingsRes = await window.api.saveSettings({
       hotkey: hotkeyRef.current,
       closeToTray
     })
-    const [cfgRes] = await Promise.all([saveCfgProm, saveSettingsProm])
     setSaving(false)
-    if (cfgRes.success) {
+    if (cfgRes.success && settingsRes.success) {
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } else {
@@ -121,131 +94,11 @@ function Settings(): React.JSX.Element {
     }
   }
 
-  // ---- Event handlers ----
-  const switchProvider = (provider: string): void => {
-    flushToCache()
-    setSelectedProvider(provider)
-    setSaved(false)
-    loadFromCache(provider)
-  }
+  const canSave =
+    Object.values(modelConfig.roles).some((r) => r.connectionId !== null) ||
+    Object.keys(modelConfig.connections).length > 0
 
-  const handleHotkeyChange = (combo: string): void => {
-    setHotkey(combo)
-    hotkeyRef.current = combo
-  }
-
-  /* load existing config + settings on mount */
-  useEffect(() => {
-    window.api.loadAllProviders().then((allCfg) => {
-      if (!allCfg || typeof allCfg !== 'object') return
-      const all = allCfg as AllProvidersConfig
-      cacheRef.current = {
-        currentProvider: all.currentProvider ?? '',
-        providers: all.providers ?? {}
-      }
-
-      if (cacheRef.current.currentProvider) {
-        setSelectedProvider(cacheRef.current.currentProvider)
-        loadFromCache(cacheRef.current.currentProvider)
-      }
-    })
-
-    window.api.loadSettings().then((s) => {
-      if (s?.hotkey) {
-        setHotkey(s.hotkey)
-        hotkeyRef.current = s.hotkey
-      }
-      if (s?.closeToTray !== undefined) {
-        setCloseToTray(s.closeToTray)
-      }
-    })
-  }, [])
-
-  const canSave = selectedProvider !== ''
-
-  // ---- Render a category on switch ----
-  const renderCategoryContent = (): React.JSX.Element => {
-    if (activeCategory === 'general') {
-      return (
-        <>
-          <HotkeyInput value={hotkey} onChange={handleHotkeyChange} />
-          <div className="settings-section">
-            <label className="settings-label">Close to system tray</label>
-            <label className="toggle-row">
-              <input
-                type="checkbox"
-                className="toggle-input"
-                checked={closeToTray}
-                onChange={(e) => setCloseToTray(e.target.checked)}
-              />
-              <span className="toggle-track">
-                <span className="toggle-thumb" />
-              </span>
-              <span className="toggle-label">
-                {closeToTray ? 'Closing hides to tray' : 'Closing quits the app'}
-              </span>
-            </label>
-          </div>
-        </>
-      )
-    }
-
-    // providers category
-    return (
-      <>
-        {/* ---- Provider selector ---- */}
-        <div className="settings-section">
-          <label className="settings-label" htmlFor="provider-select">
-            API keys
-          </label>
-          <select
-            id="provider-select"
-            className="settings-select"
-            value={selectedProvider}
-            onChange={(e) => switchProvider(e.target.value)}
-          >
-            <option value="" disabled>
-              Select a provider…
-            </option>
-            <option value="google-ai-studio">Google AI Studio</option>
-            <option value="openai-compatible">OpenAI Compatible</option>
-          </select>
-        </div>
-
-        {/* ---- Provider-specific fields ---- */}
-        {selectedProvider === 'google-ai-studio' && (
-          <GoogleAiForm
-            apiKey={apiKey}
-            model={model}
-            customModel={customModel}
-            isCustomModel={isCustomModel}
-            webSearchEnabled={webSearchEnabled}
-            onApiKeyChange={setApiKey}
-            onModelChange={setModel}
-            onCustomModelChange={setCustomModel}
-            onIsCustomModelChange={setIsCustomModel}
-            onWebSearchChange={setWebSearchEnabled}
-            onDirty={() => setSaved(false)}
-          />
-        )}
-
-        {selectedProvider === 'openai-compatible' && (
-          <OpenAiForm
-            apiKey={apiKey}
-            baseUrl={baseUrl}
-            customModel={customModel}
-            webSearchEnabled={webSearchEnabled}
-            onApiKeyChange={setApiKey}
-            onBaseUrlChange={setBaseUrl}
-            onCustomModelChange={setCustomModel}
-            onWebSearchChange={setWebSearchEnabled}
-            onDirty={() => setSaved(false)}
-          />
-        )}
-      </>
-    )
-  }
-
+  /* ---- Main render ---- */
   return (
     <div className="settings">
       <div className="settings-header">
@@ -255,24 +108,60 @@ function Settings(): React.JSX.Element {
         </button>
       </div>
 
-      {/* ---- Category tabs ---- */}
+      {/* ---- Tabs ---- */}
       <div className="settings-categories">
         <button
-          className={`settings-category-tab ${activeCategory === 'general' ? 'active' : ''}`}
-          onClick={() => setActiveCategory('general')}
+          className={`settings-category-tab ${activeTab === 'general' ? 'active' : ''}`}
+          onClick={() => setActiveTab('general')}
         >
           General
         </button>
         <button
-          className={`settings-category-tab ${activeCategory === 'providers' ? 'active' : ''}`}
-          onClick={() => setActiveCategory('providers')}
+          className={`settings-category-tab ${activeTab === 'models' ? 'active' : ''}`}
+          onClick={() => setActiveTab('models')}
         >
-          Providers
+          Models
+        </button>
+        <button
+          className={`settings-category-tab ${activeTab === 'about' ? 'active' : ''}`}
+          onClick={() => setActiveTab('about')}
+        >
+          About
         </button>
       </div>
 
-      {/* ---- Category content with animation ---- */}
-      <div className="settings-content">{renderCategoryContent()}</div>
+      {/* ---- Tab content ---- */}
+      <div className="settings-content">
+        {activeTab === 'general' && (
+          <GeneralTab
+            hotkey={hotkey}
+            onHotkeyChange={(combo) => {
+              setHotkey(combo)
+              hotkeyRef.current = combo
+            }}
+            closeToTray={closeToTray}
+            onCloseToTrayChange={setCloseToTray}
+          />
+        )}
+        {activeTab === 'models' && (
+          <ModelsTab
+            modelConfig={modelConfig}
+            onUpdateRole={updateRole}
+            onUpdateConnection={updateConnection}
+            onAddConnection={addConnection}
+            onDeleteConnection={deleteConnection}
+          />
+        )}
+        {activeTab === 'about' && (
+          <div className="settings-section">
+            <h3 style={{ margin: '0 0 8px', fontSize: '16px' }}>Delta AI</h3>
+            <p style={{ color: 'var(--text-2)', fontSize: '14px', lineHeight: 1.6 }}>
+              An AI-powered desktop assistant that captures your screen, runs OCR, and provides
+              context-aware answers via the model of your choice.
+            </p>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

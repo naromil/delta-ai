@@ -2,12 +2,9 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 
 const api = {
-  saveConfig: (config: unknown): Promise<{ success: boolean }> =>
-    ipcRenderer.invoke('save-config', config),
-  saveAllProviders: (config: unknown): Promise<{ success: boolean }> =>
-    ipcRenderer.invoke('save-all-providers', config),
-  loadConfig: (): Promise<unknown> => ipcRenderer.invoke('load-config'),
-  loadAllProviders: (): Promise<unknown> => ipcRenderer.invoke('load-all-providers'),
+  loadModelConfig: (): Promise<unknown> => ipcRenderer.invoke('load-model-config'),
+  saveModelConfig: (config: unknown): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('save-model-config', config),
   sendMessage: (
     messages: Array<{ role: string; content: string }>
   ): Promise<{ success: boolean; response?: string; error?: string }> =>

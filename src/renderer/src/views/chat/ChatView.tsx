@@ -55,7 +55,7 @@ function ChatView({ messages, loading, onSend, onNewChat }: ChatViewProps): Reac
       <div className="chat-scroll" ref={scrollRef}>
         {messages.length === 0 ? (
           <div className="empty-state">
-            <h1 className="empty-title">Sync with me</h1>
+            <h1 className="empty-title">Grow with me</h1>
           </div>
         ) : (
           <div className="message-list">

@@ -1,7 +1,7 @@
 # Delta AI — Architecture
 
 > Auto-generated from source as built. Update after major changes to provide essential context about the project.
-> Last updated: 2026-07-20
+> Last updated: 2026-07-21
 
 ## High-level stack
 
@@ -10,9 +10,10 @@
 | Shell     | Electron 34 (electron-vite 4)                        |
 | Main      | TypeScript, Node.js                                  |
 | Preload   | TypeScript, contextBridge                            |
+| Shared    | TypeScript (pure types + registries, no runtime deps) |
 | Renderer  | React 19, TypeScript, vanilla CSS                    |
 | OCR       | tesseract.js (WASM)                                  |
-| AI        | Multi-provider (Google AI Studio, OpenAI Compatible) |
+| AI        | Multi-provider (Google AI Studio, OpenAI Compatible; OpenAI, Ollama, OpenRouter planned) |
 | Packaging | electron-builder                                     |
 
 ## Project tree
@@ -20,14 +21,18 @@
 ```
 electron.vite.config.ts      # Build orchestration (main/preload/renderer)
 src/
+  shared/
+    models.ts                 # Shared types + provider/role registries (no runtime deps)
   main/
     index.ts                 # App lifecycle, main window, send-message IPC handler
-    config.ts                # Config persistence, Wayland detection, hotkey registry
-    provider.ts              # Provider dispatch (callProvider + callOpenAICompatible)
+    config.ts                # Config persistence (v2 model config + app settings), Wayland detection, hotkey registry
+    provider.ts              # Provider dispatch by role (callProvider + callProviderStream)
+    models/
+      registries.ts          # Re-export from src/shared/models.ts (keeps main import paths stable)
     lookup/
       lookup.ts              # Orchestrator: IPC wiring + handleHotkeyPressed entry point
       capture.ts             # Screen capture + OCR pipeline (tesseract.js worker)
-      handlers.ts            # Paste handlers + Ask handler (builds messages, calls provider)
+      handlers.ts            # Paste handlers + Ask/Expand handlers (call callProviderStream with 'lookup' role)
       html.ts                # Inline HTML for lookup popup (data: URL), restyled with CSS vars
       state.ts               # Shared mutable state (lookupState object + helpers)
       window.ts              # Lookup popup BrowserWindow creation + grow animation
@@ -45,46 +50,49 @@ src/
       env.d.ts               # Vite env type shim
       assets/
         base.css             # CSS entry point: imports home.css, chat.css, settings.css;
-                             # defines design tokens (:root), CSS reset, legacy aliases
+                              # defines design tokens (:root), CSS reset, legacy aliases
         home.css             # App layout, sidebar (brand + nav + footer), view-shell
-                             # (shared header/content), KB canvas placeholder, responsive
+                              # (shared header/content), KB canvas placeholder, responsive
         chat.css             # Chat view: toolbar with New-chat button, message list,
-                             # composer, loading dots, scrollbar
+                              # composer, loading dots, scrollbar
         settings.css         # Settings page: category tabs, forms, toggle switch,
-                             # save button, scrollbar
+                              # save button, scrollbar
       views/
         home/
           HomeView.tsx       # Dashboard shell with KB canvas placeholder
         chat/
           ChatView.tsx       # Message list + empty state + composer + auto-scroll +
-                             # own toolbar with New chat button
+                              # own toolbar with New chat button
         knowledge/
           KnowledgeView.tsx  # Empty-state stub for Knowledge Base (Coming soon)
         lookup-guide/
           LookupGuideView.tsx  # Empty-state stub for Look-Up Guide (Coming soon)
         settings/
-          Settings.tsx       # Settings page orchestrator (categories + cache + save)
+          Settings.tsx       # Settings orchestrator (3 tabs + save); owns modelConfig state
+          GeneralTab.tsx     # General tab (hotkey + close-to-tray toggle)
       components/
         settings/
           HotkeyInput.tsx    # Hotkey capture input with keyboard combo rendering
-          GoogleAiForm.tsx   # Google AI Studio provider config form
-          OpenAiForm.tsx     # OpenAI Compatible provider config form
+          models/
+            ModelsTab.tsx       # Models tab: Roles + Connections sections, add-connection
+            RoleRow.tsx         # Single role row (connection selector, model field, web search)
+            ConnectionCard.tsx  # Single connection card (provider type, API key/host, base URL)
 ```
 
 ## Data flow (layers)
 
 ```
 Renderer (React 19)          src/renderer/src/
-    │  window.api.{sendMessage, saveConfig, loadConfig, loadSettings, saveSettings,
-    │              saveAllProviders, loadAllProviders}
+    │  window.api.{sendMessage, loadModelConfig, saveModelConfig, loadSettings, saveSettings}
     ▼
 Preload (contextBridge)      src/preload/index.ts (+ index.d.ts)
     │  ipcRenderer.invoke(...) / ipcRenderer.send(...) / ipcRenderer.on(...)
     ▼
 Main process (Node)          src/main/
-    ├── index.ts            App lifecycle + main window + send-message IPC
-    ├── config.ts           Config persistence, Wayland detection, hotkey registry
-    ├── provider.ts         Provider dispatch (callProvider, callProviderStream)
+    ├── index.ts            App lifecycle + main window + send-message IPC (uses 'chat' role)
+    ├── config.ts           Model config persistence (v2 roles+connections), Wayland, hotkey
+    ├── provider.ts         Role-based provider dispatch (callProvider/callProviderStream)
+    ├── models/registries.ts  Re-export from src/shared/models.ts
     ├── lookup/
     │   ├── lookup.ts      Orchestrator: handleHotkeyPressed entry point
     │   ├── capture.ts     Screen capture + OCR (tesseract worker)
@@ -96,8 +104,12 @@ Main process (Node)          src/main/
         ├── global-shortcut.ts   XDG GlobalShortcuts D-Bus (Wayland)
         └── screen-capture.ts    Freedesktop Screenshot (KDE Wayland)
     ▼
+Shared (pure types)          src/shared/models.ts
+    │  ProviderType, RoleId, Connection, RoleAssignment, ModelConfig,
+    │  providerRegistry, roleRegistry, DEFAULT_ROLES, helpers
+    ▼
 OS  (fs {userData}/config/, Google Gemini API / OpenAI-compatible endpoints,
-     tesseract WASM, D-Bus portals, desktopCapturer)
+      tesseract WASM, D-Bus portals, desktopCapturer)
 ```
 
 ## Main process architecture
@@ -112,7 +124,7 @@ The main process is split by concern across multiple files (not monolithic):
 
 **IPC handlers:**
 
-- `send-message` — calls `callProvider` from `provider.ts`, returns `{ success, response?, error? }`
+- `send-message` — calls `callProvider(messages, 'chat')` from `provider.ts`, returns `{ success, response?, error? }`
 
 **Lifecycle:**
 
@@ -121,53 +133,81 @@ The main process is split by concern across multiple files (not monolithic):
 - `app.on('window-all-closed')` → quits (except macOS)
 - `app.on('activate')` → recreates window (macOS)
 
-### `provider.ts` — Provider dispatch
+### `provider.ts` — Role-based provider dispatch
 
-- `callProvider(messages)` — reads current provider config via `loadCurrentProviderConfig()` from `config.ts`, routes to backend
-- `callOpenAICompatible(apiKey, model, messages, baseUrl)` — unified OpenAI-compatible client
-  - Google AI Studio calls this with `baseUrl = 'https://generativelanguage.googleapis.com/v1beta'`
+- `callProvider(messages, roleId)` — non-streaming; resolves the role's connection+model via `resolveRole(roleId)` from `config.ts`, routes to backend. Throws `RoleUnassignedError` if the role has no connection assigned.
+- `callProviderStream(messages, roleId)` — streaming variant; same resolution and error behaviour.
+- `callOpenAICompatible(apiKey, model, messages, baseUrl, webSearchEnabled)` — unified OpenAI-compatible client
+  - Google AI Studio calls this with `baseUrl` from the connection (default `https://generativelanguage.googleapis.com/v1beta`)
   - OpenAI Compatible provider uses user-specified `baseUrl` + `/chat/completions`
-- `NoApiKeyError`, `UnsupportedProviderError` — sentinel error classes
+- `callGeminiWithSearch(apiKey, model, messages)` / `...Stream(...)` — Google search-grounded variant
+- `NoApiKeyError`, `UnsupportedProviderError`, `RoleUnassignedError` — sentinel error classes
+- Provider type switching is driven by `connection.providerType` (the provider registry enum). Unknown-but-registered types (e.g. Ollama, OpenAI, OpenRouter when not yet implemented) throw `UnsupportedProviderError`.
+
+### `src/shared/models.ts` — Shared types and registries
+
+Pure TypeScript module (no Node or React dependencies) importable by both the main process and the renderer. Declares:
+
+- **Types:** `ProviderType`, `AuthShape`, `RoleId`, `Connection`, `RoleAssignment`, `ModelConfig`, `ProviderTypeDef`, `RoleDef`
+- **`providerRegistry`** — per-provider-type definition: label, auth shape (`apiKey`/`host`/`none`), `defaultBaseUrl`, capability flags (`webSearch`), `implemented` flag, `knownModels` list
+- **`roleRegistry`** — per-role definition: label, description, `locked` flag (KB roles are locked until KB feature ships), `offersWebSearch` flag
+- **`DEFAULT_ROLES`** — default role assignments (all `connectionId: null`)
+- **`createDefaultModelConfig()`**, **`generateConnectionId()`** — helpers used by both main (`config.ts`) and renderer (`ModelsTab.tsx`)
+
+### `models/registries.ts` — Main-process re-export
+
+Re-exports everything from `src/shared/models.ts` so main-process imports (`./models/registries`) keep working without reaching across the renderer boundary.
 
 ### `config.ts` — Configuration persistence and hotkey management
 
-**Types:**
+**Types (re-exported from `src/shared/models.ts`):**
 
 ```typescript
-interface ProviderConfig {
-  apiKey: string
-  model: string
+interface Connection {
+  id: string
+  label: string
+  providerType: ProviderType
+  apiKey?: string
   baseUrl?: string
+  host?: string
 }
 
-interface AllProvidersConfig {
-  currentProvider: string
-  providers: {
-    'google-ai-studio'?: ProviderConfig
-    'openai-compatible'?: ProviderConfig
-  }
+interface RoleAssignment {
+  connectionId: string | null
+  model: string
+  webSearchEnabled: boolean
+}
+
+interface ModelConfig {
+  schemaVersion: number
+  connections: Record<string, Connection>
+  roles: Record<RoleId, RoleAssignment>
 }
 
 interface AppSettings {
   hotkey: string
+  closeToTray: boolean
 }
 ```
+
+**Error classes:**
+
+- `RoleUnassignedError` — thrown when a role has no connection assigned; message includes the role's display name
 
 **Functions:**
 
 - `ensureConfigDir()` — returns `{userData}/config/`, creates if missing
-- `loadProviderConfig()` — reads `providers.json` → `AllProvidersConfig | null`
-- `loadCurrentProviderConfig()` — returns merged `{ provider, ...ProviderConfig }` for current provider
-- `loadAppSettings()` — reads `settings.json` → `AppSettings` (default `{ hotkey: 'Ctrl+Shift+D' }`)
+- `loadModelConfig()` — reads `providers.json` → `ModelConfig`; returns a fresh default if missing or corrupt
+- `saveModelConfig(config)` — writes `providers.json`, returns `boolean`
+- `resolveRole(roleId)` — returns `{ connection, model, webSearchEnabled }` for the given role, or `null` if unassigned
+- `loadAppSettings()` — reads `settings.json` → `AppSettings` (default `{ hotkey: 'Ctrl+Shift+D', closeToTray: true }`)
 - `saveAppSettings(settings)` — writes `settings.json`, returns `boolean`
 - `registerHotkey(accelerator, onPressed)` — async; routes through XDG portal on Wayland
 
 **IPC handlers:**
 
-- `save-config` — updates single provider, preserves others, sets `currentProvider`
-- `save-all-providers` — writes entire `AllProvidersConfig` at once
-- `load-config` — returns current provider's config merged with provider name
-- `load-all-providers` — returns full `AllProvidersConfig` for Settings UI
+- `load-model-config` — returns full `ModelConfig` (connections + roles)
+- `save-model-config` — writes entire `ModelConfig` at once
 - `load-settings` — returns `AppSettings`
 - `save-settings` — writes settings and re-registers hotkey
 
@@ -175,6 +215,35 @@ interface AppSettings {
 
 - `isWaylandSession()` — checks `XDG_SESSION_TYPE`, `WAYLAND_DISPLAY`, `ELECTRON_OZONE_PLATFORM_HINT`
 - `isKdeWaylandSession()` — additionally checks `XDG_CURRENT_DESKTOP` for KDE
+
+### Model configuration architecture
+
+The app uses a **role-based model assignment** system. Instead of a single global provider, each job in the app (a "role") independently maps to a **provider connection** plus a **model id**.
+
+**Roles** (`roleRegistry` in `src/shared/models.ts`):
+
+| Role ID              | Label                       | Locked | Web search | Used by                          |
+| -------------------- | --------------------------- | ------ | ---------- | -------------------------------- |
+| `chat`               | Chat                        | No     | Yes        | `send-message` IPC (main chat)   |
+| `lookup`             | Lookup                      | No     | Yes        | `handleLookupAsk` / `handleLookupExpand` |
+| `kb-maintenance`     | Knowledge Base Maintenance  | Yes    | No         | (planned: KB processing)         |
+| `context-injection`  | Context Injection           | Yes    | No         | (planned: KB → lookup injection) |
+
+Locked roles are shown greyed in Settings with a "🔒 Locked" indicator; their dispatch is not wired until the KB feature ships.
+
+**Connections** are reusable provider credentials (API key / host + base URL). One connection can serve multiple roles with different models. Deleting a connection nulls out any role that referenced it.
+
+**Provider types** (`providerRegistry`):
+
+| Provider type        | Auth    | Default base URL                                     | Implemented |
+| -------------------- | ------- | ---------------------------------------------------- | ----------- |
+| `google-ai-studio`   | API key | `https://generativelanguage.googleapis.com/v1beta`  | ✅          |
+| `openai-compatible`  | API key | (user-specified)                                     | ✅          |
+| `openai`             | API key | `https://api.openai.com/v1`                          | ⛔ (selectable) |
+| `ollama`             | Host    | (uses `host` field, e.g. `http://localhost:11434`)   | ⛔ (selectable) |
+| `openrouter`         | API key | `https://openrouter.ai/api/v1`                       | ⛔ (selectable) |
+
+**Resolution flow:** Callers pass a `roleId` to `callProvider`/`callProviderStream`. The provider module calls `resolveRole(roleId)` from `config.ts`, which returns `{ connection, model, webSearchEnabled }` or `null`. On `null`, `RoleUnassignedError` is thrown with a role-specific message. The `webSearchEnabled` flag is read from the role assignment (not passed by callers), so callers no longer need to know about web search configuration.
 
 ### `lookup/` — OCR and lookup pipeline (subdirectory)
 
@@ -201,8 +270,8 @@ per-window `LookupSession` object in `state.ts`; handlers operate on the passed-
 
 - `handlePasteText(session, text)` — bumps session token, sets text as context, marks ready
 - `handlePasteImage(session, base64)` — bumps session token, runs OCR on image via `runOCRTokenedFor`, marks ready
-- `handleLookupAsk(session, question)` — builds `ProviderMessage[]`, triggers grow animation on the session's window, calls `callProviderStream()`, sends streamed response to that session's popup
-- `handleLookupExpand(session, payload)` — handles inline word-expansion requests from the popup's context menu. Builds a tame `ProviderMessage[]` with the original context/question + surrounding answer + the selected word, calls `callProviderStream()`, sends streamed chunks tagged with `expansionId` back to the popup
+- `handleLookupAsk(session, question)` — builds `ProviderMessage[]`, triggers grow animation on the session's window, calls `callProviderStream(messages, 'lookup')`, sends streamed response to that session's popup
+- `handleLookupExpand(session, payload)` — handles inline word-expansion requests from the popup's context menu. Builds a tame `ProviderMessage[]` with the original context/question + surrounding answer + the selected word, calls `callProviderStream(messages, 'lookup')`, sends streamed chunks tagged with `expansionId` back to the popup
 - `ExpandPayload` interface — `{ context, question, answer, selection, expansionId }`
 
 **`state.ts`:**
@@ -287,12 +356,10 @@ Exposes via `contextBridge`:
 ```typescript
 {
   // Chat / config (renderer)
-  saveConfig(config) // Save single provider config
-  saveAllProviders(config) // Save all providers at once
-  loadConfig() // Load current provider config
-  loadAllProviders() // Load all providers (for Settings caching)
-  sendMessage(messages) // Send chat messages to AI
-  loadSettings() // Load app settings (hotkey)
+  loadModelConfig() // Load full ModelConfig (connections + roles)
+  saveModelConfig(config) // Save full ModelConfig
+  sendMessage(messages) // Send chat messages to AI (uses 'chat' role)
+  loadSettings() // Load app settings (hotkey, closeToTray)
   saveSettings(settings) // Save app settings
   // Lookup popup: main → renderer (one-way)
   lookupOnContext(cb) // {status, text, hint} → lookup popup (context state)
@@ -361,15 +428,51 @@ Exposes via `contextBridge`:
 
 ### `views/settings/Settings.tsx` — Settings orchestrator
 
-**State:** All settings form fields, cache ref, save state
+**State:** `modelConfig` (full `ModelConfig`), `hotkey`, `closeToTray`, save state, active tab
 
 **Behavior:**
 
-- **Category tabs** (animation on switch):
-  - **General** — Renders `<HotkeyInput>`
-  - **Providers** — Provider selector dropdown, renders `<GoogleAiForm>` or `<OpenAiForm>`
-- Cache management: `flushToCache()` / `loadFromCache()` / `switchProvider()`
-- `handleSave()` — flushes all providers to disk via `saveAllProviders()` + `saveSettings()`
+- **Three tabs** (with fade animation on switch):
+  - **General** — Renders `<GeneralTab>` (hotkey input + close-to-tray toggle)
+  - **Models** — Renders `<ModelsTab>` (roles + connections)
+  - **About** — Inline blurb
+- Owns `modelConfig` state and mutation helpers (`updateRole`, `updateConnection`, `addConnection`, `deleteConnection`); passes them down to `<ModelsTab>` as callbacks
+- `handleSave()` — saves full `ModelConfig` via `saveModelConfig()` + app settings via `saveSettings()`
+
+### `views/settings/GeneralTab.tsx` — General tab
+
+Presentational component rendering `<HotkeyInput>` and the close-to-tray toggle. Receives `hotkey`/`onHotkeyChange`/`closeToTray`/`onCloseToTrayChange` props.
+
+### `components/settings/models/ModelsTab.tsx` — Models tab
+
+Renders two stacked sections within the Models tab:
+
+- **Roles section** — maps over `roleRegistry` (ordered) and renders one `<RoleRow>` per role. Owns the "add connection" provider-type selector state.
+- **Connections section** — maps over `modelConfig.connections` and renders one `<ConnectionCard>` per connection. Includes the "Add Connection" button (delegates connection creation to the parent via `onAddConnection`).
+
+### `components/settings/models/RoleRow.tsx` — Single role row
+
+**Props:** `roleDef`, `roleId`, `assignment`, `modelConfig`, and role-level callbacks
+
+**Renders:**
+
+- Role label + description, lock indicator for KB roles, "(coming soon)" for unimplemented providers
+- Connection selector (dropdown of all connections + "Not configured…")
+- Model field: dropdown with known models + "Custom…" for providers that have `knownModels` (Google AI Studio, OpenAI); free-text input otherwise. Owns local `isCustom`/`customModel` state, remounted via `key` when the connection changes (so `useState` initializer re-runs cleanly without `useEffect`).
+- Web search toggle (only for roles where `offersWebSearch === true`)
+
+### `components/settings/models/ConnectionCard.tsx` — Single connection card
+
+**Props:** `connection`, `onUpdate`, `onDelete`
+
+**Renders:**
+
+- Editable connection label
+- Provider type dropdown (all 5 types from `providerRegistry`)
+- API Key input (for `apiKey` auth shape providers)
+- Host input (for `host` auth shape providers, e.g. Ollama)
+- Base URL input (hidden for Ollama; pre-filled from `defaultBaseUrl` for Google AI Studio, OpenAI, OpenRouter)
+- Delete button
 
 ### `components/settings/HotkeyInput.tsx` — Hotkey capture input
 
@@ -380,26 +483,6 @@ Exposes via `contextBridge`:
 - `capturing` state for focus/blur toggle
 - `renderCombo(e)` — keyboard event → Electron accelerator string
 - ReadOnly input that captures key combination when focused
-
-### `components/settings/GoogleAiForm.tsx` — Google AI Studio form
-
-**Props:** `apiKey`, `model`, `customModel`, `isCustomModel`, plus `on*Change` callbacks, `onDirty`
-
-**Renders:**
-
-- API key password input
-- Model dropdown (presets: gemini-3.5-flash, gemini-3.1-pro, etc. + "Custom...")
-- Conditional custom model text input
-
-### `components/settings/OpenAiForm.tsx` — OpenAI Compatible form
-
-**Props:** `apiKey`, `baseUrl`, `customModel`, plus `on*Change` callbacks, `onDirty`
-
-**Renders:**
-
-- API key password input
-- Base URL text input
-- Model ID text input
 
 ### Design tokens and CSS architecture
 
@@ -419,15 +502,15 @@ base.css  (imported by main.tsx)
 
 Design tokens are declared as CSS custom properties in `:root` inside `base.css`:
 
-| Category      | Tokens (examples)                                    |
-| ------------- | ---------------------------------------------------- |
-| Surfaces      | `--bg`, `--surface-1`, `--surface-2`, `--surface-3` |
-| Borders       | `--border`, `--border-strong`                        |
-| Text          | `--text-1`, `--text-2`, `--text-3`, `--text-muted`  |
-| Accent        | `--accent`, `--accent-strong`, `--accent-soft`, `--accent-ring` |
-| Semantic      | `--success`, `--error`                               |
-| Shape         | `--radius-sm`, `--radius-md`, `--radius-lg`          |
-| Shadows       | `--shadow-1`, `--shadow-2`                           |
+| Category | Tokens (examples)                                               |
+| -------- | --------------------------------------------------------------- |
+| Surfaces | `--bg`, `--surface-1`, `--surface-2`, `--surface-3`             |
+| Borders  | `--border`, `--border-strong`                                   |
+| Text     | `--text-1`, `--text-2`, `--text-3`, `--text-muted`              |
+| Accent   | `--accent`, `--accent-strong`, `--accent-soft`, `--accent-ring` |
+| Semantic | `--success`, `--error`                                          |
+| Shape    | `--radius-sm`, `--radius-md`, `--radius-lg`                     |
+| Shadows  | `--shadow-1`, `--shadow-2`                                      |
 
 Legacy variables (`--ev-c-*`, `--chat-*`, `--color-*`) are aliased to the new tokens for backward compatibility during the transition.
 
@@ -435,21 +518,31 @@ Legacy variables (`--ev-c-*`, `--chat-*`, `--color-*`) are aliased to the new to
 
 ## Configuration file format
 
-**`{userData}/config/providers.json`:**
+**`{userData}/config/providers.json` (v2 schema):**
 
 ```json
 {
-  "currentProvider": "google-ai-studio",
-  "providers": {
-    "google-ai-studio": {
-      "apiKey": "...",
-      "model": "gemini-3.5-flash"
+  "schemaVersion": 2,
+  "connections": {
+    "conn_1721568938473_a1b2": {
+      "id": "conn_1721568938473_a1b2",
+      "label": "My Google key",
+      "providerType": "google-ai-studio",
+      "apiKey": "AIza…",
+      "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
     },
-    "openai-compatible": {
-      "apiKey": "...",
-      "model": "gpt-4",
-      "baseUrl": "https://api.example.com/v1"
+    "conn_1721568950123_c4d5": {
+      "id": "conn_1721568950123_c4d5",
+      "label": "Local Ollama",
+      "providerType": "ollama",
+      "host": "http://localhost:11434"
     }
+  },
+  "roles": {
+    "chat": { "connectionId": "conn_1721568938473_a1b2", "model": "gemini-3.5-flash", "webSearchEnabled": false },
+    "lookup": { "connectionId": "conn_1721568938473_a1b2", "model": "gemini-3.5-flash", "webSearchEnabled": true },
+    "kb-maintenance": { "connectionId": null, "model": "", "webSearchEnabled": false },
+    "context-injection": { "connectionId": null, "model": "", "webSearchEnabled": false }
   }
 }
 ```
@@ -458,7 +551,8 @@ Legacy variables (`--ev-c-*`, `--chat-*`, `--color-*`) are aliased to the new to
 
 ```json
 {
-  "hotkey": "Ctrl+Shift+D"
+  "hotkey": "Ctrl+Shift+D",
+  "closeToTray": true
 }
 ```
 
@@ -495,10 +589,13 @@ The renderer and lookup popup were restyled to align with the README "Look and F
 | Feature                        | Status         |
 | ------------------------------ | -------------- |
 | Chat UI (chat view + send)     | ✅ Complete    |
-| Settings with category tabs    | ✅ Complete    |
-| Multi-provider config (cached) | ✅ Complete    |
+| Settings with 3 tabs (General/Models/About) | ✅ Complete |
+| Role-based model config (chat, lookup, KB roles) | ✅ Complete (KB roles locked) |
+| Provider connections (CRUD, per-role model) | ✅ Complete |
 | Google AI Studio provider      | ✅ Complete    |
 | OpenAI Compatible provider     | ✅ Complete    |
+| OpenAI / Ollama / OpenRouter providers | ✅ Complete |
+| Shared types/registry module    | ✅ Complete    |
 | OCR from screen (full capture) | ✅ Complete    |
 | AI explanation popup           | ✅ Complete    |
 | Global hotkey (X11 + Wayland)  | ✅ Complete    |

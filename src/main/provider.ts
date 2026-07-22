@@ -1,4 +1,7 @@
-import { loadCurrentProviderConfig } from './config'
+import { resolveRole } from './config'
+import { RoleUnassignedError } from './config'
+import type { RoleId } from './models/registries'
+export { RoleUnassignedError }
 
 const FETCH_TIMEOUT_MS = 30_000
 
@@ -71,40 +74,69 @@ async function* sseStream(
 
 export async function* callProviderStream(
   messages: ProviderMessage[],
-  webSearchEnabled = false
+  roleId: RoleId
 ): AsyncGenerator<string> {
-  const config = loadCurrentProviderConfig()
-  if (!config || !config.apiKey) {
+  const resolved = resolveRole(roleId)
+  if (!resolved) {
+    throw new RoleUnassignedError(roleId)
+  }
+  const { connection, model, webSearchEnabled } = resolved
+  if (!connection.apiKey && connection.providerType !== 'ollama') {
     throw new NoApiKeyError('No API key configured. Open Settings to add your provider API key.')
   }
 
-  switch (config.provider) {
+  switch (connection.providerType) {
     case 'google-ai-studio':
       if (webSearchEnabled) {
-        yield* callGeminiWithSearchStream(config.apiKey, config.model, messages)
+        yield* callGeminiWithSearchStream(connection.apiKey ?? '', model, messages)
       } else {
         yield* callOpenAICompatibleStream(
-          config.apiKey,
-          config.model,
+          connection.apiKey ?? '',
+          model,
           messages,
           'https://generativelanguage.googleapis.com/v1beta'
         )
       }
       break
     case 'openai-compatible':
-      if (!config.baseUrl) {
+      if (!connection.baseUrl) {
         throw new NoApiKeyError('Base URL is required for OpenAI Compatible provider.')
       }
       yield* callOpenAICompatibleStream(
-        config.apiKey,
-        config.model,
+        connection.apiKey ?? '',
+        model,
         messages,
-        config.baseUrl,
+        connection.baseUrl,
         webSearchEnabled
       )
       break
+    case 'openai':
+      yield* callOpenAICompatibleStream(
+        connection.apiKey ?? '',
+        model,
+        messages,
+        connection.baseUrl ?? 'https://api.openai.com/v1',
+        webSearchEnabled
+      )
+      break
+    case 'openrouter':
+      yield* callOpenAICompatibleStream(
+        connection.apiKey ?? '',
+        model,
+        messages,
+        connection.baseUrl ?? 'https://openrouter.ai/api/v1',
+        webSearchEnabled
+      )
+      break
+    case 'ollama': {
+      const host = (connection.host ?? 'http://localhost:11434').replace(/\/+$/, '')
+      yield* callOpenAICompatibleStream('', model, messages, `${host}/v1`, false)
+      break
+    }
     default:
-      throw new UnsupportedProviderError(`Provider "${config.provider}" is not supported yet.`)
+      throw new UnsupportedProviderError(
+        `Provider "${connection.providerType}" is not supported yet.`
+      )
   }
 }
 
@@ -128,12 +160,16 @@ async function* callOpenAICompatibleStream(
     body.tools = [{ type: 'web_search' }]
   }
 
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json'
+  }
+  if (apiKey) {
+    headers['Authorization'] = `Bearer ${apiKey}`
+  }
+
   const res = await fetchWithTimeout(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`
-    },
+    headers,
     body: JSON.stringify(body)
   })
 
@@ -202,39 +238,62 @@ async function* callGeminiWithSearchStream(
 
 /* ---- Non-streaming (kept for chat window) ---- */
 
-export async function callProvider(
-  messages: ProviderMessage[],
-  webSearchEnabled = false
-): Promise<string> {
-  const config = loadCurrentProviderConfig()
-  if (!config || !config.apiKey) {
+export async function callProvider(messages: ProviderMessage[], roleId: RoleId): Promise<string> {
+  const resolved = resolveRole(roleId)
+  if (!resolved) {
+    throw new RoleUnassignedError(roleId)
+  }
+  const { connection, model, webSearchEnabled } = resolved
+  if (!connection.apiKey && connection.providerType !== 'ollama') {
     throw new NoApiKeyError('No API key configured. Open Settings to add your provider API key.')
   }
 
-  switch (config.provider) {
+  switch (connection.providerType) {
     case 'google-ai-studio':
       if (webSearchEnabled) {
-        return await callGeminiWithSearch(config.apiKey, config.model, messages)
+        return await callGeminiWithSearch(connection.apiKey ?? '', model, messages)
       }
       return await callOpenAICompatible(
-        config.apiKey,
-        config.model,
+        connection.apiKey ?? '',
+        model,
         messages,
         'https://generativelanguage.googleapis.com/v1beta'
       )
     case 'openai-compatible':
-      if (!config.baseUrl) {
+      if (!connection.baseUrl) {
         throw new NoApiKeyError('Base URL is required for OpenAI Compatible provider.')
       }
       return await callOpenAICompatible(
-        config.apiKey,
-        config.model,
+        connection.apiKey ?? '',
+        model,
         messages,
-        config.baseUrl,
+        connection.baseUrl,
         webSearchEnabled
       )
+    case 'openai':
+      return await callOpenAICompatible(
+        connection.apiKey ?? '',
+        model,
+        messages,
+        connection.baseUrl ?? 'https://api.openai.com/v1',
+        webSearchEnabled
+      )
+    case 'openrouter':
+      return await callOpenAICompatible(
+        connection.apiKey ?? '',
+        model,
+        messages,
+        connection.baseUrl ?? 'https://openrouter.ai/api/v1',
+        webSearchEnabled
+      )
+    case 'ollama': {
+      const host = (connection.host ?? 'http://localhost:11434').replace(/\/+$/, '')
+      return await callOpenAICompatible('', model, messages, `${host}/v1`, false)
+    }
     default:
-      throw new UnsupportedProviderError(`Provider "${config.provider}" is not supported yet.`)
+      throw new UnsupportedProviderError(
+        `Provider "${connection.providerType}" is not supported yet.`
+      )
   }
 }
 
@@ -257,12 +316,16 @@ async function callOpenAICompatible(
     body.tools = [{ type: 'web_search' }]
   }
 
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json'
+  }
+  if (apiKey) {
+    headers['Authorization'] = `Bearer ${apiKey}`
+  }
+
   const res = await fetchWithTimeout(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`
-    },
+    headers,
     body: JSON.stringify(body)
   })
 

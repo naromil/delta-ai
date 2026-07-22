@@ -45,19 +45,19 @@ Renderer (React 19)  →  Preload (contextBridge)  →  Main process (Node)
 
 Key files in the Main process:
 
-| Module | Path | Role |
-|--------|------|------|
-| App lifecycle | `index.ts` | Main window, tray, send-message IPC |
-| Config | `config.ts` | Persistence, hotkey registry, Wayland detection |
-| Provider | `provider.ts` | AI dispatch (`callProviderStream`) |
-| Lookup orchestrator | `lookup/lookup.ts` | Hotkey entry point |
-| Lookup popup | `lookup/window.ts` | BrowserWindow + IPC wiring |
-| Capture + OCR | `lookup/capture.ts` | Screen capture + tesseract.js |
-| Handlers | `lookup/handlers.ts` | Paste, Ask, Expand handlers |
-| Popup UI | `lookup/html.ts` | Inline HTML/CSS/JS (data: URL) |
-| Session state | `lookup/state.ts` | LookupSession interface + helpers |
-| Wayland shortcut | `services/global-shortcut.ts` | XDG GlobalShortcuts portal |
-| KDE screenshot | `services/screen-capture.ts` | Screenshot portal (silent) |
+| Module              | Path                          | Role                                            |
+| ------------------- | ----------------------------- | ----------------------------------------------- |
+| App lifecycle       | `index.ts`                    | Main window, tray, send-message IPC             |
+| Config              | `config.ts`                   | Persistence, hotkey registry, Wayland detection |
+| Provider            | `provider.ts`                 | AI dispatch (`callProviderStream`)              |
+| Lookup orchestrator | `lookup/lookup.ts`            | Hotkey entry point                              |
+| Lookup popup        | `lookup/window.ts`            | BrowserWindow + IPC wiring                      |
+| Capture + OCR       | `lookup/capture.ts`           | Screen capture + tesseract.js                   |
+| Handlers            | `lookup/handlers.ts`          | Paste, Ask, Expand handlers                     |
+| Popup UI            | `lookup/html.ts`              | Inline HTML/CSS/JS (data: URL)                  |
+| Session state       | `lookup/state.ts`             | LookupSession interface + helpers               |
+| Wayland shortcut    | `services/global-shortcut.ts` | XDG GlobalShortcuts portal                      |
+| KDE screenshot      | `services/screen-capture.ts`  | Screenshot portal (silent)                      |
 
 Build orchestration lives in `electron.vite.config.ts` (main cjs, preload cjs, renderer esm).
 

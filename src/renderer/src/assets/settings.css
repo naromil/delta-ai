@@ -91,8 +91,6 @@
   border-color: var(--border);
 }
 
-
-
 /* Category content with fade animation */
 .settings-content {
   animation: fadeIn 200ms ease-out;
@@ -112,6 +110,14 @@
 /* Sections */
 .settings-section {
   margin-bottom: 24px;
+}
+
+/* Card used by RoleRow and ConnectionCard */
+.settings-card {
+  padding: 14px;
+  border-radius: 6px;
+  background: var(--surface-2);
+  margin-bottom: 10px;
 }
 
 .settings-label {

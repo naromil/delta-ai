@@ -46,6 +46,7 @@ export function createLookupSession(cursorX: number, cursorY: number): LookupSes
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
+      devTools: false,
       contextIsolation: true
     }
   })

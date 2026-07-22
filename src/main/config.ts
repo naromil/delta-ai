@@ -3,22 +3,32 @@ import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'fs'
 import { app, ipcMain, globalShortcut } from 'electron'
 import { registerGlobalShortcutPortal } from './services/global-shortcut'
 import { handleHotkeyPressed } from './lookup/lookup'
+import {
+  type RoleId,
+  type ModelConfig,
+  type Connection,
+  createDefaultModelConfig
+} from './models/registries'
 
-/* ---- Types ---- */
-interface ProviderConfig {
-  apiKey: string
-  model: string
-  baseUrl?: string
-  webSearchEnabled?: boolean
-}
+/* ---- Errors ---- */
 
-interface AllProvidersConfig {
-  currentProvider: string
-  providers: {
-    'google-ai-studio'?: ProviderConfig
-    'openai-compatible'?: ProviderConfig
+export class RoleUnassignedError extends Error {
+  constructor(roleId: RoleId) {
+    const label: Record<RoleId, string> = {
+      chat: 'Chat',
+      lookup: 'Lookup',
+      'kb-maintenance': 'Knowledge Base Maintenance',
+      'context-injection': 'Context Injection'
+    }
+    super(
+      `No model assigned to the ${label[roleId] ?? roleId} role. Open Settings → Models to configure it.`
+    )
+    this.name = 'RoleUnassignedError'
   }
 }
+
+/* Re-export shared model-config types for main-process callers (provider.ts, handlers.ts). */
+export type { Connection, RoleAssignment, ModelConfig } from './models/registries'
 
 interface AppSettings {
   hotkey: string
@@ -75,6 +85,8 @@ export async function registerHotkey(accelerator: string, onPressed: () => void)
 
 export let currentCloseToTray = true
 
+/* ---- App general settings management -- */
+
 export function loadAppSettings(): AppSettings {
   const defaults: AppSettings = { hotkey: 'Ctrl+Shift+D', closeToTray: true }
   try {
@@ -107,29 +119,40 @@ export function saveAppSettings(settings: AppSettings): boolean {
   }
 }
 
-export function loadProviderConfig(): AllProvidersConfig | null {
+/* ---- App model config ---- */
+
+export function loadModelConfig(): ModelConfig {
   try {
     const configPath = join(app.getPath('userData'), 'config', 'providers.json')
-    if (existsSync(configPath)) {
-      return JSON.parse(readFileSync(configPath, 'utf-8')) as AllProvidersConfig
-    }
+    if (!existsSync(configPath)) return createDefaultModelConfig()
+    return JSON.parse(readFileSync(configPath, 'utf-8')) as ModelConfig
   } catch {
-    // ignore
+    return createDefaultModelConfig()
   }
-  return null
 }
 
-export function loadCurrentProviderConfig(): (ProviderConfig & { provider: string }) | null {
-  const allConfig = loadProviderConfig()
-  if (!allConfig || !allConfig.currentProvider) return null
-
-  const provider = allConfig.currentProvider
-  const providerConfig = allConfig.providers[provider as keyof typeof allConfig.providers]
-
-  if (!providerConfig) return null
-
-  return { provider, ...providerConfig }
+export function saveModelConfig(config: ModelConfig): boolean {
+  try {
+    const configDir = ensureConfigDir()
+    writeFileSync(join(configDir, 'providers.json'), JSON.stringify(config, null, 2), 'utf-8')
+    return true
+  } catch {
+    return false
+  }
 }
+
+export function resolveRole(
+  roleId: RoleId
+): { connection: Connection; model: string; webSearchEnabled: boolean } | null {
+  const config = loadModelConfig()
+  const assignment = config.roles[roleId]
+  if (!assignment || !assignment.connectionId) return null
+  const connection = config.connections[assignment.connectionId]
+  if (!connection) return null
+  return { connection, model: assignment.model, webSearchEnabled: assignment.webSearchEnabled }
+}
+
+/* ---- IPC handlers ---- */
 
 app.whenReady().then(() => {
   /* Settings (hotkey) */
@@ -150,104 +173,12 @@ app.whenReady().then(() => {
     return loadAppSettings()
   })
 
-  /* Config save/load (provider) */
-  ipcMain.handle(
-    'save-config',
-    (
-      _event,
-      config: {
-        provider: string
-        apiKey: string
-        model: string
-        baseUrl?: string
-        webSearchEnabled?: boolean
-      }
-    ): { success: boolean } => {
-      try {
-        const configDir = ensureConfigDir()
-        const configPath = join(configDir, 'providers.json')
-
-        // Load existing config or create new structure
-        let allConfig: AllProvidersConfig = {
-          currentProvider: config.provider,
-          providers: {}
-        }
-
-        if (existsSync(configPath)) {
-          const parsed = JSON.parse(
-            readFileSync(configPath, 'utf-8')
-          ) as Partial<AllProvidersConfig>
-          allConfig = {
-            currentProvider: parsed.currentProvider ?? config.provider,
-            providers: parsed.providers ?? {}
-          }
-        }
-
-        // Update the specific provider's config
-        allConfig.providers[config.provider as keyof typeof allConfig.providers] = {
-          apiKey: config.apiKey,
-          model: config.model,
-          webSearchEnabled: config.webSearchEnabled ?? false,
-          ...(config.baseUrl ? { baseUrl: config.baseUrl } : {})
-        }
-
-        // Update current provider
-        allConfig.currentProvider = config.provider
-
-        writeFileSync(configPath, JSON.stringify(allConfig, null, 2), 'utf-8')
-
-        return { success: true }
-      } catch (error) {
-        console.log('Failed to save providers.json: ', error)
-        return { success: false }
-      }
-    }
-  )
-
-  ipcMain.handle(
-    'save-all-providers',
-    (_event, config: AllProvidersConfig): { success: boolean } => {
-      try {
-        const configDir = ensureConfigDir()
-        const configPath = join(configDir, 'providers.json')
-        writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8')
-        return { success: true }
-      } catch (error) {
-        console.log('Failed to save providers.json: ', error)
-        return { success: false }
-      }
-    }
-  )
-
-  ipcMain.handle('load-config', (): unknown => {
-    try {
-      const configPath = join(app.getPath('userData'), 'config', 'providers.json')
-      if (existsSync(configPath)) {
-        const allConfig = JSON.parse(readFileSync(configPath, 'utf-8')) as AllProvidersConfig
-        // Return the current provider's config merged with provider name
-        const provider = allConfig.currentProvider
-        const providerConfig = allConfig.providers[provider as keyof typeof allConfig.providers]
-        if (providerConfig) {
-          return { provider, ...providerConfig }
-        }
-      }
-    } catch (error) {
-      console.error('Failed to load providers.json: ', error)
-      // return null on error
-    }
-    return null
+  /* v2 model config IPC */
+  ipcMain.handle('load-model-config', (): ModelConfig => {
+    return loadModelConfig()
   })
 
-  ipcMain.handle('load-all-providers', (): unknown => {
-    try {
-      const configPath = join(app.getPath('userData'), 'config', 'providers.json')
-      if (existsSync(configPath)) {
-        return JSON.parse(readFileSync(configPath, 'utf-8')) as AllProvidersConfig
-      }
-    } catch (error) {
-      console.warn('Failed to load providers.json: ', error)
-      // return null on error
-    }
-    return null
+  ipcMain.handle('save-model-config', (_event, config: ModelConfig): { success: boolean } => {
+    return { success: saveModelConfig(config) }
   })
 })

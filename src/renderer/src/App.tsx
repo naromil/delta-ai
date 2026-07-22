@@ -7,13 +7,18 @@ import LookupGuideView from './views/lookup-guide/LookupGuideView'
 
 type View = 'home' | 'chat' | 'knowledge' | 'lookup-guide' | 'settings'
 
-const navEntries: Array<{ view: View; label: string; icon: string }> = [
+const mainNavEntries: Array<{ view: View; label: string; icon: string }> = [
   { view: 'home', label: 'Home', icon: 'home' },
   { view: 'chat', label: 'Chat', icon: 'chat' },
   { view: 'knowledge', label: 'Knowledge Base', icon: 'knowledge' },
-  { view: 'lookup-guide', label: 'Look-Up Guide', icon: 'lookup' },
-  { view: 'settings', label: 'Settings', icon: 'settings' }
+  { view: 'lookup-guide', label: 'Look-Up Guide', icon: 'lookup' }
 ]
+
+const settingsNavEntry: { view: View; label: string; icon: string } = {
+  view: 'settings',
+  label: 'Settings',
+  icon: 'settings'
+}
 
 const ICONS: Record<string, React.JSX.Element> = {
   home: (
@@ -136,7 +141,7 @@ function App(): React.JSX.Element {
           Delta AI
         </div>
         <nav className="sidebar-nav">
-          {navEntries.map((entry) => (
+          {mainNavEntries.map((entry) => (
             <button
               key={entry.view}
               className={`sidebar-nav-item${view === entry.view ? ' active' : ''}`}
@@ -147,7 +152,16 @@ function App(): React.JSX.Element {
             </button>
           ))}
         </nav>
-        <div className="sidebar-footer" />
+        <div className="sidebar-divider sidebar-divider--bottom" />
+        <nav className="sidebar-nav">
+          <button
+            className={`sidebar-nav-item${view === settingsNavEntry.view ? ' active' : ''}`}
+            onClick={() => setView(settingsNavEntry.view)}
+          >
+            {ICONS[settingsNavEntry.icon]}
+            {settingsNavEntry.label}
+          </button>
+        </nav>
       </aside>
       <div className="app-main">
         {view === 'home' && <HomeView />}

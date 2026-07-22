@@ -3,12 +3,7 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { unregisterGlobalShortcutPortal } from './services/global-shortcut'
-import {
-  loadAppSettings,
-  loadCurrentProviderConfig,
-  registerHotkey,
-  currentCloseToTray
-} from './config'
+import { loadAppSettings, registerHotkey, currentCloseToTray } from './config'
 import { handleHotkeyPressed } from './lookup/lookup'
 import { callProvider } from './provider'
 import type { ProviderMessage } from './provider'
@@ -28,9 +23,7 @@ app.whenReady().then(async () => {
       messages: ProviderMessage[]
     ): Promise<{ success: boolean; response?: string; error?: string }> => {
       try {
-        const providerCfg = loadCurrentProviderConfig()
-        const webSearchEnabled = providerCfg?.webSearchEnabled ?? false
-        const response = await callProvider(messages, webSearchEnabled)
+        const response = await callProvider(messages, 'chat')
         return { success: true, response }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)

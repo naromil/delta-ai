@@ -20,6 +20,7 @@
   flex-direction: column;
   width: 240px;
   min-width: 240px;
+  padding-bottom: 5px;
   background: var(--surface-1);
   border-right: 1px solid var(--border);
 }
@@ -83,9 +84,15 @@
   color: var(--accent);
 }
 
-.sidebar-footer {
+.sidebar-divider {
+  height: 1px;
+  margin: 6px 16px;
+  background: var(--border);
+}
+
+.sidebar-divider--bottom {
   margin-top: auto;
-  padding: 12px;
+  margin-bottom: 2px;
 }
 
 /* ---- View shell (shared by Home / Knowledge / LookupGuide) ---- */

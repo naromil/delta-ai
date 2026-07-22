@@ -1,9 +1,13 @@
 import type { LookupSession } from './state'
 import { isSessionAlive, sendToSession, notifySessionState } from './state'
 import { runOCRTokenedFor, cancelOCR } from './capture'
-import { callProviderStream, NoApiKeyError, UnsupportedProviderError } from '../provider'
+import {
+  callProviderStream,
+  NoApiKeyError,
+  UnsupportedProviderError,
+  RoleUnassignedError
+} from '../provider'
 import type { ProviderMessage } from '../provider'
-import { loadCurrentProviderConfig } from '../config'
 import { animateGrowSession, LOOKUP_GROWN_WIDTH, LOOKUP_GROWN_HEIGHT } from './window'
 
 export interface ExpandPayload {
@@ -90,22 +94,25 @@ export async function handleLookupAsk(session: LookupSession, question: string):
   messages.push({ role: 'user', content: completeQuestion })
 
   try {
-    const providerCfg = loadCurrentProviderConfig()
-    const webSearchEnabled = providerCfg?.webSearchEnabled ?? false
-
     let fullResponse = ''
-    for await (const chunk of callProviderStream(messages, webSearchEnabled)) {
+    for await (const chunk of callProviderStream(messages, 'lookup')) {
       fullResponse += chunk
       sendToSession(session, 'lookup-ai-chunk', fullResponse)
     }
     sendToSession(session, 'ai-response', fullResponse)
   } catch (err) {
-    const msg =
-      err instanceof NoApiKeyError || err instanceof UnsupportedProviderError
-        ? err.message
-        : err instanceof Error
-          ? err.message
-          : String(err)
+    let msg: string
+    if (
+      err instanceof NoApiKeyError ||
+      err instanceof UnsupportedProviderError ||
+      err instanceof RoleUnassignedError
+    ) {
+      msg = err.message
+    } else if (err instanceof Error) {
+      msg = err.message
+    } else {
+      msg = String(err)
+    }
     sendToSession(session, 'ai-error', msg)
   }
 }
@@ -153,21 +160,24 @@ export async function handleLookupExpand(
   })
 
   try {
-    const providerCfg = loadCurrentProviderConfig()
-    const webSearchEnabled = providerCfg?.webSearchEnabled ?? false
-
     let fullResponse = ''
-    for await (const chunk of callProviderStream(messages, webSearchEnabled)) {
+    for await (const chunk of callProviderStream(messages, 'lookup')) {
       fullResponse += chunk
       sendToSession(session, 'lookup-expand-chunk', { expansionId, text: fullResponse })
     }
   } catch (err) {
-    const msg =
-      err instanceof NoApiKeyError || err instanceof UnsupportedProviderError
-        ? err.message
-        : err instanceof Error
-          ? err.message
-          : String(err)
+    let msg: string
+    if (
+      err instanceof NoApiKeyError ||
+      err instanceof UnsupportedProviderError ||
+      err instanceof RoleUnassignedError
+    ) {
+      msg = err.message
+    } else if (err instanceof Error) {
+      msg = err.message
+    } else {
+      msg = String(err)
+    }
     sendToSession(session, 'lookup-expand-chunk', { expansionId, error: msg })
   }
 }
