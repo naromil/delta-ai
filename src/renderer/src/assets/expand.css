@@ -1,0 +1,132 @@
+/* ---- Expandable segments (inline expansion frames) ---- */
+
+.message-assistant .word {
+  cursor: text;
+}
+
+.frame.expanded {
+  display: inline;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 2px 4px;
+  margin: 0 2px;
+  vertical-align: baseline;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  transition: opacity 0.25s ease;
+}
+
+.frame.loading {
+  border-color: var(--text-3);
+  background: rgba(120, 120, 120, 0.06);
+}
+
+.frame.loading .frame-inner {
+  color: var(--text-3);
+  font-style: italic;
+}
+
+.frame.error {
+  border-color: var(--error);
+  background: rgba(207, 123, 110, 0.08);
+}
+
+.frame.error .frame-inner {
+  color: var(--error);
+}
+
+.frame.error .fold-toggle {
+  display: none;
+}
+
+.frame-inner {
+  display: inline;
+  font-size: 15px;
+  line-height: 1.5;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.frame-inner p {
+  display: inline;
+  margin: 0;
+}
+
+.frame-inner p + p::before {
+  content: ' ';
+}
+
+.frame .fold-toggle {
+  display: inline;
+  margin-left: 4px;
+  margin-right: 2px;
+  font-size: 12px;
+  color: var(--accent);
+  cursor: pointer;
+  vertical-align: baseline;
+  user-select: none;
+  line-height: 1.6;
+  padding: 2px;
+}
+
+.frame .fold-toggle:hover {
+  color: var(--text-1);
+}
+
+.queried {
+  background: var(--accent-soft);
+  border-radius: 2px;
+  padding: 0 2px;
+  cursor: pointer;
+  vertical-align: baseline;
+}
+
+.queried:hover {
+  background: rgba(138, 160, 184, 0.32);
+}
+
+/* Custom context menu */
+#ctxMenu {
+  position: fixed;
+  z-index: 1000;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-2);
+  padding: 4px 0;
+  font-size: 13px;
+  min-width: 140px;
+  display: none;
+}
+
+#ctxMenu.visible {
+  display: block;
+}
+
+#ctxMenu .item {
+  padding: 6px 14px;
+  cursor: pointer;
+  color: var(--text-2);
+}
+
+#ctxMenu .item:hover {
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+
+#ctxMenu .item.disabled {
+  color: var(--text-3);
+  cursor: default;
+}
+
+#ctxMenu .item.disabled:hover {
+  background: transparent;
+  color: var(--text-3);
+}
+
+#ctxMenu .sep {
+  height: 1px;
+  background: var(--border-strong);
+  margin: 4px 0;
+}

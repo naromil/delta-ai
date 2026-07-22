@@ -5,8 +5,23 @@ import icon from '../../resources/icon.png?asset'
 import { unregisterGlobalShortcutPortal } from './services/global-shortcut'
 import { loadAppSettings, registerHotkey, currentCloseToTray } from './config'
 import { handleHotkeyPressed } from './lookup/lookup'
-import { callProvider } from './provider'
+import {
+  callProviderStream,
+  NoApiKeyError,
+  UnsupportedProviderError,
+  RoleUnassignedError
+} from './provider'
 import type { ProviderMessage } from './provider'
+import type { RoleId } from '../shared/models'
+import {
+  lookupSessions,
+  animateGrowSession,
+  LOOKUP_GROWN_WIDTH,
+  LOOKUP_GROWN_HEIGHT
+} from './lookup/window'
+import { sendToSession } from './lookup/state'
+import { setMainWindow, getMainWindow } from './main-window'
+import type { ConversationState } from '../shared/conversation'
 
 /* ---- App lifecycle ---- */
 app.whenReady().then(async () => {
@@ -16,21 +31,98 @@ app.whenReady().then(async () => {
     optimizer.watchWindowShortcuts(window)
   })
 
-  ipcMain.handle(
-    'send-message',
-    async (
-      _event,
-      messages: ProviderMessage[]
-    ): Promise<{ success: boolean; response?: string; error?: string }> => {
+  /* Chat streaming: send a message */
+  ipcMain.on(
+    'chat-send',
+    async (event, payload: { messages: ProviderMessage[]; requestId: string; role?: string }) => {
+      const { messages, requestId } = payload
+      const role: RoleId = (payload.role as RoleId) ?? 'chat'
       try {
-        const response = await callProvider(messages, 'chat')
-        return { success: true, response }
+        let fullResponse = ''
+        for await (const chunk of callProviderStream(messages, role)) {
+          fullResponse += chunk
+          event.sender.send('chat-chunk', { requestId, text: fullResponse })
+        }
+        event.sender.send('chat-response', { requestId, text: fullResponse })
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        return { success: false, error: msg }
+        let msg: string
+        if (
+          err instanceof NoApiKeyError ||
+          err instanceof UnsupportedProviderError ||
+          err instanceof RoleUnassignedError
+        ) {
+          msg = err.message
+        } else if (err instanceof Error) {
+          msg = err.message
+        } else {
+          msg = String(err)
+        }
+        event.sender.send('chat-error', { requestId, error: msg })
       }
     }
   )
+
+  /* Chat streaming: expand a word/excerpt */
+  ipcMain.on(
+    'chat-expand',
+    async (
+      event,
+      payload: {
+        messages: ProviderMessage[]
+        requestId: string
+        role?: string
+      }
+    ) => {
+      const { messages, requestId } = payload
+      const role: RoleId = (payload.role as RoleId) ?? 'chat'
+      try {
+        let fullResponse = ''
+        for await (const chunk of callProviderStream(messages, role)) {
+          fullResponse += chunk
+          event.sender.send('chat-expand-chunk', { requestId, text: fullResponse })
+        }
+        event.sender.send('chat-expand-chunk', { requestId, text: fullResponse, done: true })
+      } catch (err) {
+        let msg: string
+        if (
+          err instanceof NoApiKeyError ||
+          err instanceof UnsupportedProviderError ||
+          err instanceof RoleUnassignedError
+        ) {
+          msg = err.message
+        } else if (err instanceof Error) {
+          msg = err.message
+        } else {
+          msg = String(err)
+        }
+        event.sender.send('chat-expand-chunk', { requestId, error: msg })
+      }
+    }
+  )
+
+  /* Lookup: trigger window grow on first ask */
+  ipcMain.on('lookup-trigger-grow', (event) => {
+    const session = lookupSessions.find((s) => s.window.webContents.id === event.sender.id)
+    if (session && !session.grown) {
+      sendToSession(session, 'lookup-grow', LOOKUP_GROWN_WIDTH, LOOKUP_GROWN_HEIGHT)
+      animateGrowSession(session, LOOKUP_GROWN_WIDTH, LOOKUP_GROWN_HEIGHT)
+      session.grown = true
+    }
+  })
+
+  /* Lookup: transfer conversation to chat window */
+  ipcMain.on('lookup-transfer', (_event, state: ConversationState) => {
+    const session = lookupSessions.find((s) => s.window.webContents.id === _event.sender.id)
+    if (session) {
+      session.window.close()
+    }
+    const mainWin = getMainWindow()
+    if (mainWin && !mainWin.isDestroyed()) {
+      mainWin.webContents.send('chat-replace-conversation', state)
+      mainWin.show()
+      mainWin.focus()
+    }
+  })
 
   const settings = loadAppSettings()
   await registerHotkey(settings.hotkey, handleHotkeyPressed)
@@ -108,6 +200,8 @@ function createWindow(): void {
       devTools: false
     }
   })
+
+  setMainWindow(mainWindow)
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()

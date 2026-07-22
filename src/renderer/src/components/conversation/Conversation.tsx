@@ -1,0 +1,384 @@
+import { useRef, useState, useEffect, useCallback } from 'react'
+import type { ConversationState, ExpandableSegment } from '../../../../shared/conversation'
+import { findTextSelectionRange } from '../../../../shared/conversation'
+import Turn from './Turn'
+import ContextMenu from './ContextMenu'
+import type { ContextMenuState } from './ContextMenu'
+
+interface ConversationProps {
+  state: ConversationState
+  loading: boolean
+  onSend: (content: string) => void
+  onNewChat: () => void
+  onExpand: (
+    turnId: number,
+    selection: string,
+    startIndex: number,
+    endIndex: number,
+    isNested: boolean,
+    parentAnswer: string,
+    parentExpansionId?: number
+  ) => void
+  onFold: (id: number) => void
+  onUnfold: (id: number) => void
+  hideToolbar?: boolean
+}
+
+function Conversation({
+  state,
+  loading,
+  onSend,
+  onNewChat,
+  onExpand,
+  onFold,
+  onUnfold,
+  hideToolbar = false
+}: ConversationProps): React.JSX.Element {
+  const [input, setInput] = useState('')
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null)
+
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100
+    if (isNearBottom) el.scrollTop = el.scrollHeight
+  }, [state.turns])
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      handleSend()
+    }
+  }
+
+  const handleSend = (): void => {
+    const trimmed = input.trim()
+    if (trimmed === '' || loading) return
+    setInput('')
+    onSend(trimmed)
+  }
+
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent, segmentIndex: number) => {
+      e.preventDefault()
+
+      const sel = window.getSelection()
+      let selectedText = sel?.toString().trim()
+
+      const turnEl = (e.currentTarget as HTMLElement).closest('.message-turn') as HTMLElement | null
+      if (!turnEl) return
+      const turnId = Number(turnEl.dataset.turnId)
+      if (!turnId) return
+
+      const turn = state.turns.find((t) => t.id === turnId)
+      if (!turn || !turn.segments) return
+
+      // Clear stale selection if the right-click target is not within it.
+      if (selectedText && sel && sel.rangeCount > 0) {
+        const clickedEl = e.currentTarget as HTMLElement
+        let insideSelection = false
+        for (let i = 0; i < sel.rangeCount; i++) {
+          if (sel.getRangeAt(i).intersectsNode(clickedEl)) {
+            insideSelection = true
+            break
+          }
+        }
+        if (!insideSelection) {
+          sel.removeAllRanges()
+          selectedText = ''
+        }
+      }
+
+      if (selectedText && sel && sel.rangeCount > 0) {
+        const range = sel.getRangeAt(0)
+
+        let canExpand = true
+        let startIdx = -1
+        let endIdx = -1
+        let parentExpansionId: number | undefined
+        let parentAnswer = ''
+
+        const frameEl = (e.target as HTMLElement).closest(
+          '[data-expansion-id]'
+        ) as HTMLElement | null
+
+        if (frameEl) {
+          parentExpansionId = Number(frameEl.dataset.expansionId)
+          const parentSeg = findExpansionInSegments(turn.segments!, parentExpansionId)
+          if (parentSeg) {
+            parentAnswer = parentSeg.cachedText || parentSeg.originalText || ''
+            // Match selected text against the parent frame's child segments,
+            // anchored on the right-click position to avoid picking the wrong
+            // occurrence when the same word appears more than once.
+            const found = findTextSelectionRange(parentSeg.segments, selectedText, segmentIndex)
+            startIdx = found.startIdx
+            endIdx = found.endIdx
+          }
+        } else {
+          parentAnswer = turn.content
+          // Match selected text against the top-level turn segments,
+          // anchored on the right-click position.
+          const found = findTextSelectionRange(turn.segments, selectedText, segmentIndex)
+          startIdx = found.startIdx
+          endIdx = found.endIdx
+        }
+
+        if (startIdx < 0 || endIdx <= startIdx) {
+          canExpand = false
+        }
+
+        const cachedRange = range.cloneRange()
+        const cachedSelection = selectedText
+
+        setCtxMenu({
+          x: e.clientX,
+          y: e.clientY,
+          canExpand,
+          onExpand: () => {
+            if (canExpand && startIdx >= 0) {
+              onExpand(
+                turnId,
+                cachedSelection,
+                startIdx,
+                endIdx,
+                !!frameEl,
+                parentAnswer,
+                parentExpansionId
+              )
+            }
+          },
+          onCopy: () => {
+            const sel_ = window.getSelection()
+            if (cachedRange) {
+              sel_?.removeAllRanges()
+              sel_?.addRange(cachedRange)
+            }
+            document.execCommand('copy')
+          },
+          onSelectAll: () => {
+            const turnContent = turnEl.querySelector('.message-content')
+            if (turnContent) {
+              const range = document.createRange()
+              range.selectNodeContents(turnContent)
+              const sel_ = window.getSelection()
+              sel_?.removeAllRanges()
+              sel_?.addRange(range)
+            }
+          }
+        })
+        return
+      }
+
+      // Single-word right-click
+      if (document.caretRangeFromPoint) {
+        const cr = document.caretRangeFromPoint(e.clientX, e.clientY)
+        if (cr && cr.startContainer) {
+          const wordEl =
+            cr.startContainer.nodeType === 3
+              ? (cr.startContainer.parentElement as HTMLElement)
+              : (cr.startContainer as HTMLElement)
+          if (wordEl && wordEl.classList.contains('word')) {
+            // Visually select the word on right-click
+            const wordRange = document.createRange()
+            wordRange.selectNodeContents(wordEl)
+            const wordSel = window.getSelection()
+            if (wordSel) {
+              wordSel.removeAllRanges()
+              wordSel.addRange(wordRange)
+            }
+
+            const wordText = wordEl.textContent?.trim() || ''
+            const inFrame = wordEl.closest('[data-expansion-id]')
+
+            if (inFrame) {
+              const parentId = Number((inFrame as HTMLElement).dataset.expansionId)
+              const parentSeg = findExpansionInSegments(turn.segments!, parentId)
+              if (!parentSeg) {
+                setCtxMenu(null)
+                return
+              }
+
+              const childIdx = segmentIndex
+              const parentAnswer = parentSeg.cachedText || parentSeg.originalText || ''
+
+              setCtxMenu({
+                x: e.clientX,
+                y: e.clientY,
+                canExpand: childIdx >= 0,
+                onExpand: () => {
+                  if (childIdx >= 0) {
+                    onExpand(turnId, wordText, childIdx, childIdx + 1, true, parentAnswer, parentId)
+                  }
+                },
+                onCopy: () => {
+                  const sel_ = window.getSelection()
+                  sel_?.removeAllRanges()
+                  const r = document.createRange()
+                  r.selectNodeContents(wordEl)
+                  sel_?.addRange(r)
+                  document.execCommand('copy')
+                },
+                onSelectAll: () => {
+                  const turnContent = turnEl.querySelector('.message-content')
+                  if (turnContent) {
+                    const range = document.createRange()
+                    range.selectNodeContents(turnContent)
+                    const sel_ = window.getSelection()
+                    sel_?.removeAllRanges()
+                    sel_?.addRange(range)
+                  }
+                }
+              })
+              return
+            }
+
+            // segmentIndex is the correct segments-array index passed by
+            // InlineSegments (the `.word` handler now stops propagation).
+            const segIdx = turn.segments[segmentIndex]?.kind === 'text' ? segmentIndex : -1
+            const canExpand = segIdx >= 0
+
+            setCtxMenu({
+              x: e.clientX,
+              y: e.clientY,
+              canExpand,
+              onExpand: () => {
+                if (canExpand && segIdx >= 0) {
+                  let isNested = false
+                  let parentAnswer = ''
+
+                  const frameEl = (e.target as HTMLElement).closest(
+                    '[data-expansion-id]'
+                  ) as HTMLElement | null
+                  if (frameEl) {
+                    const parentId = Number(frameEl.dataset.expansionId)
+                    const parentSeg = findExpansionInSegments(turn.segments!, parentId)
+                    if (parentSeg) {
+                      isNested = true
+                      parentAnswer = parentSeg.cachedText || parentSeg.originalText || ''
+                    }
+                  } else {
+                    parentAnswer = turn.content
+                  }
+
+                  onExpand(turnId, wordText, segIdx, segIdx + 1, isNested, parentAnswer)
+                }
+              },
+              onCopy: () => {
+                const sel_ = window.getSelection()
+                sel_?.removeAllRanges()
+                const r = document.createRange()
+                r.selectNodeContents(wordEl)
+                sel_?.addRange(r)
+                document.execCommand('copy')
+              },
+              onSelectAll: () => {
+                const turnContent = turnEl.querySelector('.message-content')
+                if (turnContent) {
+                  const range = document.createRange()
+                  range.selectNodeContents(turnContent)
+                  const sel_ = window.getSelection()
+                  sel_?.removeAllRanges()
+                  sel_?.addRange(range)
+                }
+              }
+            })
+            return
+          }
+        }
+      }
+
+      setCtxMenu(null)
+    },
+    [state.turns, onExpand]
+  )
+
+  const closeContextMenu = useCallback(() => {
+    setCtxMenu(null)
+  }, [])
+
+  const visibleTurns = state.turns.filter(
+    (t) => t.content !== '' || (t.role === 'assistant' && loading)
+  )
+
+  return (
+    <main className="chat">
+      {!hideToolbar && (
+        <div className="chat-toolbar">
+          <button className="new-chat-button" onClick={onNewChat}>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M12 4v16M4 12h16"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+              />
+            </svg>
+            New chat
+          </button>
+        </div>
+      )}
+      <div className="chat-scroll" ref={scrollRef}>
+        {visibleTurns.length === 0 ? (
+          <div className="empty-state">
+            <h1 className="empty-title">Grow with me</h1>
+          </div>
+        ) : (
+          <div className="message-list">
+            {visibleTurns.map((turn) => (
+              <div key={turn.id} className="message-turn" data-turn-id={turn.id}>
+                <Turn
+                  turn={turn}
+                  loading={loading}
+                  onFold={onFold}
+                  onUnfold={onUnfold}
+                  onContextMenu={handleContextMenu}
+                />
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="composer">
+        <div className="composer-box">
+          <textarea
+            className="composer-input"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Message Delta AI..."
+            rows={1}
+          />
+          <button
+            className="composer-send"
+            onClick={handleSend}
+            disabled={input.trim() === '' || loading}
+            aria-label="Send message"
+          >
+            <svg viewBox="0 0 24 24" className="icon" aria-hidden="true">
+              <path d="M4 12l16-8-6 16-2-7-8-1z" fill="currentColor" />
+            </svg>
+          </button>
+        </div>
+        <p className="composer-hint">Delta AI can make mistakes. Check important info.</p>
+      </div>
+      <ContextMenu state={ctxMenu} onClose={closeContextMenu} />
+    </main>
+  )
+}
+
+function findExpansionInSegments(
+  segments: ExpandableSegment[],
+  id: number
+): (ExpandableSegment & { kind: 'expansion' }) | null {
+  for (const seg of segments) {
+    if (seg.kind === 'expansion') {
+      if (seg.expansionId === id) return seg
+      const found = findExpansionInSegments(seg.segments, id)
+      if (found) return found
+    }
+  }
+  return null
+}
+
+export default Conversation

@@ -1,8 +1,8 @@
 import { screen, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path/posix'
-import { lookupHTML } from './html'
+import { is } from '@electron-toolkit/utils'
 import { clamp, type LookupSession } from './state'
-import { handleLookupAsk, handleLookupExpand, handlePasteText, handlePasteImage } from './handlers'
+import { handlePasteText, handlePasteImage } from './handlers'
 import { ocrImageBuffer } from './capture'
 
 /* ---- Constants ---- */
@@ -13,6 +13,8 @@ export const LOOKUP_GROWN_WIDTH = 840
 export const LOOKUP_GROWN_HEIGHT = 640
 const GROW_DURATION_MS = 350
 const GROW_STEPS = 24
+
+let ocrHandlerRefCount = 0
 
 /* ---- Window creation ---- */
 export function createLookupSession(cursorX: number, cursorY: number): LookupSession {
@@ -57,8 +59,6 @@ export function createLookupSession(cursorX: number, cursorY: number): LookupSes
     hasBeenFocused = true
   })
   window.on('blur', () => {
-    // A window that has grown (a message has been sent) stays open on blur
-    // so the user can keep consulting it while triggering new lookups.
     if (hasBeenFocused && !session.grown && !session.hasText && !window.isDestroyed()) {
       window.close()
     }
@@ -67,39 +67,11 @@ export function createLookupSession(cursorX: number, cursorY: number): LookupSes
   window.on('closed', () => {
     const idx = lookupSessions.indexOf(session)
     if (idx >= 0) lookupSessions.splice(idx, 1)
-    ipcMain.removeHandler('lookup-ocr-image')
-  })
-
-  window.webContents.ipc.on('lookup-ask', (_event, question: string) => {
-    handleLookupAsk(session, question).catch((err) => {
-      const msg = err instanceof Error ? err.message : String(err)
-      session.window.webContents.send('ai-error', msg)
-    })
-  })
-
-  window.webContents.ipc.on(
-    'lookup-expand',
-    (
-      _event,
-      payload: {
-        context: string
-        question: string
-        answer: string
-        selection: string
-        expansionId: number
-      }
-    ) => {
-      handleLookupExpand(session, payload).catch((err) => {
-        const msg = err instanceof Error ? err.message : String(err)
-        if (!session.window.isDestroyed()) {
-          session.window.webContents.send('lookup-expand-chunk', {
-            expansionId: payload.expansionId,
-            error: msg
-          })
-        }
-      })
+    ocrHandlerRefCount--
+    if (ocrHandlerRefCount <= 0) {
+      ipcMain.removeHandler('lookup-ocr-image')
     }
-  )
+  })
 
   window.webContents.ipc.on('lookup-paste-text', (_event, text: string) => {
     handlePasteText(session, text)
@@ -122,18 +94,27 @@ export function createLookupSession(cursorX: number, cursorY: number): LookupSes
     session.hasText = hasText
   })
 
-  ipcMain.handle('lookup-ocr-image', async (_event, base64: string) => {
-    const buffer = Buffer.from(base64, 'base64')
-    if (buffer.length === 0) return { text: '' }
-    try {
-      const text = await ocrImageBuffer(buffer)
-      return { text }
-    } catch (err) {
-      return { text: '', error: err instanceof Error ? err.message : String(err) }
-    }
-  })
+  ocrHandlerRefCount++
+  if (ocrHandlerRefCount === 1) {
+    ipcMain.handle('lookup-ocr-image', async (_event, base64: string) => {
+      const buffer = Buffer.from(base64, 'base64')
+      if (buffer.length === 0) return { text: '' }
+      try {
+        const text = await ocrImageBuffer(buffer)
+        return { text }
+      } catch (err) {
+        return { text: '', error: err instanceof Error ? err.message : String(err) }
+      }
+    })
+  }
 
-  window.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(lookupHTML))
+  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+    window.loadURL(process.env['ELECTRON_RENDERER_URL'] + '?role=lookup')
+  } else {
+    window.loadFile(join(__dirname, '../renderer/index.html'), {
+      query: { role: 'lookup' }
+    })
+  }
   window.once('ready-to-show', () => {
     window.show()
   })
@@ -158,9 +139,6 @@ export function animateGrowSession(
   if (startWidth === targetWidth && startHeight === targetHeight) return
 
   const [startX, startY] = win.getPosition()
-  // If a target position is not provided, re-center around the original
-  // window center (the Ask-flow grow behaviour). If it is provided,
-  // animate position toward that target.
   const endX = targetX !== undefined ? targetX : startX - (targetWidth - startWidth) / 2
   const endY = targetY !== undefined ? targetY : startY - (targetHeight - startHeight) / 2
   const xDelta = endX - startX

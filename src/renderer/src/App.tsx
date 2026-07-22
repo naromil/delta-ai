@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import Settings from './views/settings/Settings'
-import ChatView, { type Message } from './views/chat/ChatView'
+import Conversation from './components/conversation/Conversation'
 import HomeView from './views/home/HomeView'
 import KnowledgeView from './views/knowledge/KnowledgeView'
 import LookupGuideView from './views/lookup-guide/LookupGuideView'
+import { useChatStreaming } from './hooks/useChatStreaming'
 
 type View = 'home' | 'chat' | 'knowledge' | 'lookup-guide' | 'settings'
 
@@ -90,37 +91,7 @@ const ICONS: Record<string, React.JSX.Element> = {
 
 function App(): React.JSX.Element {
   const [view, setView] = useState<View>('home')
-  const [messages, setMessages] = useState<Message[]>([])
-  const [loading, setLoading] = useState(false)
-
-  const handleSend = async (content: string): Promise<void> => {
-    const trimmed = content.trim()
-    if (trimmed === '' || loading) return
-
-    const userMsg: Message = { id: Date.now(), role: 'user', content: trimmed }
-    const assistantId = Date.now() + 1
-    const assistantMsg: Message = { id: assistantId, role: 'assistant', content: '' }
-    setMessages((prev) => [...prev, userMsg, assistantMsg])
-    setLoading(true)
-
-    const history = [...messages, userMsg].map((m) => ({
-      role: m.role,
-      content: m.content
-    }))
-
-    const res = await window.api.sendMessage(history)
-
-    setMessages((prev) =>
-      prev.map((m) =>
-        m.id === assistantId
-          ? res.success
-            ? { ...m, content: res.response ?? '(No response received)' }
-            : { ...m, content: res.error ?? 'An unknown error occurred.', error: true }
-          : m
-      )
-    )
-    setLoading(false)
-  }
+  const { state, loading, send, expand, fold, unfold, newChat } = useChatStreaming()
 
   return (
     <div className="app">
@@ -166,11 +137,14 @@ function App(): React.JSX.Element {
       <div className="app-main">
         {view === 'home' && <HomeView />}
         {view === 'chat' && (
-          <ChatView
-            messages={messages}
+          <Conversation
+            state={state}
             loading={loading}
-            onSend={handleSend}
-            onNewChat={() => setMessages([])}
+            onSend={send}
+            onNewChat={newChat}
+            onExpand={expand}
+            onFold={fold}
+            onUnfold={unfold}
           />
         )}
         {view === 'knowledge' && <KnowledgeView />}
