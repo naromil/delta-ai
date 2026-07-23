@@ -102,7 +102,7 @@ function ExpansionFrame({
 }
 
 function tokenizeInline(text: string): ExpandableSegment[] {
-  const parts = text.split(/(\s+)/)
+  const parts = text.split(/(\n+)/)
   return parts.filter((p) => p !== '').map((part) => ({ kind: 'text' as const, text: part }))
 }
 
@@ -126,7 +126,6 @@ function InlineSegments({
           return (
             <span
               key={i}
-              className="word"
               onContextMenu={(e) => {
                 e.stopPropagation()
                 onContextMenu(e, i)

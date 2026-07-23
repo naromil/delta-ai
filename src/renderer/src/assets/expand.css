@@ -1,10 +1,5 @@
 /* ---- Expandable segments (inline expansion frames) ---- */
 
-.message-assistant .word,
-.message-user .word {
-  cursor: text;
-}
-
 .frame.expanded {
   display: inline;
   background: var(--accent-soft);

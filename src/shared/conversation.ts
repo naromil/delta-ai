@@ -78,7 +78,7 @@ export function flattenMarkdown(text: string): string {
 export function tokenize(text: string): ExpandableSegment[] {
   const flattened = flattenMarkdown(text)
   const segments: ExpandableSegment[] = []
-  const parts = flattened.split(/(\s+)/)
+  const parts = flattened.split(/(\n+)/)
   for (const part of parts) {
     if (part === '') continue
     segments.push({ kind: 'text', text: part })
@@ -91,7 +91,9 @@ export function insertExpansion(
   startIndex: number,
   endIndex: number,
   selection: string,
-  newExpansionId: number
+  newExpansionId: number,
+  startOffset?: number,
+  endOffset?: number
 ): { segments: ExpandableSegment[]; startIndex: number } {
   // Refuse if any segment in [startIndex, endIndex) is an expansion boundary
   for (let i = startIndex; i < endIndex; i++) {
@@ -102,6 +104,7 @@ export function insertExpansion(
 
   const head = segments.slice(0, startIndex)
   const tail = segments.slice(endIndex)
+
   const expansion: ExpandableSegment = {
     kind: 'expansion',
     expansionId: newExpansionId,
@@ -111,6 +114,40 @@ export function insertExpansion(
     folded: false,
     segments: []
   }
+
+  if (startOffset !== undefined || endOffset !== undefined) {
+    const firstSeg = segments[startIndex] as { kind: 'text'; text: string }
+    const actualStartOffset = startOffset ?? 0
+    const actualEndOffset =
+      endIndex - startIndex === 1
+        ? (endOffset ?? firstSeg.text.length)
+        : (endOffset ?? (segments[endIndex - 1] as { kind: 'text'; text: string }).text.length)
+
+    if (endIndex - startIndex === 1) {
+      const before = firstSeg.text.slice(0, actualStartOffset)
+      const after = firstSeg.text.slice(actualEndOffset)
+      const parts: ExpandableSegment[] = []
+      if (before !== '') parts.push({ kind: 'text', text: before })
+      parts.push(expansion)
+      if (after !== '') parts.push({ kind: 'text', text: after })
+      const newStartIndex = head.length + (before !== '' ? 1 : 0)
+      return { segments: [...head, ...parts, ...tail], startIndex: newStartIndex }
+    }
+
+    // Multi-segment: split first and last, consume middle
+    const lastSeg = segments[endIndex - 1] as { kind: 'text'; text: string }
+    const middle = segments.slice(startIndex + 1, endIndex - 1)
+    const before = firstSeg.text.slice(0, actualStartOffset)
+    const after = lastSeg.text.slice(actualEndOffset)
+    const parts: ExpandableSegment[] = []
+    if (before !== '') parts.push({ kind: 'text', text: before })
+    parts.push(expansion)
+    for (const m of middle) parts.push(m)
+    if (after !== '') parts.push({ kind: 'text', text: after })
+    const newStartIndex = head.length + (before !== '' ? 1 : 0)
+    return { segments: [...head, ...parts, ...tail], startIndex: newStartIndex }
+  }
+
   return { segments: [...head, expansion, ...tail], startIndex }
 }
 
@@ -125,14 +162,32 @@ export function insertExpansionNested(
   startIndex: number,
   endIndex: number,
   selection: string,
-  newExpansionId: number
+  newExpansionId: number,
+  startOffset?: number,
+  endOffset?: number
 ): ExpandableSegment[] {
   if (parentExpansionId === undefined) {
-    return insertExpansion(segments, startIndex, endIndex, selection, newExpansionId).segments
+    return insertExpansion(
+      segments,
+      startIndex,
+      endIndex,
+      selection,
+      newExpansionId,
+      startOffset,
+      endOffset
+    ).segments
   }
   return segments.map((seg) => {
     if (seg.kind === 'expansion' && seg.expansionId === parentExpansionId) {
-      const result = insertExpansion(seg.segments, startIndex, endIndex, selection, newExpansionId)
+      const result = insertExpansion(
+        seg.segments,
+        startIndex,
+        endIndex,
+        selection,
+        newExpansionId,
+        startOffset,
+        endOffset
+      )
       return { ...seg, segments: result.segments }
     }
     if (seg.kind === 'expansion') {
@@ -144,7 +199,9 @@ export function insertExpansionNested(
           startIndex,
           endIndex,
           selection,
-          newExpansionId
+          newExpansionId,
+          startOffset,
+          endOffset
         )
       }
     }
@@ -155,25 +212,19 @@ export function insertExpansionNested(
 /**
  * Given a segment array, a (trimmed) user selection, and the segment index
  * that was right-clicked (the anchor), find a sub-range of consecutive text
- * segments whose concatenated text equals the selection, aligned to segment
- * boundaries, such that the anchor segment lies within that range.
+ * segments whose concatenated text equals the selection, such that the anchor
+ * segment lies within that range.
  *
- * Returns `{ startIdx: -1, endIdx: -1 }` when no boundary-aligned match
- * covers the anchor — the caller treats that as "cannot expand".
- *
- * The old ad-hoc matching scanned from the start of the array and matched on
- * "selection startsWith seg.text" / "selection endsWith seg.text". That
- * silently picked the wrong occurrence when the same word appeared more than
- * once before the anchor (e.g. "the" appearing twice in a paragraph and the
- * user only selecting the second one) — the early match could span an
- * expansion boundary and falsely disable Expand. Anchoring on the click and
- * requiring character alignment to segment boundaries fixes both classes.
+ * Returns `{ startIdx: -1, endIdx: -1 }` when no match covers the anchor.
+ * When the selection starts or ends mid-segment, returns `startOffset` and/or
+ * `endOffset` — character offsets within `segments[startIdx]` and
+ * `segments[endIdx - 1]` respectively.
  */
 export function findTextSelectionRange(
   segments: ExpandableSegment[],
   selectedText: string,
   anchor: number
-): { startIdx: number; endIdx: number } {
+): { startIdx: number; endIdx: number; startOffset?: number; endOffset?: number } {
   if (!selectedText || anchor < 0 || anchor >= segments.length) {
     return { startIdx: -1, endIdx: -1 }
   }
@@ -201,18 +252,18 @@ export function findTextSelectionRange(
   }
   segStart.push(runChars.length)
   // Enumerate every occurrence of selectedText in the run and accept the
-  // first one that aligns to segment boundaries AND covers the anchor.
+  // first one that covers the anchor (startIdx <= anchor < endIdx).
   let searchFrom = 0
   while (true) {
     const off = runChars.indexOf(selectedText, searchFrom)
     if (off < 0) break
     const selEnd = off + selectedText.length
-    const s = segStart.indexOf(off)
-    // Find the first segment boundary >= selEnd. When the user's exact
-    // selection ends mid-segment (e.g. trailing punctuation tokenized
-    // together with the word, like "processes," but the user selected
-    // "processes"), this includes the full containing segment rather than
-    // failing the alignment check.
+    // Find s: largest i such that segStart[i] <= off
+    let s = 0
+    for (let i = 0; i < segStart.length; i++) {
+      if (segStart[i] <= off) s = i
+    }
+    // Find e: smallest i such that segStart[i] >= selEnd
     let e = segStart.length - 1
     for (let i = 0; i < segStart.length; i++) {
       if (segStart[i] >= selEnd) {
@@ -220,11 +271,25 @@ export function findTextSelectionRange(
         break
       }
     }
-    if (s >= 0 && e > s) {
+    if (e > s) {
       const candStart = runStart + s
       const candEnd = runStart + e
       if (anchor >= candStart && anchor < candEnd) {
-        return { startIdx: candStart, endIdx: candEnd }
+        const result: {
+          startIdx: number
+          endIdx: number
+          startOffset?: number
+          endOffset?: number
+        } = {
+          startIdx: candStart,
+          endIdx: candEnd
+        }
+        const startOffset = off - segStart[s]
+        const endOffset = selEnd - segStart[e - 1]
+        const lastSegText = (segments[candEnd - 1] as { kind: 'text'; text: string }).text
+        if (startOffset > 0) result.startOffset = startOffset
+        if (endOffset < lastSegText.length) result.endOffset = endOffset
+        return result
       }
     }
     searchFrom = off + 1

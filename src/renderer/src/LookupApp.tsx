@@ -37,10 +37,6 @@ function readFileAsBase64(file: File): Promise<string | null> {
   })
 }
 
-function isInsideExpansionFrame(el: HTMLElement): boolean {
-  return !!el.closest('[data-expansion-id]')
-}
-
 function LookupApp(): React.JSX.Element {
   const [grown, setGrown] = useState(false)
   const [contextText, setContextText] = useState('Waiting for OCR\u2026')
@@ -298,6 +294,8 @@ function LookupApp(): React.JSX.Element {
         let canExpand = true
         let startIdx = -1
         let endIdx = -1
+        let selStartOffset: number | undefined
+        let selEndOffset: number | undefined
         let parentExpansionId: number | undefined
         let parentAnswer = ''
 
@@ -310,20 +308,19 @@ function LookupApp(): React.JSX.Element {
           const parentSeg = findExpansionInSegments(turn.segments!, parentExpansionId)
           if (parentSeg) {
             parentAnswer = parentSeg.cachedText || parentSeg.originalText || ''
-            // Match selected text against the parent frame's child segments,
-            // anchored on the right-click position to avoid picking the wrong
-            // occurrence when the same word appears more than once.
             const found = findTextSelectionRange(parentSeg.segments, selectedText, segmentIndex)
             startIdx = found.startIdx
             endIdx = found.endIdx
+            selStartOffset = found.startOffset
+            selEndOffset = found.endOffset
           }
         } else {
           parentAnswer = turn.content
-          // Match selected text against the top-level turn segments,
-          // anchored on the right-click position.
           const found = findTextSelectionRange(turn.segments, selectedText, segmentIndex)
           startIdx = found.startIdx
           endIdx = found.endIdx
+          selStartOffset = found.startOffset
+          selEndOffset = found.endOffset
         }
 
         if (startIdx < 0 || endIdx <= startIdx) {
@@ -346,7 +343,10 @@ function LookupApp(): React.JSX.Element {
                 endIdx,
                 !!frameEl,
                 parentAnswer,
-                parentExpansionId
+                parentExpansionId,
+                undefined,
+                selStartOffset,
+                selEndOffset
               )
             }
           },
@@ -364,7 +364,9 @@ function LookupApp(): React.JSX.Element {
                     !!frameEl,
                     parentAnswer,
                     parentExpansionId,
-                    prompt
+                    prompt,
+                    selStartOffset,
+                    selEndOffset
                   )
               })
             }
@@ -395,170 +397,123 @@ function LookupApp(): React.JSX.Element {
       if (document.caretRangeFromPoint) {
         const cr = document.caretRangeFromPoint(e.clientX, e.clientY)
         if (cr && cr.startContainer) {
-          const wordEl =
-            cr.startContainer.nodeType === 3
-              ? (cr.startContainer.parentElement as HTMLElement)
-              : (cr.startContainer as HTMLElement)
-          if (wordEl && wordEl.classList.contains('word')) {
-            // Visually select the word so the user sees what is being targeted
-            const wordRange = document.createRange()
-            wordRange.selectNodeContents(wordEl)
-            const wordSel = window.getSelection()
-            if (wordSel) {
-              wordSel.removeAllRanges()
-              wordSel.addRange(wordRange)
-            }
-
-            const wordText = wordEl.textContent?.trim() || ''
-            const inFrame = isInsideExpansionFrame(wordEl)
-
-            if (inFrame) {
-              // When inside an expansion frame, segmentIndex is the correct
-              // child index passed by the frame's InlineSegments (since the
-              // word handler now stops propagation).
-              const frameEl = wordEl.closest('[data-expansion-id]') as HTMLElement | null
-              const parentId = frameEl ? Number(frameEl.dataset.expansionId) : undefined
-              const parentSeg = parentId ? findExpansionInSegments(turn.segments!, parentId) : null
-
-              if (!parentSeg) {
-                setCtxMenu(null)
-                return
-              }
-
-              const childIdx = segmentIndex
-              const parentAnswer = parentSeg.cachedText || parentSeg.originalText || ''
-
-              setCtxMenu({
-                x: e.clientX,
-                y: e.clientY,
-                canExpand: childIdx >= 0,
-                onExpand: () => {
-                  if (childIdx >= 0) {
-                    expand(turnId, wordText, childIdx, childIdx + 1, true, parentAnswer, parentId)
-                  }
-                },
-                onExpandPrompted: () => {
-                  if (childIdx >= 0) {
-                    setExpandPrompt({
-                      x: e.clientX,
-                      y: e.clientY,
-                      onSubmit: (prompt) =>
-                        expand(
-                          turnId,
-                          wordText,
-                          childIdx,
-                          childIdx + 1,
-                          true,
-                          parentAnswer,
-                          parentId,
-                          prompt
-                        )
-                    })
-                  }
-                },
-                onCopy: () => {
-                  const sel_ = window.getSelection()
-                  sel_?.removeAllRanges()
-                  const r = document.createRange()
-                  r.selectNodeContents(wordEl)
-                  sel_?.addRange(r)
-                  document.execCommand('copy')
-                },
-                onSelectAll: () => {
-                  const turnContent = turnEl.querySelector('.message-content')
-                  if (turnContent) {
-                    const range = document.createRange()
-                    range.selectNodeContents(turnContent)
-                    const sel_ = window.getSelection()
-                    sel_?.removeAllRanges()
-                    sel_?.addRange(range)
-                  }
-                }
-              })
-              return
-            }
-
-            // segmentIndex is the correct segments-array index passed by
-            // InlineSegments (the `.word` handler now stops propagation).
-            const segIdx = turn.segments[segmentIndex]?.kind === 'text' ? segmentIndex : -1
-            const canExpand = segIdx >= 0
-
-            let isNested = false
-            let parentAnswer = ''
-            let parentExpansionId: number | undefined
-
-            const frameEl = (e.target as HTMLElement).closest(
-              '[data-expansion-id]'
-            ) as HTMLElement | null
-            if (frameEl) {
-              const parentId = Number(frameEl.dataset.expansionId)
-              const parentSeg = findExpansionInSegments(turn.segments!, parentId)
-              if (parentSeg) {
-                isNested = true
-                parentAnswer = parentSeg.cachedText || parentSeg.originalText || ''
-                parentExpansionId = parentId
-              }
-            } else {
-              parentAnswer = turn.content
-            }
-
-            setCtxMenu({
-              x: e.clientX,
-              y: e.clientY,
-              canExpand,
-              onExpand: () => {
-                if (canExpand && segIdx >= 0) {
-                  expand(
-                    turnId,
-                    wordText,
-                    segIdx,
-                    segIdx + 1,
-                    isNested,
-                    parentAnswer,
-                    parentExpansionId
-                  )
-                }
-              },
-              onExpandPrompted: () => {
-                if (canExpand && segIdx >= 0) {
-                  setExpandPrompt({
-                    x: e.clientX,
-                    y: e.clientY,
-                    onSubmit: (prompt) =>
-                      expand(
-                        turnId,
-                        wordText,
-                        segIdx,
-                        segIdx + 1,
-                        isNested,
-                        parentAnswer,
-                        parentExpansionId,
-                        prompt
-                      )
-                  })
-                }
-              },
-              onCopy: () => {
-                const sel_ = window.getSelection()
-                sel_?.removeAllRanges()
-                const r = document.createRange()
-                r.selectNodeContents(wordEl)
-                sel_?.addRange(r)
-                document.execCommand('copy')
-              },
-              onSelectAll: () => {
-                const turnContent = turnEl.querySelector('.message-content')
-                if (turnContent) {
-                  const range = document.createRange()
-                  range.selectNodeContents(turnContent)
-                  const sel_ = window.getSelection()
-                  sel_?.removeAllRanges()
-                  sel_?.addRange(range)
-                }
-              }
-            })
+          const segEl = e.currentTarget as HTMLElement
+          if (!segEl.contains(cr.startContainer)) {
+            setCtxMenu(null)
             return
           }
+
+          // Expand to word boundary
+          const wordRange = cr.cloneRange()
+          try {
+            ;(wordRange as unknown as { expand: (unit: string) => void }).expand('word')
+          } catch {
+            /* expand('word') may fail, e.g. on an empty text node */
+          }
+          const wordText = wordRange.toString().trim()
+          if (!wordText) {
+            setCtxMenu(null)
+            return
+          }
+
+          // Compute character offsets within the segment text
+          const domRange = document.createRange()
+          domRange.setStart(segEl.firstChild || segEl, 0)
+          domRange.setEnd(wordRange.startContainer, wordRange.startOffset)
+          const startOffset = domRange.toString().length
+          const endOffset = startOffset + wordText.length
+
+          // Visually select the word on right-click
+          const wordSel = window.getSelection()
+          if (wordSel) {
+            wordSel.removeAllRanges()
+            wordSel.addRange(wordRange)
+          }
+
+          const frameEl = (e.target as HTMLElement).closest(
+            '[data-expansion-id]'
+          ) as HTMLElement | null
+
+          let isNested = false
+          let parentAnswer = ''
+          let parentExpansionId: number | undefined
+
+          if (frameEl) {
+            const parentId = Number(frameEl.dataset.expansionId)
+            const parentSeg = findExpansionInSegments(turn.segments!, parentId)
+            if (!parentSeg) {
+              setCtxMenu(null)
+              return
+            }
+            isNested = true
+            parentAnswer = parentSeg.cachedText || parentSeg.originalText || ''
+            parentExpansionId = parentId
+          } else {
+            parentAnswer = turn.content
+          }
+
+          const segIdx = segmentIndex
+          const canExpand = segIdx >= 0
+
+          setCtxMenu({
+            x: e.clientX,
+            y: e.clientY,
+            canExpand,
+            onExpand: () => {
+              if (canExpand && segIdx >= 0) {
+                expand(
+                  turnId,
+                  wordText,
+                  segIdx,
+                  segIdx + 1,
+                  isNested,
+                  parentAnswer,
+                  parentExpansionId,
+                  undefined,
+                  startOffset,
+                  endOffset
+                )
+              }
+            },
+            onExpandPrompted: () => {
+              if (canExpand && segIdx >= 0) {
+                setExpandPrompt({
+                  x: e.clientX,
+                  y: e.clientY,
+                  onSubmit: (prompt) =>
+                    expand(
+                      turnId,
+                      wordText,
+                      segIdx,
+                      segIdx + 1,
+                      isNested,
+                      parentAnswer,
+                      parentExpansionId,
+                      prompt,
+                      startOffset,
+                      endOffset
+                    )
+                })
+              }
+            },
+            onCopy: () => {
+              const sel_ = window.getSelection()
+              sel_?.removeAllRanges()
+              sel_?.addRange(wordRange.cloneRange())
+              document.execCommand('copy')
+            },
+            onSelectAll: () => {
+              const turnContent = turnEl.querySelector('.message-content')
+              if (turnContent) {
+                const range = document.createRange()
+                range.selectNodeContents(turnContent)
+                const sel_ = window.getSelection()
+                sel_?.removeAllRanges()
+                sel_?.addRange(range)
+              }
+            }
+          })
+          return
         }
       }
 

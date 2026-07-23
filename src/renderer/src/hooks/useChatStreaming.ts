@@ -52,7 +52,9 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
     isNested: boolean,
     parentAnswer: string,
     parentExpansionId?: number,
-    prompt?: string
+    prompt?: string,
+    startOffset?: number,
+    endOffset?: number
   ) => void
   fold: (id: number) => void
   unfold: (id: number) => void
@@ -291,7 +293,9 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
       _isNested: boolean,
       parentAnswer: string,
       parentExpansionId?: number,
-      prompt?: string
+      prompt?: string,
+      startOffset?: number,
+      endOffset?: number
     ) => {
       const expansionId = expansionIdCounterRef.current++
       const requestId = generateRequestId()
@@ -310,7 +314,9 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
           startIndex,
           endIndex,
           selection,
-          expansionId
+          expansionId,
+          startOffset,
+          endOffset
         )
 
         turns[turnIdx] = { ...turn, segments: newSegments }
