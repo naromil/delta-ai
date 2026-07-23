@@ -30,6 +30,38 @@ export interface ConversationState {
   turns: Turn[]
 }
 
+export interface ConversationRecord {
+  id: string
+  title: string
+  createdAt: string
+  updatedAt: string
+  source: 'chat' | 'lookup'
+  state: ConversationState
+  kbFed: boolean
+}
+
+export interface ConversationMeta {
+  id: string
+  title: string
+  createdAt: string
+  updatedAt: string
+  source: 'chat' | 'lookup'
+  kbFed: boolean
+  turnCount: number
+}
+
+export function toConversationMeta(record: ConversationRecord): ConversationMeta {
+  return {
+    id: record.id,
+    title: record.title,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    source: record.source,
+    kbFed: record.kbFed,
+    turnCount: record.state.turns.length
+  }
+}
+
 export function flattenMarkdown(text: string): string {
   text = text.replace(/^#{1,6}\s+/gm, '')
   text = text.replace(/\*{1,3}([^*]+)\*{1,3}/g, '$1')

@@ -6,12 +6,14 @@ import ContextMenu from './ContextMenu'
 import type { ContextMenuState } from './ContextMenu'
 import ExpandPrompt from './ExpandPrompt'
 import type { ExpandPromptState } from './ExpandPrompt'
+import ConversationSearch from './ConversationSearch'
 
 interface ConversationProps {
   state: ConversationState
   loading: boolean
   onSend: (content: string) => void
   onNewChat: () => void
+  onLoadConversation?: (id: string) => void
   onExpand: (
     turnId: number,
     selection: string,
@@ -36,6 +38,7 @@ function Conversation({
   onExpand,
   onFold,
   onUnfold,
+  onLoadConversation,
   hideToolbar = false,
   transferKey
 }: ConversationProps): React.JSX.Element {
@@ -43,6 +46,7 @@ function Conversation({
   const scrollRef = useRef<HTMLDivElement>(null)
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null)
   const [expandPrompt, setExpandPrompt] = useState<ExpandPromptState | null>(null)
+  const [showSearch, setShowSearch] = useState(false)
 
   useEffect(() => {
     const el = scrollRef.current
@@ -427,6 +431,22 @@ function Conversation({
             </svg>
             New chat
           </button>
+          <button
+            className="new-chat-button"
+            onClick={() => setShowSearch(true)}
+            aria-label="Search conversations"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="11" cy="11" r="8" stroke="currentColor" strokeWidth="2" fill="none" />
+              <path
+                d="M21 21l-4.35-4.35"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+              />
+            </svg>
+            Search
+          </button>
         </div>
       )}
       <div className="chat-scroll" ref={scrollRef}>
@@ -475,6 +495,9 @@ function Conversation({
       </div>
       <ContextMenu state={ctxMenu} onClose={closeContextMenu} />
       <ExpandPrompt state={expandPrompt} onClose={closeExpandPrompt} />
+      {showSearch && onLoadConversation && (
+        <ConversationSearch onSelect={onLoadConversation} onClose={() => setShowSearch(false)} />
+      )}
     </main>
   )
 }

@@ -1,5 +1,9 @@
 import { ElectronAPI } from '@electron-toolkit/preload'
-import type { ConversationState } from '../shared/conversation'
+import type {
+  ConversationState,
+  ConversationRecord,
+  ConversationMeta
+} from '../shared/conversation'
 
 declare global {
   interface Window {
@@ -23,7 +27,7 @@ declare global {
       lookupInputChanged: (hasText: boolean) => void
       lookupClose: () => void
       lookupTriggerGrow: () => void
-      lookupTransferToChat: (state: ConversationState) => void
+      lookupTransferToChat: (state: ConversationState, conversationId?: string) => void
 
       /* Chat streaming channels */
       chatSend: (payload: {
@@ -42,7 +46,22 @@ declare global {
       chatOnExpandChunk: (
         cb: (data: { requestId: string; text?: string; error?: string; done?: boolean }) => void
       ) => () => void
-      chatOnReplaceConversation: (cb: (state: ConversationState) => void) => () => void
+      chatOnReplaceConversation: (
+        cb: (data: {
+          state: ConversationState
+          conversationId: string
+          conversationTitle: string
+        }) => void
+      ) => () => void
+
+      /* Conversation persistence */
+      saveConversation: (record: ConversationRecord) => Promise<void>
+      loadConversation: (id: string) => Promise<ConversationRecord | null>
+      deleteConversation: (id: string) => Promise<void>
+      listConversations: () => Promise<ConversationMeta[]>
+      loadMostRecentChat: () => Promise<ConversationRecord | null>
+      listUnfedConversations: () => Promise<ConversationMeta[]>
+      markConversationKbFed: (id: string) => Promise<void>
     }
   }
 }

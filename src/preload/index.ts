@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
-import type { ConversationState } from '../shared/conversation'
+import type { ConversationState, ConversationRecord } from '../shared/conversation'
 
 const api = {
   loadModelConfig: (): Promise<unknown> => ipcRenderer.invoke('load-model-config'),
@@ -26,7 +26,8 @@ const api = {
   lookupInputChanged: (hasText: boolean) => ipcRenderer.send('lookup-input-changed', hasText),
   lookupClose: () => ipcRenderer.send('lookup-close'),
   lookupTriggerGrow: () => ipcRenderer.send('lookup-trigger-grow'),
-  lookupTransferToChat: (state: ConversationState) => ipcRenderer.send('lookup-transfer', state),
+  lookupTransferToChat: (state: ConversationState, conversationId?: string) =>
+    ipcRenderer.send('lookup-transfer', { state, conversationId }),
 
   /* Chat streaming channels (correlated by requestId) */
   chatSend: (payload: {
@@ -73,11 +74,32 @@ const api = {
     ipcRenderer.on('chat-expand-chunk', handler)
     return () => ipcRenderer.removeListener('chat-expand-chunk', handler)
   },
-  chatOnReplaceConversation: (cb: (state: ConversationState) => void) => {
-    const handler = (_e: Electron.IpcRendererEvent, state: ConversationState): void => cb(state)
+  chatOnReplaceConversation: (
+    cb: (data: {
+      state: ConversationState
+      conversationId: string
+      conversationTitle: string
+    }) => void
+  ) => {
+    const handler = (
+      _e: Electron.IpcRendererEvent,
+      data: { state: ConversationState; conversationId: string; conversationTitle: string }
+    ): void => cb(data)
     ipcRenderer.on('chat-replace-conversation', handler)
     return () => ipcRenderer.removeListener('chat-replace-conversation', handler)
-  }
+  },
+
+  /* Conversation persistence */
+  saveConversation: (record: ConversationRecord) => ipcRenderer.invoke('conversation-save', record),
+  loadConversation: (id: string): Promise<ConversationRecord | null> =>
+    ipcRenderer.invoke('conversation-load', id),
+  deleteConversation: (id: string): Promise<void> => ipcRenderer.invoke('conversation-delete', id),
+  listConversations: () => ipcRenderer.invoke('conversation-list'),
+  loadMostRecentChat: (): Promise<ConversationRecord | null> =>
+    ipcRenderer.invoke('conversation-load-most-recent'),
+  listUnfedConversations: () => ipcRenderer.invoke('conversation-list-unfed'),
+  markConversationKbFed: (id: string): Promise<void> =>
+    ipcRenderer.invoke('conversation-kb-fed', id)
 }
 
 if (process.contextIsolated) {

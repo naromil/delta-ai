@@ -53,14 +53,15 @@ function LookupApp(): React.JSX.Element {
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const askRef = useRef<HTMLInputElement>(null)
 
-  const { state, loading, contextReady, send, expand, fold, unfold, setState } = useChatStreaming({
-    role: 'lookup',
-    initial: { turns: [] },
-    onGrown: () => {
-      setGrown(true)
-      setTimeout(() => askRef.current?.focus(), 360)
-    }
-  })
+  const { state, loading, contextReady, send, expand, fold, unfold, setState, conversationId } =
+    useChatStreaming({
+      role: 'lookup',
+      initial: { turns: [] },
+      onGrown: () => {
+        setGrown(true)
+        setTimeout(() => askRef.current?.focus(), 360)
+      }
+    })
 
   /* ---- Flash hint helper ---- */
   const flashHint = useCallback((msg?: string) => {
@@ -568,8 +569,8 @@ function LookupApp(): React.JSX.Element {
 
   /* ---- Transfer to chat ---- */
   const handleTransfer = useCallback((): void => {
-    window.api.lookupTransferToChat(state)
-  }, [state])
+    window.api.lookupTransferToChat(state, conversationId ?? undefined)
+  }, [state, conversationId])
 
   const isTransferDisabled = state.turns.length === 0 || loading
 

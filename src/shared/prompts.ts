@@ -1,7 +1,7 @@
 /* ---- System Prompts ---- */
 
 export const LOOKUP_SYSTEM_PROMPT = [
-  "You are DeltaAI, a helpful assistant in the software's lookup window.",
+  "You are Delta AI, a helpful assistant in the software's lookup window.",
   'You will help the user approach something they are not familiar with conveniently and effectively.',
   'The context will be extracted from the screen (often via OCR), and the user will ask you to analyze it or answer questions about it.',
   "Always use web search to answer the user's questions if the answer cannot be determined from the context.",
@@ -10,7 +10,7 @@ export const LOOKUP_SYSTEM_PROMPT = [
 ].join(' ')
 
 export const CHAT_SYSTEM_PROMPT = [
-  "You are DeltaAI, a helpful assistant in the software's chat window."
+  "You are Delta AI, a helpful assistant in the software's chat window."
 ].join(' ')
 
 export function getSystemPrompt(role?: 'chat' | 'lookup'): string {

@@ -22,6 +22,17 @@ import {
 import { sendToSession } from './lookup/state'
 import { setMainWindow, getMainWindow } from './main-window'
 import type { ConversationState } from '../shared/conversation'
+import { flattenMarkdown } from '../shared/conversation'
+import { buildScreenContextMessage } from '../shared/prompts'
+import {
+  saveConversation,
+  loadConversation,
+  deleteConversation,
+  listConversations,
+  loadMostRecentChat,
+  markConversationKbFed,
+  listUnfedConversations
+} from './conversations'
 
 /* ---- App lifecycle ---- */
 app.whenReady().then(async () => {
@@ -111,17 +122,93 @@ app.whenReady().then(async () => {
   })
 
   /* Lookup: transfer conversation to chat window */
-  ipcMain.on('lookup-transfer', (_event, state: ConversationState) => {
-    const session = lookupSessions.find((s) => s.window.webContents.id === _event.sender.id)
-    if (session) {
-      session.window.close()
+  ipcMain.on(
+    'lookup-transfer',
+    async (_event, payload: { state: ConversationState; conversationId?: string }) => {
+      const { state, conversationId } = payload
+      const session = lookupSessions.find((s) => s.window.webContents.id === _event.sender.id)
+      if (session) {
+        session.window.close()
+      }
+
+      const transferred = { ...state, turns: [...state.turns] }
+      if (transferred.context) {
+        transferred.turns.unshift({
+          id: Date.now(),
+          role: 'user',
+          content: buildScreenContextMessage(transferred.context)
+        })
+        transferred.context = ''
+      }
+
+      let id = conversationId
+      let title = ''
+      if (id) {
+        const existing = await loadConversation(id)
+        if (existing) {
+          existing.source = 'chat'
+          existing.state = transferred
+          existing.updatedAt = new Date().toISOString()
+          await saveConversation(existing)
+          title = existing.title
+        } else {
+          id = crypto.randomUUID()
+        }
+      }
+
+      if (!title) {
+        title = extractTitle(transferred)
+      }
+
+      if (!id) {
+        id = crypto.randomUUID()
+      }
+
+      const record = {
+        id,
+        title,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        source: 'chat' as const,
+        state: transferred,
+        kbFed: false
+      }
+      await saveConversation(record)
+
+      const mainWin = getMainWindow()
+      if (mainWin && !mainWin.isDestroyed()) {
+        mainWin.webContents.send('chat-replace-conversation', {
+          state: transferred,
+          conversationId: id,
+          conversationTitle: title
+        })
+        mainWin.show()
+        mainWin.focus()
+      }
     }
-    const mainWin = getMainWindow()
-    if (mainWin && !mainWin.isDestroyed()) {
-      mainWin.webContents.send('chat-replace-conversation', state)
-      mainWin.show()
-      mainWin.focus()
-    }
+  )
+
+  /* Conversation persistence */
+  ipcMain.handle('conversation-save', async (_event, record) => {
+    await saveConversation(record)
+  })
+  ipcMain.handle('conversation-load', async (_event, id: string) => {
+    return await loadConversation(id)
+  })
+  ipcMain.handle('conversation-delete', async (_event, id: string) => {
+    await deleteConversation(id)
+  })
+  ipcMain.handle('conversation-list', async () => {
+    return await listConversations('chat')
+  })
+  ipcMain.handle('conversation-load-most-recent', async () => {
+    return await loadMostRecentChat()
+  })
+  ipcMain.handle('conversation-list-unfed', async () => {
+    return await listUnfedConversations()
+  })
+  ipcMain.handle('conversation-kb-fed', async (_event, id: string) => {
+    await markConversationKbFed(id)
   })
 
   const settings = loadAppSettings()
@@ -144,6 +231,16 @@ app.on('window-all-closed', () => {
     app.quit()
   }
 })
+
+/* ---- Helpers ---- */
+
+function extractTitle(state: ConversationState): string {
+  const firstUserTurn = state.turns.find((t) => t.role === 'user')
+  if (!firstUserTurn) return 'New conversation'
+  const flat = flattenMarkdown(firstUserTurn.content).replace(/\s+/g, ' ').trim()
+  if (flat.length <= 60) return flat
+  return flat.slice(0, 60).trimEnd()
+}
 
 /* ---- Tray ---- */
 let tray: Tray | null = null
