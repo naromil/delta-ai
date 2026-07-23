@@ -51,6 +51,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | `chat-replace-conversation`               | Main → Renderer | Hydrate a transferred ConversationState into the chat window                  |
 | `lookup-trigger-grow`                     | Lookup → Main   | On first ask, signal main to animate window growth                            |
 | `lookup-transfer`                         | Lookup → Main   | Send ConversationState to chat, close lookup                                  |
+| `ai-error`                                | Main → Lookup   | Capture or OCR error message (sent from lookup.ts & window.ts)                |
 | `lookup-context`                          | Main → Lookup   | OCR context state (`{status, text, hint}`)                                    |
 | `lookup-grow`                             | Main → Lookup   | (`width, height`) signal grow animation on the renderer side                  |
 | `lookup-paste-text`                       | Lookup → Main   | Pasted text replaces OCR context                                              |
@@ -70,7 +71,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | `models.ts`        | Shared types + registries (ProviderType, RoleId, Connection, etc.)                                                  |
 | `conversation.ts`  | ConversationState, Turn, ExpandableSegment types + pure helpers (tokenize, insertExpansion, serializeForChat, etc.) |
 | `expand-prompt.ts` | `buildExpandMessages({answer, selection, prompt?})` — constructs API messages for expand requests                   |
-| `prompts.ts`       | All LLM-facing prompt/instruction strings: system prompts, context template, lookup default, expand instructions   |
+| `prompts.ts`       | All LLM-facing prompt/instruction strings: system prompts, context template, lookup default, expand instructions    |
 
 ##### Main process (`src/main/`)
 
@@ -80,6 +81,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | Main window ref     | `main-window.ts`              | Module-scoped getter/setter for BrowserWindow ref (used by transfer handler)                             |
 | Config              | `config.ts`                   | Persistence, hotkey registry, Wayland detection                                                          |
 | Provider dispatch   | `provider.ts`                 | `callProvider` + `callProviderStream` (resolves role → connection → backend)                             |
+| Model re-exports    | `models/registries.ts`        | Re-exports shared types/registries so main imports stay stable without crossing renderer boundary        |
 | Lookup orchestrator | `lookup/lookup.ts`            | Hotkey entry point (capture + OCR + create popup)                                                        |
 | Lookup popup window | `lookup/window.ts`            | BrowserWindow + grow animation + ref-counted ocr-image handler                                           |
 | Capture + OCR       | `lookup/capture.ts`           | Screen capture + tesseract.js worker                                                                     |
@@ -107,24 +109,24 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 
 #### What to touch when
 
-| Task                                  | File(s)                                                                            |
-| ------------------------------------- | ---------------------------------------------------------------------------------- |
-| Add an AI provider                    | `provider.ts` (`callProvider` switch)                                              |
-| Change the OCR/capture pipeline       | `lookup/capture.ts`                                                                |
-| Change the hotkey response flow       | `lookup/lookup.ts` (`handleHotkeyPressed`)                                         |
-| Reposition / restyle the lookup popup | `lookup/window.ts` + CSS in `lookup.css`, `LookupApp.tsx`                          |
-| Change the expand prompt              | `shared/expand-prompt.ts` (`buildExpandMessages`)                              |
+| Task                                  | File(s)                                                                              |
+| ------------------------------------- | ------------------------------------------------------------------------------------ |
+| Add an AI provider                    | `provider.ts` (`callProvider` switch)                                                |
+| Change the OCR/capture pipeline       | `lookup/capture.ts`                                                                  |
+| Change the hotkey response flow       | `lookup/lookup.ts` (`handleHotkeyPressed`)                                           |
+| Reposition / restyle the lookup popup | `lookup/window.ts` + CSS in `lookup.css`, `LookupApp.tsx`                            |
+| Change the expand prompt              | `shared/expand-prompt.ts` (`buildExpandMessages`)                                    |
 | Change the expand instruction text    | `shared/prompts.ts` (`buildExpandUserInstruction`, `buildExpandPromptedInstruction`) |
-| Change the Expand Prompt UI           | `components/conversation/ExpandPrompt.tsx`                                     |
-| Change frame fold/unfold behaviour    | `shared/conversation.ts` helpers + `ExpansionFrame.tsx`                            |
-| Change the expansion targeting logic  | `Conversation.tsx` (contextmenu handler) + `shared/conversation.ts` helpers        |
-| Persist or load user config/settings  | `config.ts`                                                                        |
-| Wayland global-shortcut binding       | `services/global-shortcut.ts`                                                      |
-| KDE Wayland silent screenshot         | `services/screen-capture.ts`                                                       |
-| Add a new IPC channel                 | preload `index.ts` + `.d.ts`, then main `index.ts`                                 |
-| Change the chat streaming hook        | `hooks/useChatStreaming.ts`                                                        |
-| Renderer chat UI                      | `App.tsx`, `Conversation.tsx`, `Turn.tsx`                                          |
-| Provider config form                  | `components/settings/models/ModelsTab.tsx` (+ `RoleRow.tsx`, `ConnectionCard.tsx`) |
+| Change the Expand Prompt UI           | `components/conversation/ExpandPrompt.tsx`                                           |
+| Change frame fold/unfold behaviour    | `shared/conversation.ts` helpers + `ExpansionFrame.tsx`                              |
+| Change the expansion targeting logic  | `Conversation.tsx` (contextmenu handler) + `shared/conversation.ts` helpers          |
+| Persist or load user config/settings  | `config.ts`                                                                          |
+| Wayland global-shortcut binding       | `services/global-shortcut.ts`                                                        |
+| KDE Wayland silent screenshot         | `services/screen-capture.ts`                                                         |
+| Add a new IPC channel                 | preload `index.ts` + `.d.ts`, then main `index.ts`                                   |
+| Change the chat streaming hook        | `hooks/useChatStreaming.ts`                                                          |
+| Renderer chat UI                      | `App.tsx`, `Conversation.tsx`, `Turn.tsx`                                            |
+| Provider config form                  | `components/settings/models/ModelsTab.tsx` (+ `RoleRow.tsx`, `ConnectionCard.tsx`)   |
 
 #### Important conventions
 
@@ -157,6 +159,9 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 - **`path` vs `path/posix`**: `config.ts` and `index.ts` use `path`,
   `lookup/capture.ts` and `lookup/window.ts` use `path/posix`. The tesseract cache path
   uses `path/posix` deliberately — match the existing import in the file you're editing.
+- **`@renderer` path alias** is defined in `electron.vite.config.ts` as
+  `src/renderer/src` and available for renderer imports, though current code uses
+  relative paths to `shared/` instead.
 - **Tray support**: `index.ts` creates a `Tray` with context menu (Show/Quit).
   `config.ts:currentCloseToTray` controls whether closing the main window hides to tray
   instead of quitting. The `close` handler in `createWindow` checks

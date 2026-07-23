@@ -169,7 +169,15 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
 
     unsubs.push(
       window.api.chatOnReplaceConversation((imported) => {
-        setState(imported)
+        const turns = [...imported.turns]
+        if (imported.context) {
+          turns.unshift({
+            id: generateId(),
+            role: 'user',
+            content: imported.context
+          })
+        }
+        setState({ ...imported, context: '', turns })
         setLoading(false)
         pendingRef.current.clear()
         let maxId = 0
@@ -184,7 +192,7 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
             }
           }
         }
-        scanSegments(imported.turns.flatMap((t) => t.segments ?? []))
+        scanSegments(turns.flatMap((t) => t.segments ?? []))
         expansionIdCounterRef.current = maxId + 1
         options?.onReplaceConversation?.()
       })

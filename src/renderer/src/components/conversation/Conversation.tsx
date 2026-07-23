@@ -25,6 +25,7 @@ interface ConversationProps {
   onFold: (id: number) => void
   onUnfold: (id: number) => void
   hideToolbar?: boolean
+  transferKey?: number
 }
 
 function Conversation({
@@ -35,7 +36,8 @@ function Conversation({
   onExpand,
   onFold,
   onUnfold,
-  hideToolbar = false
+  hideToolbar = false,
+  transferKey
 }: ConversationProps): React.JSX.Element {
   const [input, setInput] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -48,6 +50,12 @@ function Conversation({
     const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100
     if (isNearBottom) el.scrollTop = el.scrollHeight
   }, [state.turns])
+
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+  }, [transferKey])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -422,18 +430,10 @@ function Conversation({
         </div>
       )}
       <div className="chat-scroll" ref={scrollRef}>
-        {state.context && (
-          <div className="chat-context">
-            <div className="chat-context-label">Context</div>
-            <div className="chat-context-text">{state.context}</div>
-          </div>
-        )}
         {visibleTurns.length === 0 ? (
-          !state.context && (
-            <div className="empty-state">
-              <h1 className="empty-title">Grow with me</h1>
-            </div>
-          )
+          <div className="empty-state">
+            <h1 className="empty-title">Grow with me</h1>
+          </div>
         ) : (
           <div className="message-list">
             {visibleTurns.map((turn) => (

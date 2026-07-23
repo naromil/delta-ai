@@ -91,8 +91,12 @@ const ICONS: Record<string, React.JSX.Element> = {
 
 function App(): React.JSX.Element {
   const [view, setView] = useState<View>('home')
+  const [transferKey, setTransferKey] = useState(0)
   const { state, loading, send, expand, fold, unfold, newChat } = useChatStreaming({
-    onReplaceConversation: () => setView('chat')
+    onReplaceConversation: () => {
+      setView('chat')
+      setTransferKey((k) => k + 1)
+    }
   })
 
   return (
@@ -147,6 +151,7 @@ function App(): React.JSX.Element {
             onExpand={expand}
             onFold={fold}
             onUnfold={unfold}
+            transferKey={transferKey}
           />
         )}
         {view === 'knowledge' && <KnowledgeView />}
