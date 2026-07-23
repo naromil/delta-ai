@@ -52,15 +52,15 @@ function Turn({ turn, loading, onFold, onUnfold, onContextMenu }: TurnProps): Re
         </div>
       ) : (
         <div className={`message-content${turn.error ? ' error' : ''}`}>
-          {isUser || !turn.segments ? (
-            turn.content
-          ) : (
+          {turn.segments ? (
             <InlineSegments
               segments={turn.segments}
               onFold={onFold}
               onUnfold={onUnfold}
               onContextMenu={onContextMenu}
             />
+          ) : (
+            turn.content
           )}
         </div>
       )}

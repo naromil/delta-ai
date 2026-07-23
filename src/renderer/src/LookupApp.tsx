@@ -217,7 +217,7 @@ function LookupApp(): React.JSX.Element {
       flashHint('Context is still being prepared\u2026')
       return
     }
-    const text = trimmed || 'summarize the context'
+    const text = trimmed || 'summarize'
     setInput('')
     send(text)
   }, [input, loading, contextReady, send, flashHint])
@@ -237,6 +237,32 @@ function LookupApp(): React.JSX.Element {
 
       const turn = state.turns.find((t) => t.id === turnId)
       if (!turn || !turn.segments) return
+
+      if (turn.role === 'user') {
+        setCtxMenu({
+          x: e.clientX,
+          y: e.clientY,
+          canExpand: false,
+          onExpand: () => {},
+          onCopy: () => {
+            const sel_ = window.getSelection()
+            if (sel_ && sel_.rangeCount > 0) {
+              document.execCommand('copy')
+            }
+          },
+          onSelectAll: () => {
+            const turnContent = turnEl.querySelector('.message-content')
+            if (turnContent) {
+              const range = document.createRange()
+              range.selectNodeContents(turnContent)
+              const sel_ = window.getSelection()
+              sel_?.removeAllRanges()
+              sel_?.addRange(range)
+            }
+          }
+        })
+        return
+      }
 
       // If there's a stale selection that doesn't include the right-click
       // target (e.g. from a previous triple-click or drag), clear it so

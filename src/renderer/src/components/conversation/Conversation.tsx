@@ -74,6 +74,33 @@ function Conversation({
       const turn = state.turns.find((t) => t.id === turnId)
       if (!turn || !turn.segments) return
 
+      // User turns get a simple context menu without expand.
+      if (turn.role === 'user') {
+        setCtxMenu({
+          x: e.clientX,
+          y: e.clientY,
+          canExpand: false,
+          onExpand: () => {},
+          onCopy: () => {
+            const sel_ = window.getSelection()
+            if (sel_ && sel_.rangeCount > 0) {
+              document.execCommand('copy')
+            }
+          },
+          onSelectAll: () => {
+            const turnContent = turnEl.querySelector('.message-content')
+            if (turnContent) {
+              const range = document.createRange()
+              range.selectNodeContents(turnContent)
+              const sel_ = window.getSelection()
+              sel_?.removeAllRanges()
+              sel_?.addRange(range)
+            }
+          }
+        })
+        return
+      }
+
       // Clear stale selection if the right-click target is not within it.
       if (selectedText && sel && sel.rangeCount > 0) {
         const clickedEl = e.currentTarget as HTMLElement
@@ -319,10 +346,18 @@ function Conversation({
         </div>
       )}
       <div className="chat-scroll" ref={scrollRef}>
-        {visibleTurns.length === 0 ? (
-          <div className="empty-state">
-            <h1 className="empty-title">Grow with me</h1>
+        {state.context && (
+          <div className="chat-context">
+            <div className="chat-context-label">Context</div>
+            <div className="chat-context-text">{state.context}</div>
           </div>
+        )}
+        {visibleTurns.length === 0 ? (
+          !state.context && (
+            <div className="empty-state">
+              <h1 className="empty-title">Grow with me</h1>
+            </div>
+          )
         ) : (
           <div className="message-list">
             {visibleTurns.map((turn) => (

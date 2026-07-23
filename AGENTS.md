@@ -1,196 +1,240 @@
-# AGENTS.md
+# Delta AI
 
-Guidance for AI coding agents (and humans pairing with them) working on Delta AI.
-Reflects the **actual current codebase**. `docs/architecture.md` may lag behind; when they
-disagree, the source in `src/` wins.
+Electron desktop app (BYOK) with a ChatGPT-like chat UI (React 19) and an
+always-on-top lookup popup that performs OCR on screen captures via global hotkey.
+Targets Linux (X11 + KDE Wayland first-class), macOS/Windows secondary.
 
-## Project at a glance
+## Commands
 
-Delta AI is an Electron desktop app (BYOK) that:
+- `npm run dev` — Launch app with HMR (electron-vite)
+- `npm run typecheck` — `tsc --noEmit` (node: `src/main/**`, `src/preload/**`; web: `src/renderer/src/**`)
+- `npm run lint` — ESLint + Prettier
+- `npm run build` — Typecheck then `electron-vite build`
+- `npm run format` — Prettier write across the repo
 
-- Provides a ChatGPT-like chat UI (React renderer).
-- On a global hotkey, captures the screen around the cursor, runs OCR (tesseract.js),
-  and shows an always-on-top lookup popup next to the cursor with the AI's response.
-- Targets Linux (X11 and KDE Plasma Wayland are first-class), with macOS/Windows as
-  secondary targets.
+**Always run `npm run typecheck && npm run lint` after changing `.ts`/`.tsx`.**
+The build will fail on typecheck errors, so fix them before committing.
 
-See `README.md` for the product vision and `docs/architecture.md` for a data-flow diagram.
+## Critical rules
 
-## Build, typecheck, lint
+- Don't import Electron main APIs into the renderer; use the preload bridge.
+- Don't bypass `registerHotkey` for global shortcuts — the portal path won't fire on Wayland.
+- Don't commit secrets. API keys live only in `{userData}/config/providers.json`.
+- When architecture changes, update this file.
 
-These are the commands you should know and run after non-trivial changes:
+## Detailed guidelines
 
-- `npm run dev` — launch the Electron app with HMR via electron-vite.
-- `npm run typecheck` — runs `typecheck:node` then `typecheck:web` (both `tsc --noEmit`).
-  - `typecheck:node` covers `src/main/**` and `src/preload/**` (`tsconfig.node.json`).
-  - `typecheck:web` covers `src/renderer/src/**` and `src/preload/*.d.ts`
-    (`tsconfig.web.json`).
-- `npm run lint` — ESLint with `@electron-toolkit/eslint-config-ts` + Prettier rules.
-- `npm run build` — typechecks then `electron-vite build`.
-- `npm run format` — Prettier write across the repo.
+### Architecture & Module Map
 
-Always run `npm run typecheck` and `npm run lint` after changing `.ts`/`.tsx`. The build
-will fail on typecheck errors, so fix them before committing.
-
-## Architecture (layers)
-
-See `docs/architecture.md` for a detailed data-flow diagram, full project tree, and per-module documentation. The high-level call chain is:
+#### High-level call chain
 
 ```
-Renderer (React 19)  →  Preload (contextBridge)  →  Main process (Node)
-                                                            ├── provider.ts     AI dispatch
-                                                            ├── lookup/         OCR → popup → expand
-                                                            └── services/      Wayland D-Bus portals
+Renderer (React 19) → Preload (contextBridge) → Main process (Node)
+├── App.tsx / LookupApp.tsx ├── index.ts Streaming IPC (chat-send/chat-expand)
+├── useChatStreaming hook │ + lookup-trigger-grow, lookup-transfer
+├── Conversation/Turn/ExpansionFrame components ├── provider.ts AI dispatch (callProviderStream)
+└── window.api.chatSend / chatExpand / lookup* ├── config.ts Persistence, hotkey, Wayland
+├── lookup/ OCR → popup
+└── services/ Wayland D-Bus portals
 ```
 
-Key files in the Main process:
+#### IPC channels
 
-| Module              | Path                          | Role                                            |
-| ------------------- | ----------------------------- | ----------------------------------------------- |
-| App lifecycle       | `index.ts`                    | Main window, tray, send-message IPC             |
-| Config              | `config.ts`                   | Persistence, hotkey registry, Wayland detection |
-| Provider            | `provider.ts`                 | AI dispatch (`callProviderStream`)              |
-| Lookup orchestrator | `lookup/lookup.ts`            | Hotkey entry point                              |
-| Lookup popup        | `lookup/window.ts`            | BrowserWindow + IPC wiring                      |
-| Capture + OCR       | `lookup/capture.ts`           | Screen capture + tesseract.js                   |
-| Handlers            | `lookup/handlers.ts`          | Paste, Ask, Expand handlers                     |
-| Popup UI            | `lookup/html.ts`              | Inline HTML/CSS/JS (data: URL)                  |
-| Session state       | `lookup/state.ts`             | LookupSession interface + helpers               |
-| Wayland shortcut    | `services/global-shortcut.ts` | XDG GlobalShortcuts portal                      |
-| KDE screenshot      | `services/screen-capture.ts`  | Screenshot portal (silent)                      |
+| Channel | Direction | Purpose |
+|---------|-----------|---------|
+| `chat-send` | Renderer → Main | Send a streaming chat message (role payload discriminates 'chat' vs 'lookup') |
+| `chat-chunk` | Main → Renderer | Streaming chunk for a chat-send request (keyed by `requestId`) |
+| `chat-response` | Main → Renderer | Final response for a chat-send |
+| `chat-error` | Main → Renderer | Error for a chat-send |
+| `chat-expand` | Renderer → Main | Request an inline word-expansion stream |
+| `chat-expand-chunk` | Main → Renderer | Streaming chunks for an expand request (keyed by `requestId`) |
+| `chat-replace-conversation` | Main → Renderer | Hydrate a transferred ConversationState into the chat window |
+| `lookup-trigger-grow`| Lookup → Main | On first ask, signal main to animate window growth |
+| `lookup-transfer` | Lookup → Main | Send ConversationState to chat, close lookup |
+| `lookup-context` | Main → Lookup | OCR context state (`{status, text, hint}`) |
+| `lookup-grow` | Main → Lookup | (`width, height`) signal grow animation on the renderer side |
+| `lookup-paste-text` | Lookup → Main | Pasted text replaces OCR context |
+| `lookup-paste-image` | Lookup → Main | Pasted image → OCR → context |
+| `lookup-ocr-image` | Lookup → Main | Invoke OCR on an image (returns `{text, error?}`) |
+| `lookup-input-changed` | Lookup → Main | Whether Ask field has text (guards blur-to-close) |
+| `lookup-close` | Lookup → Main | Close the lookup window |
+| `load-model-config` / `save-model-config` | Renderer ↔ Main | Model config CRUD |
+| `load-settings` / `save-settings` | Renderer ↔ Main | App settings CRUD |
 
-Build orchestration lives in `electron.vite.config.ts` (main cjs, preload cjs, renderer esm).
+#### Module map
 
-See `docs/architecture.md` for the renderer directory layout, component hierarchy, and styled-component conventions.
+##### Shared (`src/shared/`)
 
-## Coding style
+| Module | Role |
+|--------|------|
+| `models.ts` | Shared types + registries (ProviderType, RoleId, Connection, etc.) |
+| `conversation.ts` | ConversationState, Turn, ExpandableSegment types + pure helpers (tokenize, insertExpansion, serializeForChat, etc.) |
+| `expand-prompt.ts` | `buildExpandMessages({answer, selection})` — constructs API messages for expand requests |
 
-Enforced by ESLint + Prettier config; match what already exists:
+##### Main process (`src/main/`)
 
-- **Prettier** (`.prettierrc.yaml`): single quotes, no semicolons, `printWidth: 100`,
-  `trailingComma: none`.
-- **TypeScript strict** (via `@electron-toolkit/tsconfig`): prefer explicit types on
-  exported function signatures and on union/string-literal return types; let locals be
-  inferred where obvious.
-- **No eslint-disable unless truly warranted.** The repo already disables
-  `@typescript-eslint/no-explicit-any` on one line (the tesseract.js worker) — that's a
-  pattern to copy if a third-party API is untyped, rather than scattering `any` around.
-- **Comments**: sparse, purposeful. Use `/* ---- Section ---- */` dividers in main-process
-  files (see `index.ts`, `config.ts`). Do not add comments that restate the code.
-- **Function ordering (C-style)**: in any file containing multiple functions or blocks,
-  order them so that **callees appear before callers**.
-  When a caller invokes multiple callees in sequence,
-  order those parallel callees in a **logical and sequential** order.
-- **Imports**: named, grouped loosely by source. Use `import type` for type-only
-  imports (see `lookup/handlers.ts:1` importing `LookupSession` from `./state`,
-  and `index.ts:14` importing `ProviderMessage` from `./provider`).
-- **Error handling**: main-process async functions return cleanly structured error
-  information to the renderer (e.g. `{ success, error }` from IPC handlers; sentinel
-  error classes `NoApiKeyError` / `UnsupportedProviderError` for the provider dispatch).
-  Don't `console.log` errors that the user should see; surface them to a window.
-- **Display types**: IPC payloads use `Array<{ role: string; content: string }>` and
-  `{ success: boolean; response?: string; error?: string }` — mirror these in both the
-  preload (`index.ts`/`index.d.ts`) and the renderer.
+| Module | Path | Role |
+|--------|------|------|
+| App lifecycle | `index.ts` | Main window, tray, streaming IPC handlers (chat-send, chat-expand, lookup-trigger-grow, lookup-transfer) |
+| Main window ref | `main-window.ts` | Module-scoped getter/setter for BrowserWindow ref (used by transfer handler) |
+| Config | `config.ts` | Persistence, hotkey registry, Wayland detection |
+| Provider dispatch | `provider.ts` | `callProvider` + `callProviderStream` (resolves role → connection → backend) |
+| Lookup orchestrator | `lookup/lookup.ts` | Hotkey entry point (capture + OCR + create popup) |
+| Lookup popup window | `lookup/window.ts` | BrowserWindow + grow animation + ref-counted ocr-image handler |
+| Capture + OCR | `lookup/capture.ts` | Screen capture + tesseract.js worker |
+| Handlers | `lookup/handlers.ts` | Paste-text and paste-image handlers only (Ask/Expand moved to streaming IPC) |
+| Session state | `lookup/state.ts` | LookupSession interface + helpers (sendToSession, notifySessionState, isSessionAlive) |
+| Wayland shortcut | `services/global-shortcut.ts` | XDG GlobalShortcuts portal |
+| KDE screenshot | `services/screen-capture.ts` | Screenshot portal (silent) |
 
-### React (renderer)
+##### Renderer (`src/renderer/src/`)
+
+| Module | Path | Role |
+|--------|------|------|
+| Entry point | `main.tsx` | createRoot, imports CSS, mounts Root |
+| Root router | `Root.tsx` | Routes App (main window) vs LookupApp (popup) by `?role=lookup` |
+| App shell | `App.tsx` | Sidebar + 5-view routing |
+| Lookup popup | `LookupApp.tsx` | Header, context panel, ask input, paste handling, grow transitions |
+| Chat hook | `hooks/useChatStreaming.ts` | Owns ConversationState, sends via chat-send/chat-expand, routes by requestId |
+| Conversation | `components/conversation/Conversation.tsx` | Message list + composer + context menu |
+| Turn | `components/conversation/Turn.tsx` | Single message (user/assistant) with avatars, segments, loading |
+| ExpansionFrame | `components/conversation/ExpansionFrame.tsx` | Inline expandable frames, folded pills, nested children |
+| ContextMenu | `components/conversation/ContextMenu.tsx` | Right-click Expand/Copy/Select All |
+| Settings | `views/settings/Settings.tsx` | 3-tab settings orchestrator |
+| Views | `views/home/`, `views/knowledge/`, `views/lookup-guide/` | Dashboard and placeholder views |
+
+#### What to touch when
+
+| Task | File(s) |
+|------|---------|
+| Add an AI provider | `provider.ts` (`callProvider` switch) |
+| Change the OCR/capture pipeline | `lookup/capture.ts` |
+| Change the hotkey response flow | `lookup/lookup.ts` (`handleHotkeyPressed`) |
+| Reposition / restyle the lookup popup | `lookup/window.ts` + CSS in `lookup.css`, `LookupApp.tsx` |
+| Change the expand prompt | `shared/expand-prompt.ts` (`buildExpandMessages`) |
+| Change frame fold/unfold behaviour | `shared/conversation.ts` helpers + `ExpansionFrame.tsx` |
+| Change the expansion targeting logic | `Conversation.tsx` (contextmenu handler) + `shared/conversation.ts` helpers |
+| Persist or load user config/settings | `config.ts` |
+| Wayland global-shortcut binding | `services/global-shortcut.ts` |
+| KDE Wayland silent screenshot | `services/screen-capture.ts` |
+| Add a new IPC channel | preload `index.ts` + `.d.ts`, then main `index.ts` |
+| Change the chat streaming hook | `hooks/useChatStreaming.ts` |
+| Renderer chat UI | `App.tsx`, `Conversation.tsx`, `Turn.tsx` |
+| Provider config form | `components/settings/models/ModelsTab.tsx` (+ `RoleRow.tsx`, `ConnectionCard.tsx`) |
+
+#### Important conventions
+
+- **Provider dispatch lives in `provider.ts`.** `callProviderStream(messages, roleId)` reads the
+config and selects the backend; everyone else (streaming IPC handlers, lookup) calls it via
+the roleId. Don't duplicate `resolveRole()` + provider branching elsewhere.
+- **The lookup popup is a 420×320 always-on-top frameless `BrowserWindow`** created in
+`lookup/window.ts` via `createLookupSession`. It loads the **same renderer bundle** as the
+main window, with `?role=lookup` query param (see `Root.tsx`). Position is best-effort near
+cursor; compositor may centre on Wayland (acceptable). On first ask, grows to 840×640 via
+`animateGrowSession` + `lookup-trigger-grow` IPC.
+- **There can be multiple lookup sessions.** The global `lookupSessions` array in `state.ts`
+owns `LookupSession` objects, each holding its window ref, OCR context text, OCR token,
+`grown`, `contextReady`, and `hasText`. Use `isSessionAlive` / `sendToSession` /
+`notifySessionState` rather than touching window refs directly.
+- **Lookup blur behaviour:** a window closes on blur only when the user has never focused it,
+is not grown, and the Ask field is empty (`!session.hasText`). Once grown, the window stays
+open on blur so the user can keep consulting it while triggering new lookups.
+- **OCR captures the full screen**, not a cropped region. `captureScreen()` grabs the entire
+display; `runOCR()` processes the whole image. Cursor position may return `(0,0)` on
+Wayland, but full-screen capture + full-image OCR keeps the feature working regardless.
+- **Portal code is KDE/Wayland-specific by design.** `isScreenCapturePortalPreferred()` and
+`isKdeWaylandSession()` gate it. Keep `desktopCapturer` as default for
+X11/macOS/Windows and non-KDE Wayland.
+- **Config files** live under `{userData}/config/` (`providers.json`, `settings.json`).
+Always go through `config.ts` helpers; call `ensureConfigDir()` before writing.
+- **Hotkey registry** is in `config.ts:registerHotkey`. It auto-routes through the XDG
+portal on Wayland. When `save-settings` changes the hotkey, it re-registers by calling
+`registerHotkey` with `handleHotkeyPressed` — keep that callback wiring intact.
+- **`path` vs `path/posix`**: `config.ts` and `index.ts` use `path`,
+`lookup/capture.ts` and `lookup/window.ts` use `path/posix`. The tesseract cache path
+uses `path/posix` deliberately — match the existing import in the file you're editing.
+- **Tray support**: `index.ts` creates a `Tray` with context menu (Show/Quit).
+`config.ts:currentCloseToTray` controls whether closing the main window hides to tray
+instead of quitting. The `close` handler in `createWindow` checks
+`currentCloseToTray && !isQuitting`.
+- **Shared streaming IPC (`chat-send`/`chat-expand`)** responds via `event.sender.send()`.
+All responses are scoped to the sending webContents — safe for both windows to use the
+same channel family. The `role` payload field routes to the correct roleId
+(`'chat'` or `'lookup'`) for `callProviderStream`.
+- **Expand data model is model-first, not DOM-first.** Expansion operations (insert, fold,
+unfold, update) happen on the `ExpandableSegment[]` tree in `ConversationState`, not on
+live DOM. The `ExpansionFrame` React component re-renders from the pure data. No
+`expansionCache` with detached frame elements — the segment tree IS the cache.
+- **Transfer (lookup → chat) marshals the full `ConversationState`** via
+`lookup-transfer` IPC. The chat hook hydrates it into its `useState`, resets the
+`expansionIdCounter` past the max imported id. No DOM serialization needed.
+- **Inline expansions use index-based anchoring, not live DOM Range.** Right-click
+computes `(startIndex, endIndex)` against the `ExpandableSegment[]` at event time,
+snapshots the indices, and closes over them. No `Range` objects survive into React state.
+- **Cross-frame selection disables Expand.** The contextmenu handler in
+`Conversation.tsx` uses `findExpansionInSegments` to detect whether a selection spans
+an expansion boundary; `insertExpansion` in `conversation.ts` also refuses cross-frame.
+
+### Coding Style Guidelines
+
+These rules apply to all `.ts` and `.tsx` files. Linting and formatting are enforced
+by ESLint + Prettier — the rules below document patterns that lint can't catch.
+
+#### Prettier (enforced by `.prettierrc.yaml`)
+
+- Single quotes
+- No semicolons
+- `printWidth: 100`
+- `trailingComma: none`
+
+#### TypeScript
+
+- Prefer explicit types on **exported function signatures** and on union/string-literal return
+types. Let locals be inferred where obvious.
+- **No `eslint-disable` unless truly warranted.** The repo already disables
+`@typescript-eslint/no-explicit-any` on one line (the tesseract.js worker) — that's a
+pattern to copy if a third-party API is untyped, rather than scattering `any` around.
+- Use `import type` for type-only imports. See `lookup/handlers.ts:1` importing
+`LookupSession` from `./state`, or `index.ts:14` importing `ProviderMessage` from
+`./provider` for the pattern.
+
+#### Comments
+
+- **Sparse, purposeful.** Do not add comments that restate the code.
+- Use `/* ---- Section ---- */` dividers in main-process files (see `index.ts`, `config.ts`).
+- JSDoc only where the function's contract is non-obvious or for IPC handler documentation
+(see `lookup/handlers.ts` `handleLookupAsk`/`handleLookupExpand` — though those were
+deleted, their doc style is the template).
+
+#### Function ordering (C-style)
+
+In any file containing multiple functions or blocks, order them so that **callees appear
+before callers**. When a caller invokes multiple callees in sequence, order those parallel
+callees in a **logical and sequential** order.
+
+#### Imports
+
+- Named imports (not `import *`).
+- Grouped loosely by source: Node builtins first, then npm packages, then project modules.
+- Use `import type` for type-only imports (see above).
+
+#### Error handling
+
+- Main-process async functions return cleanly structured error information to the renderer.
+Examples:
+- `{ success, error }` from IPC handlers
+- Sentinel error classes: `NoApiKeyError`, `UnsupportedProviderError`,
+`RoleUnassignedError` for provider dispatch
+- Don't `console.log` errors that the user should see; surface them to a window.
+- IPC payloads use `Array<{ role: string; content: string }` and
+`{ success: boolean; response?: string; error?: string }` — mirror these in both the
+preload (`index.ts`/`index.d.ts`) and the renderer.
+
+#### React (renderer)
 
 - File extension `.tsx`. Components are function components returning `React.JSX.Element`
-  (see `App.tsx`). No prop types file — inline `type` aliases.
+(see `App.tsx`). No prop types file — inline `type` aliases.
 - Styling is plain CSS in `assets/`, using the `:root` CSS variables documented in
-  `docs/architecture.md`. Do not introduce CSS-in-JS or Tailwind without discussion.
-- Keep the renderer thin: it talks only to `window.api`. privileged work belongs in the
-  main process.
-
-## Key modules (what to touch when)
-
-| Task                                   | File(s)                                                                    |
-| -------------------------------------- | -------------------------------------------------------------------------- |
-| Add an AI provider                     | `provider.ts` (`callProvider` switch)                                      |
-| Change the OCR/capture pipeline        | `lookup/capture.ts`                                                        |
-| Change the hotkey response flow        | `lookup/lookup.ts` (`handleHotkeyPressed`)                                 |
-| Re-position / restyle the lookup popup | `lookup/window.ts` + `lookup/html.ts`                                      |
-| Persist or load user config/settings   | `config.ts`                                                                |
-| Wayland global-shortcut binding        | `services/global-shortcut.ts`                                              |
-| KDE Wayland silent screenshot          | `services/screen-capture.ts`                                               |
-| Renderer chat UI                       | `src/renderer/src/views/chat/ChatView.tsx`                                 |
-| Settings form                          | `src/renderer/src/views/settings/Settings.tsx`                             |
-| Provider config form                   | `src/renderer/src/components/settings/GoogleAiForm.tsx` / `OpenAiForm.tsx` |
-| Add a new IPC channel                  | preload `index.ts` + `.d.ts`, then main `index.ts`/`config.ts`             |
-| Change the expand prompt               | `lookup/handlers.ts` (`handleLookupExpand`)                                |
-| Change frame fold/reopen behaviour     | `lookup/html.ts` (`foldExpansion` / `reexpandExpansion`)                   |
-| Change the expansion targeting logic   | `lookup/html.ts` (`expandSelection`, contextmenu listener)                 |
-
-## Conventions worth remembering
-
-- **Provider dispatch lives in `provider.ts`.** `callProvider(messages, webSearchEnabled?)`
-  reads the config and selects the backend; everyone else (the `send-message` IPC handler,
-  `lookup/handlers.ts`) calls it and handles the sentinel errors. Don't duplicate the
-  `loadCurrentProviderConfig()` + `config.provider === ...` branching elsewhere.
-- **The lookup popup is a normally 420×320 always-on-top frameless `BrowserWindow`**
-  created inside `lookup/window.ts` via `createLookupSession`. It loads its own inline
-  HTML via a `data:text/html` URL (see `lookup/html.ts`). Position is best-effort near the
-  cursor via `new BrowserWindow({x, y})`; the compositor may center it on Wayland, which
-  is acceptable. When the user submits a question the window grows to 840×640 via
-  `animateGrowSession` + a `lookup-grow` IPC signal.
-- **There can be multiple lookup sessions.** The global `lookupSessions` array in
-  `state.ts` owns `LookupSession` objects, each holding its window ref, OCR context
-  text, OCR token (for stale-request cancellation), `grown` flag, `contextReady` flag,
-  and `hasText` flag. Use `isSessionAlive` / `sendToSession` / `notifySessionState`
-  rather than touching window refs directly.
-- **Lookup blur behaviour:** a window closes on blur only when the user has never
-  focused it (`hasBeenFocused` guard in `window.ts:54-56`), is not grown, and the
-  Ask field is empty (`!session.hasText`). Once a message has been sent (grown),
-  the window stays open on blur so the user can keep consulting it while triggering
-  new lookups.
-- **OCR captures the full screen, not a cropped region around the cursor.**
-  `captureScreen()` grabs the entire display; `runOCR()` processes the whole
-  image. Cursor position may fail on Wayland (`getCursorScreenPoint()` returns
-  `(0,0)`), but the full-screen capture + full-image OCR makes the feature
-  still work regardless.
-- **Portal code is KDE/Wayland-specific by design.** `isScreenCapturePortalPreferred()`
-  and `isKdeWaylandSession()` gate it. Keep `desktopCapturer` as the default for
-  X11/macOS/Windows and non-KDE Wayland.
-- **Config files** live under `{userData}/config/` (`providers.json`, `settings.json`).
-  Always go through `config.ts` helpers; remember to call `ensureConfigDir()` before
-  writing.
-- **Hotkey registry** is in `config.ts:registerHotkey`. It auto-routes through the XDG
-  GlobalShortcuts portal on Wayland. When `save-settings` changes the hotkey, it
-  re-registers by calling `registerHotkey` with `handleHotkeyPressed` — keep that
-  callback wiring intact.
-- **`path` vs `path/posix`**: `config.ts` and `index.ts` use `path`,
-  `lookup/capture.ts` and `lookup/window.ts` use `path/posix`. The
-  tesseract cache path build uses `path/posix` deliberately — match the existing import
-  in the file you're editing.
-- **Tray support**: `index.ts:71-102` creates a `Tray` with a context menu
-  (Show/Quit). `config.ts:currentCloseToTray` controls whether closing the main window
-  hides to tray instead of quitting. The `close` handler in `createWindow` checks
-  `currentCloseToTray && !isQuitting` to decide.
-- **Inline expansion frames are renderer-only DOM cache.**
-  When a frame is folded, the `.frame` element stays in `expansionCache[id].frame` — no
-  IPC is sent to the main process. Re-expand re-attaches the cached frame (nested children
-  intact). See `html.ts` `foldExpansion`/`reexpandExpansion`.
-- **Context menu snapshots both text and Range at right-click time.**
-  The menu-item click collapses the DOM selection. `expandSelection` receives cached
-  `cachedWordSpan` (single `.word` element) and `cachedRange` (drag-selection `Range`)
-  saved in local variables before `hideCtxMenu()` nulls the globals. See
-  `html.ts` `ctxMenu.addEventListener('click', ...)`.
-- **Cross-frame selection disables Expand.**
-  `selectionSpansFrames(range)` in `html.ts` checks whether a selection crosses `.frame`
-  boundaries. `deleteContents()` on a cross-frame Range would corrupt the DOM, so the
-  context menu greys out Expand (and `expandSelection` defensively aborts).
-
-## Do not
-
-- Don't add dependency `globalShortcut`-based commands without going through
-  `registerHotkey` (the portal path won't fire otherwise on Wayland).
-- Don't import Electron main APIs into the renderer; use the preload bridge.
-- Don't commit secrets. Provider API keys live only in `{userData}/config/providers.json`
-  on the user's machine — never in source.
-- Don't update `docs/architecture.md` description sections without also checking the source;
-  it is intentionally kept high-level but should not contradict `src/`.
-
-## Updating this file
-
-When the architecture changes meaningfully (new module split, new IPC channels, new
-provider, new window), update both this file **and** `docs/architecture.md`. This file is the
-source that agents read first; keep it accurate.
+`docs/architecture.md`. Do not introduce CSS-in-JS or Tailwind without discussion.
+- Keep the renderer thin: it talks only to `window.api`. Privileged work belongs in the
+main process.

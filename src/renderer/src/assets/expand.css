@@ -1,6 +1,7 @@
 /* ---- Expandable segments (inline expansion frames) ---- */
 
-.message-assistant .word {
+.message-assistant .word,
+.message-user .word {
   cursor: text;
 }
 

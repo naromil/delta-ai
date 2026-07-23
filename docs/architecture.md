@@ -1,7 +1,7 @@
 # Delta AI — Architecture
 
 > Auto-generated from source as built. Update after major changes to provide essential context about the project.
-> Last updated: 2026-07-21
+> Last updated: 2026-07-22
 
 ## High-level stack
 
@@ -10,7 +10,7 @@
 | Shell     | Electron 34 (electron-vite 4)                                                            |
 | Main      | TypeScript, Node.js                                                                      |
 | Preload   | TypeScript, contextBridge                                                                |
-| Shared    | TypeScript (pure types + registries, no runtime deps)                                    |
+| Shared    | TypeScript (pure types + helpers, no runtime deps)                                       |
 | Renderer  | React 19, TypeScript, vanilla CSS                                                        |
 | OCR       | tesseract.js (WASM)                                                                      |
 | AI        | Multi-provider (Google AI Studio, OpenAI Compatible; OpenAI, Ollama, OpenRouter planned) |
@@ -19,94 +19,133 @@
 ## Project tree
 
 ```
-electron.vite.config.ts      # Build orchestration (main/preload/renderer)
+electron.vite.config.ts      # Build orchestration (main/preload/renderer — single renderer bundle,
+                              #   lookup popup loaded via ?role=lookup on the same bundle)
 src/
   shared/
     models.ts                 # Shared types + provider/role registries (no runtime deps)
+    conversation.ts           # ConversationState model + helpers (tokenize, insertExpansion,
+                              #   updateExpansionInSegments, findExpansionParent, serializeForChat, etc.)
+    expand-prompt.ts          # Shared buildExpandMessages helper (constructs API messages for expand)
   main/
-    index.ts                 # App lifecycle, main window, send-message IPC handler
-    config.ts                # Config persistence (v2 model config + app settings), Wayland detection, hotkey registry
-    provider.ts              # Provider dispatch by role (callProvider + callProviderStream)
+    index.ts                  # App lifecycle, main window, streaming IPC handlers (chat-send,
+                              #   chat-expand, lookup-trigger-grow, lookup-transfer)
+    main-window.ts            # Module-scoped getter/setter for the main BrowserWindow ref
+    config.ts                 # Config persistence (v2 model config + app settings), Wayland detection,
+                              #   hotkey registry
+    provider.ts               # Provider dispatch by role (callProvider + callProviderStream)
     models/
-      registries.ts          # Re-export from src/shared/models.ts (keeps main import paths stable)
+      registries.ts           # Re-export from src/shared/models.ts (keeps main import paths stable)
     lookup/
-      lookup.ts              # Orchestrator: IPC wiring + handleHotkeyPressed entry point
-      capture.ts             # Screen capture + OCR pipeline (tesseract.js worker)
-      handlers.ts            # Paste handlers + Ask/Expand handlers (call callProviderStream with 'lookup' role)
-      html.ts                # Inline HTML for lookup popup (data: URL), restyled with CSS vars
-      state.ts               # Shared mutable state (lookupState object + helpers)
-      window.ts              # Lookup popup BrowserWindow creation + grow animation
+      lookup.ts               # Orchestrator: IPC wiring + handleHotkeyPressed entry point
+      capture.ts              # Screen capture + OCR pipeline (tesseract.js worker)
+      handlers.ts             # Paste-only handlers (Ask/Expand moved to shared streaming IPC)
+      state.ts                # Per-window LookupSession interface + helpers
+      window.ts               # Lookup popup BrowserWindow creation + grow animation
     services/
-      global-shortcut.ts     # XDG GlobalShortcuts D-Bus routing (Wayland)
-      screen-capture.ts      # Freedesktop Screenshot D-Bus routing (KDE Wayland)
+      global-shortcut.ts      # XDG GlobalShortcuts D-Bus routing (Wayland)
+      screen-capture.ts       # Freedesktop Screenshot D-Bus routing (KDE Wayland)
   preload/
-    index.ts                 # contextBridge API exposed to renderer
-    index.d.ts               # Type declarations for window.api & window.electron
+    index.ts                  # contextBridge API exposed to renderer (includes chat streaming channels)
+    index.d.ts                # Type declarations for window.api & window.electron
   renderer/
-    index.html               # Single-page shell (mounts #root)
+    index.html                # Single-page shell (mounts #root); also serves lookup via ?role=lookup
     src/
-      main.tsx               # ReactDOM.createRoot entry, imports base.css
-      App.tsx                # Shell: sidebar + 5-view routing + send orchestration
-      env.d.ts               # Vite env type shim
+      main.tsx                # ReactDOM.createRoot entry, imports base.css + lookup.css, mounts Root
+      Root.tsx                # Routes between App and LookupApp based on window location query
+      App.tsx                 # Shell: sidebar + 5-view routing + Conversation component
+      LookupApp.tsx           # Lookup popup: header, OCR context panel, paste, Conversation,
+                              #   transfer-to-chat button, keyboard shortcuts
+      env.d.ts                # Vite env type shim
       assets/
-        base.css             # CSS entry point: imports home.css, chat.css, settings.css;
-                              # defines design tokens (:root), CSS reset, legacy aliases
-        home.css             # App layout, sidebar (brand + nav + footer), view-shell
-                              # (shared header/content), KB canvas placeholder, responsive
-        chat.css             # Chat view: toolbar with New-chat button, message list,
-                              # composer, loading dots, scrollbar
-        settings.css         # Settings page: category tabs, forms, toggle switch,
-                              # save button, scrollbar
+        base.css              # CSS entry point: imports home.css, chat.css, settings.css, expand.css;
+                              #   defines design tokens (:root), CSS reset, legacy aliases
+        home.css              # App layout, sidebar (brand + nav + footer), view-shell
+                              #   (shared header/content), KB canvas placeholder, responsive
+        chat.css              # Chat view: toolbar with New-chat button, message list,
+                              #   composer, loading dots, scrollbar
+        expand.css            # Expansion frames, queried pills, frame-inner, fold-toggle,
+                              #   custom context menu styles (shared by chat + lookup)
+        lookup.css            # Lookup popup: header, context panel, ask input, conversation turn
+                              #   overrides, scrollbar, transfer button, growth transitions
+        settings.css          # Settings page: category tabs, forms, toggle switch, save button,
+                              #   scrollbar
       views/
         home/
-          HomeView.tsx       # Dashboard shell with KB canvas placeholder
-        chat/
-          ChatView.tsx       # Message list + empty state + composer + auto-scroll +
-                              # own toolbar with New chat button
+          HomeView.tsx        # Dashboard shell with KB canvas placeholder
         knowledge/
-          KnowledgeView.tsx  # Empty-state stub for Knowledge Base (Coming soon)
+          KnowledgeView.tsx   # Empty-state stub for Knowledge Base (Coming soon)
         lookup-guide/
-          LookupGuideView.tsx  # Empty-state stub for Look-Up Guide (Coming soon)
+          LookupGuideView.tsx # Empty-state stub for Look-Up Guide (Coming soon)
         settings/
-          Settings.tsx       # Settings orchestrator (3 tabs + save); owns modelConfig state
-          GeneralTab.tsx     # General tab (hotkey + close-to-tray toggle)
+          Settings.tsx        # Settings orchestrator (3 tabs + save); owns modelConfig state
+          GeneralTab.tsx      # General tab (hotkey + close-to-tray toggle)
       components/
+        conversation/
+          Conversation.tsx    # Shared conversation UI: message list, composer, context menu
+                              #   handling, expansion anchoring with index-based selection
+          Turn.tsx            # Single message turn with avatars, loading dots, segment rendering
+          ExpansionFrame.tsx  # Inline expansion frames: folded pill vs. expanded frame with
+                              #   child segments, fold button
+          ContextMenu.tsx     # Custom right-click menu: Expand, Copy, Select All
         settings/
-          HotkeyInput.tsx    # Hotkey capture input with keyboard combo rendering
+          HotkeyInput.tsx     # Hotkey capture input with keyboard combo rendering
           models/
-            ModelsTab.tsx       # Models tab: Roles + Connections sections, add-connection
-            RoleRow.tsx         # Single role row (connection selector, model field, web search)
-            ConnectionCard.tsx  # Single connection card (provider type, API key/host, base URL)
+            ModelsTab.tsx     # Models tab: Roles + Connections sections, add-connection
+            RoleRow.tsx       # Single role row (connection selector, model field, web search)
+            ConnectionCard.tsx# Single connection card (provider type, API key/host, base URL)
+      hooks/
+        useChatStreaming.ts   # Shared streaming hook: owns ConversationState, sends via
+                              #   chat-send/chat-expand IPC, routes responses by requestId,
+                              #   supports role ('chat'|'lookup'), context seed, replace-conversation
+        useChatReplaceConversation.ts  # (inline in useChatStreaming) — listens for
+                              #   chat-replace-conversation IPC to hydrate transferred state
 ```
 
 ## Data flow (layers)
 
 ```
-Renderer (React 19)          src/renderer/src/
-    │  window.api.{sendMessage, loadModelConfig, saveModelConfig, loadSettings, saveSettings}
-    ▼
-Preload (contextBridge)      src/preload/index.ts (+ index.d.ts)
-    │  ipcRenderer.invoke(...) / ipcRenderer.send(...) / ipcRenderer.on(...)
+Renderer (React 19) — App.tsx / LookupApp.tsx
+
+ Shared channels (both windows, correlated by requestId):
+   window.api.chatSend({ messages, requestId, role? })
+   window.api.chatExpand({ messages, requestId, role? })
+   + chatOnChunk / chatOnResponse / chatOnError / chatOnExpandChunk
+
+ Lookup-only channels:
+   window.api.lookupTriggerGrow()
+   window.api.lookupTransferToChat(state)
+   window.api.lookupOnContext(cb)
+   window.api.lookupOnGrow(cb)
+   window.api.lookupPasteText / lookupPasteImage / lookupOcrImage
+   window.api.lookupInputChanged(hasText)
+   window.api.lookupClose()
+
     ▼
 Main process (Node)          src/main/
-    ├── index.ts            App lifecycle + main window + send-message IPC (uses 'chat' role)
-    ├── config.ts           Model config persistence (v2 roles+connections), Wayland, hotkey
+    ├── index.ts            App lifecycle + main window + streaming IPC handlers
+    │                         (chat-send, chat-expand, lookup-trigger-grow, lookup-transfer)
+    ├── main-window.ts      Module-scoped ref to main BrowserWindow (for transfer)
+    ├── config.ts           Model config persistence, Wayland, hotkey
     ├── provider.ts         Role-based provider dispatch (callProvider/callProviderStream)
     ├── models/registries.ts  Re-export from src/shared/models.ts
     ├── lookup/
-    │   ├── lookup.ts      Orchestrator: handleHotkeyPressed entry point
-    │   ├── capture.ts     Screen capture + OCR (tesseract worker)
-    │   ├── handlers.ts    Paste, Ask, and Expand handlers (operate on per-session state)
-    │   ├── html.ts        Inline HTML/CSS/JS for lookup popup (data: URL)
-    │   ├── state.ts       Per-window LookupSession interface + helpers
-    │   └── window.ts      Lookup popup window + grow animation + IPC wiring (per-session)
+    │   ├── lookup.ts       Orchestrator: handleHotkeyPressed entry point
+    │   ├── capture.ts      Screen capture + OCR (tesseract worker)
+    │   ├── handlers.ts     Paste-only handlers (Ask/Expand moved to streaming IPC)
+    │   ├── state.ts        Per-window LookupSession interface + helpers
+    │   └── window.ts       Lookup popup window + grow animation (loads React entry via ?role=lookup)
     └── services/
-        ├── global-shortcut.ts   XDG GlobalShortcuts D-Bus (Wayland)
-        └── screen-capture.ts    Freedesktop Screenshot (KDE Wayland)
+        ├── global-shortcut.ts  XDG GlobalShortcuts D-Bus (Wayland)
+        └── screen-capture.ts   Freedesktop Screenshot (KDE Wayland)
     ▼
-Shared (pure types)          src/shared/models.ts
-    │  ProviderType, RoleId, Connection, RoleAssignment, ModelConfig,
-    │  providerRegistry, roleRegistry, DEFAULT_ROLES, helpers
+Shared (pure types + helpers)  src/shared/
+    ├── models.ts           ProviderType, RoleId, Connection, RoleAssignment, ModelConfig,
+    │                          providerRegistry, roleRegistry, DEFAULT_ROLES, helpers
+    ├── conversation.ts     ConversationState, Turn, ExpandableSegment types; pure helpers:
+    │                          tokenize, flattenMarkdown, insertExpansion, serializeForChat,
+    │                          findExpansionParent, updateExpansionInSegments, etc.
+    └── expand-prompt.ts    buildExpandMessages({ answer, selection }) — constructs API messages
     ▼
 OS  (fs {userData}/config/, Google Gemini API / OpenAI-compatible endpoints,
       tesseract WASM, D-Bus portals, desktopCapturer)
@@ -116,15 +155,19 @@ OS  (fs {userData}/config/, Google Gemini API / OpenAI-compatible endpoints,
 
 The main process is split by concern across multiple files (not monolithic):
 
-### `index.ts` — App lifecycle and main window
+### `index.ts` — App lifecycle, main window, streaming handlers
 
 **Window management:**
 
 - `createWindow()` — creates main 960×640 BrowserWindow, loads renderer
+- Exports nothing window-related itself; the main window ref is stored in `main-window.ts`
 
 **IPC handlers:**
 
-- `send-message` — calls `callProvider(messages, 'chat')` from `provider.ts`, returns `{ success, response?, error? }`
+- `chat-send` (`ipcMain.on`) — streaming send. Calls `callProviderStream(messages, role)` with `role` from payload (default `'chat'`). Responds per-chunk via `event.sender.send('chat-chunk', { requestId, text })` and final via `chat-response` / `chat-error`. All responses scoped to the sending webContents (safe for both chat window and lookup popup to use the same channel).
+- `chat-expand` (`ipcMain.on`) — streaming expand for inline frames. Same pattern as `chat-send`, responds via `chat-expand-chunk`.
+- `lookup-trigger-grow` (`ipcMain.on`) — lookup popup asks main to grow the window on first ask. Finds the session by `event.sender.id`, calls `animateGrowSession` + `sendToSession(..., 'lookup-grow')`.
+- `lookup-transfer` (`ipcMain.on`) — lookup popup sends its `ConversationState` to the chat window. Closes the lookup session, forwards state to main window via `chat-replace-conversation`, focuses the main window.
 
 **Lifecycle:**
 
@@ -132,6 +175,10 @@ The main process is split by concern across multiple files (not monolithic):
 - `app.on('will-quit')` → unregisters shortcuts
 - `app.on('window-all-closed')` → quits (except macOS)
 - `app.on('activate')` → recreates window (macOS)
+
+### `main-window.ts` — Main window ref
+
+Module-level `let mainWindow: BrowserWindow | null` with `setMainWindow(win)` and `getMainWindow()` — used by the `lookup-transfer` handler to reach the chat window.
 
 ### `provider.ts` — Role-based provider dispatch
 
@@ -153,6 +200,34 @@ Pure TypeScript module (no Node or React dependencies) importable by both the ma
 - **`roleRegistry`** — per-role definition: label, description, `locked` flag (KB roles are locked until KB feature ships), `offersWebSearch` flag
 - **`DEFAULT_ROLES`** — default role assignments (all `connectionId: null`)
 - **`createDefaultModelConfig()`**, **`generateConnectionId()`** — helpers used by both main (`config.ts`) and renderer (`ModelsTab.tsx`)
+
+### `src/shared/conversation.ts` — Conversation model (new)
+
+Shared model and pure helpers that drive both the chat and lookup UIs:
+
+**Types:**
+
+- `ConversationState { context?, systemNote?, turns: Turn[] }` — the portable conversation model
+- `Turn { id, role, content, segments?, error? }` — a single message turn
+- `ExpandableSegment` — a segment of an assistant answer:
+  - `{ kind: 'text', text }` — plain word/whitespace
+  - `{ kind: 'expansion', expansionId, originalText, cachedText, error?, loading?, folded, segments[] }` — an inline expansion frame with recursive child segments
+
+**Pure helpers (no DOM, no React, no IPC):**
+
+- `tokenize(text)` — flattens markdown, splits on whitespace, returns `ExpandableSegment[]`
+- `flattenMarkdown(text)` — strips headings, bold/italic, inline code, links, list markers, blockquotes
+- `insertExpansion(segments, startIndex, endIndex, selection, newExpansionId)` — replaces a word range with an expansion node; refuses if the range crosses an existing expansion boundary
+- `updateExpansionInSegments(segments, id, patch)` — immutable update of an expansion node
+- `updateExpansionInTurns(turns, id, patch)` — convenience for updating across all turns
+- `toggleExpansionFoldedInSegments` / `toggleExpansionFoldedInTurns` — fold/unfold by flipping `folded` flag
+- `findExpansionParent(segments, id)` — finds a parent expansion node (for nested expand context)
+- `serializeForChat(state)` — produces `ProviderMessage[]` for the API call (context as system prompt, turns as user/assistant messages)
+- `findTextSelectionRange` — helper for finding segment indices from a raw range
+
+### `src/shared/expand-prompt.ts` — Expand prompt builder (new)
+
+`buildExpandMessages({ answer, selection })` — shared helper that builds the API messages for an inline expansion request. Used by both the chat hook and (previously) the lookup `handleLookupExpand`. Prompt: "Define `{selection}` from the text above" with guardrails against restating the word.
 
 ### `models/registries.ts` — Main-process re-export
 
@@ -224,8 +299,8 @@ The app uses a **role-based model assignment** system. Instead of a single globa
 
 | Role ID             | Label                      | Locked | Web search | Used by                                  |
 | ------------------- | -------------------------- | ------ | ---------- | ---------------------------------------- |
-| `chat`              | Chat                       | No     | Yes        | `send-message` IPC (main chat)           |
-| `lookup`            | Lookup                     | No     | Yes        | `handleLookupAsk` / `handleLookupExpand` |
+| `chat`              | Chat                       | No     | Yes        | `chat-send` IPC (main chat)              |
+| `lookup`            | Lookup                     | No     | Yes        | `chat-send` IPC (lookup, role='lookup')  |
 | `kb-maintenance`    | Knowledge Base Maintenance | Yes    | No         | (planned: KB processing)                 |
 | `context-injection` | Context Injection          | Yes    | No         | (planned: KB → lookup injection)         |
 
@@ -266,13 +341,11 @@ per-window `LookupSession` object in `state.ts`; handlers operate on the passed-
 - `runOCR(imageBuffer)` — lazy-creates tesseract worker, returns OCR text
 - `runOCRTokenedFor(session, imageBuffer)` — bumps session's `ocrToken`, runs OCR; returns `null` if the token was superseded while OCR was in flight
 
-**`handlers.ts`:**
+**`handlers.ts` (simplified in this commit):**
 
 - `handlePasteText(session, text)` — bumps session token, sets text as context, marks ready
 - `handlePasteImage(session, base64)` — bumps session token, runs OCR on image via `runOCRTokenedFor`, marks ready
-- `handleLookupAsk(session, question)` — builds `ProviderMessage[]`, triggers grow animation on the session's window, calls `callProviderStream(messages, 'lookup')`, sends streamed response to that session's popup
-- `handleLookupExpand(session, payload)` — handles inline word-expansion requests from the popup's context menu. Builds a tame `ProviderMessage[]` with the original context/question + surrounding answer + the selected word, calls `callProviderStream(messages, 'lookup')`, sends streamed chunks tagged with `expansionId` back to the popup
-- `ExpandPayload` interface — `{ context, question, answer, selection, expansionId }`
+- (Removed: `handleLookupAsk`, `handleLookupExpand`, `initializeMessagesWithContext` — these now flow through the shared `chat-send`/`chat-expand` streaming IPC handlers in `index.ts`.)
 
 **`state.ts`:**
 
@@ -282,49 +355,16 @@ per-window `LookupSession` object in `state.ts`; handlers operate on the passed-
 - `clamp(v, lo, hi)` — pure utility for window positioning
 - `isSessionAlive(session)` — checks if a session's window is alive
 
-**`window.ts`:**
+**`window.ts` (updated):**
 
-- `createLookupSession(x, y)` — 420×320 always-on-top frameless BrowserWindow near cursor. Registers per-window IPC handlers: `lookup-ask`, `lookup-expand`, `lookup-paste-text`, `lookup-paste-image`, `lookup-close`, `lookup-input-changed`. Blur closes only if not grown AND Ask field has no text. On `closed`, removes itself from the sessions list.
-- `animateGrowSession(session, w, h, targetX?, targetY?)` — easeOutCubic animation from current bounds to target. When `targetX`/`targetY` are provided, animates position as well as size. Exports `LOOKUP_GROWN_WIDTH` / `LOOKUP_GROWN_HEIGHT` for use by `handlers.ts`. Used only by the Ask flow (the first question after OCR/paste).
+- `createLookupSession(x, y)` — 420×320 always-on-top frameless BrowserWindow near cursor. Registers per-window IPC handlers: `lookup-paste-text`, `lookup-paste-image`, `lookup-close`, `lookup-input-changed`. Blur closes only if not grown AND Ask field has no text. On `closed`, removes itself from the sessions list and decrements a ref-counted `lookup-ocr-image` handler.
+- **No longer** registers `lookup-ask` or `lookup-expand` — those flow through the shared `chat-send`/`chat-expand` handlers.
+- Loads the renderer via `loadURL(dev URL + '?role=lookup')` or `loadFile(..., { query: { role: 'lookup' } })` instead of the deleted `html.ts` data: URL.
+- Ref-counted `lookup-ocr-image` handler (`ocrHandlerRefCount`): registered once across all sessions, removed when the last session closes.
+- `animateGrowSession(session, w, h, targetX?, targetY?)` — easeOutCubic animation (unchanged).
+- Exports `LOOKUP_GROWN_WIDTH` / `LOOKUP_GROWN_HEIGHT` for use by `index.ts` (the `lookup-trigger-grow` handler).
 
-**`html.ts`:**
-
-- Exports `CSS_STYLES` (separate `const`) and interpolates it into `lookUpHTML` — the inline HTML/CSS/JS loaded as a `data:` URL by each lookup session's popup.
-- **CSS variables:** Mirrors the renderer design tokens (`--bg`, `--surface-1`, `--accent`, etc.) inside a `:root` block so the popup visually matches the main window.
-- **Layout:** Header with "Delta AI" title and close button, Context box (`#extracted`), Ask input (`#ask`), conversation area (`#conversation`), and a hidden custom context menu (`#ctxMenu`).
-- **CSS sections:** Base reset/layout, header, content area, extracted-text box, ask input, conversation turns (user/ai with framing), expansion frames (`.frame`, `.frame-inner`, `.fold-toggle`, `.queried`), and the custom context menu.
-- **Context / Ask flow:**
-  - `lookupOnContext(state)` drives the Context box visibility and hint text
-  - Enter in the Ask input calls `w.lookupAsk(q)`, only after `contextReady` is true; early Enter flashes the box with "Context is still being prepared…"
-  - `lookupInputChanged(hasText)` emitted on every `input` event to guard blur-to-close
-  - `lookupOnGrow(width, height)` resizes document/body CSS height and reveals `#conversation`
-- **Paste interception:** `Ctrl+V` never enters the Ask field — text pastes go to context (`w.lookupPasteText`), image pastes run OCR (`w.lookupPasteImage`)
-- **Turn rendering:** `addTurn(kind, text)` appends a `.turn` div; `replaceLastAi(text)` updates the last `.turn.ai` with tokenized inline content via `renderInline()`
-- **Custom context menu (`#ctxMenu`):**
-  - Appears on right-click inside a `.turn.ai` with items: Expand, Copy, Select All
-  - Expand is disabled when the selection spans multiple frames (prevents DOM corruption)
-  - Single-word auto-selection: `caretRangeFromPoint` detects the `.word` or `.queried` span under the cursor, replaces `window.getSelection()` with that span's range
-  - Drag-selection path: snapshots both the selection text (`ctxSelection`) and the live `Range` (`ctxRange`) at right-click time, before the menu-item click collapses the DOM selection
-  - Copy action restores the cached range before calling `document.execCommand('copy')`
-  - Ctrl+C keyboard shortcut: `keydown` listener calls `execCommand('copy')` when selection exists outside form inputs
-- **Inline expansion frames:**
-  - `expandSelection(selection, cachedWordSpan?, cachedRange?)` — creates a `.frame.expanded.loading` element with `data-expansion-id`, a `.frame-inner` (initially "Thinking…"), and a `.fold-toggle` button. Replaces the selected `.word` span in-place via `replaceChild`, or inserts via `range.insertNode`. Sends `w.lookupExpand({ context, question, answer, selection, expansionId })` to the main process.
-    - For nested expansions (within another frame), the context/question fields are sent empty — only the parent frame's answer text is included.
-    - Animates the frame in via `animateFrameIn()`.
-  - `foldExpansion(id)` — replaces the `.frame` with a `.queried` pill. The frame DOM element (including any nested sub-frames) is preserved in `expansionCache[id].frame`. Fades out via `animateFrameOut()` before the DOM swap.
-  - `reexpandExpansion(id)` — replaces the `.queried` pill with the cached `.frame` element (restoring nested children intact). Falls back to recreating the frame from `cachedText` if the cache entry was invalidated.
-- **Markdown processing:**
-  - `flattenMarkdown(text)` — strips headings, bold/italic, inline code, links, list markers, blockquotes, horizontal rules. Produces bare inline text.
-  - `tokenizeText(text)` — splits text on whitespace, wraps each word in a `.word` span (for right-click targeting).
-  - `renderInline(text)` — applies `flattenMarkdown`, splits on double-newlines for paragraph breaks, tokenizes each paragraph.
-- **Animations:**
-  - `animateFrameIn(frame)` — sets `opacity: 0`, double `requestAnimationFrame` tick, then `opacity: 1` with CSS transition.
-  - `animateFrameOut(frame, callback)` — sets `opacity: 0` with `transition: opacity 0.25s ease`, calls `callback` after 280ms.
-- **Cross-frame guard:** `selectionSpansFrames(range)` compares `startContainer` and `endContainer` ancestors' innermost `.frame[data-expansion-id]`. Used in the context menu to disable Expand, and defensively in `expandSelection`'s range-insertion path.
-- **Triple-click:** `mousedown` listener with `e.detail === 3` selects the innermost `.frame-inner` contents, overriding the browser's default paragraph selection.
-- **Streaming expansion via IPC:**
-  - `lookupOnExpandChunk(chunk)` receives `{ expansionId, text }` (or `{ expansionId, error }`). Updates `.frame-inner` with tokenized content via `renderInline()`. Removes `.loading` class. On error, sets `.error` class and hides `.fold-toggle`.
-  - Each session owns its own DOM state; multiple sessions may coexist independently.
+**`html.ts` — deleted (was 965 lines).** The lookup popup HTML/CSS/JS inline data: URL is replaced by the React `LookupApp` component in `src/renderer/src/LookupApp.tsx`. The expansion frame, context menu, paste, and keyboard logic moved to React components and shared model helpers.
 
 ### `services/global-shortcut.ts` — XDG GlobalShortcuts for Wayland
 
@@ -355,78 +395,149 @@ Exposes via `contextBridge`:
 
 ```typescript
 {
-  // Chat / config (renderer)
-  loadModelConfig() // Load full ModelConfig (connections + roles)
-  saveModelConfig(config) // Save full ModelConfig
-  sendMessage(messages) // Send chat messages to AI (uses 'chat' role)
-  loadSettings() // Load app settings (hotkey, closeToTray)
-  saveSettings(settings) // Save app settings
+  // Config
+  loadModelConfig()          // Load full ModelConfig (connections + roles)
+  saveModelConfig(config)    // Save full ModelConfig
+  loadSettings()             // Load app settings (hotkey, closeToTray)
+  saveSettings(settings)     // Save app settings
+
   // Lookup popup: main → renderer (one-way)
-  lookupOnContext(cb) // {status, text, hint} → lookup popup (context state)
-  lookupOnChunk(cb) // Streaming AI chunk → lookup popup (plain text during stream)
-  lookupOnResponse(cb) // Final AI response → lookup popup (tokenized)
-  lookupOnError(cb) // Error → lookup popup
-  lookupOnGrow(cb) // (width, height) → lookup popup (grow animation)
-  lookupOnExpandChunk(cb) // {expansionId, text|error} → lookup popup (expansion stream)
+  lookupOnContext(cb)        // {status, text, hint} — OCR context state
+  lookupOnError(cb)          // Error string
+  lookupOnGrow(cb)           // (width, height) — grow animation signal
+
   // Lookup popup: renderer → main
-  lookupAsk(question) // Send user's question from Ask input
-  lookupExpand(payload) // Request inline word expansion from context menu
-  lookupPasteText(text) // Pasted text as context
-  lookupPasteImage(base64) // Pasted image for OCR
-  lookupInputChanged(hasText) // Whether Ask field has text (guards blur-to-close)
-  lookupClose() // Close the popup
+  lookupPasteText(text)      // Pasted text as context
+  lookupPasteImage(base64)   // Pasted image for OCR
+  lookupOcrImage(base64)     // Invoke OCR on an image → {text, error?}
+  lookupInputChanged(bool)   // Whether Ask field has text (guards blur-to-close)
+  lookupClose()              // Close the popup
+  lookupTriggerGrow()        // Ask main to animate window growth on first question
+  lookupTransferToChat(state)// Send ConversationState to main window, close lookup
+
+  // Chat streaming (correlated by requestId)
+  chatSend({messages, requestId, role?})
+  chatExpand({messages, requestId, role?})
+  chatOnChunk(cb)            // {requestId, text} — returns unsub function
+  chatOnResponse(cb)         // {requestId, text} — returns unsub function
+  chatOnError(cb)            // {requestId, error} — returns unsub function
+  chatOnExpandChunk(cb)      // {requestId, text?, error?, done?} — returns unsub function
+  chatOnReplaceConversation(cb) // {ConversationState} — injected from lookup transfer
 }
 ```
 
+Key pattern: all chat streaming listeners return an `unsubscribe` function for proper cleanup on component unmount (unlike the lookup listeners which are always-on).
+
 ## Renderer (`src/renderer/src/`)
+
+### `Root.tsx` — Entry point router (new)
+
+Checks `window.location.search.includes('role=lookup')` to decide whether to render `LookupApp` (for the popup window) or `App` (for the main chat window). Both share the same renderer bundle.
 
 ### `App.tsx` — Application shell
 
 **State:**
 
 - `view: 'home' | 'chat' | 'knowledge' | 'lookup-guide' | 'settings'` — which view is showing (default `'home'`)
-- `messages: Message[]` — chat history
-- `loading: boolean` — AI response in progress
+- `ConversationState` + streaming callbacks from `useChatStreaming()`
 
 **Behavior:**
 
 - Persistent sidebar with brand wordmark and 5 nav entries (Home, Chat, Knowledge Base, Look-Up Guide, Settings), rendered from a `navEntries` array with inline SVG icons
 - Each entry switches `view` state; `.sidebar-nav-item.active` uses the dusty-blue accent fill
-- `handleSend(content)` — creates user/assistant messages, calls `window.api.sendMessage()`, updates state
 - Routes the active view into `.app-main`:
   - `home` → `<HomeView />`
-  - `chat` → `<ChatView>` with `onNewChat` to clear messages
+  - `chat` → `<Conversation>` with streaming callbacks (`send`, `expand`, `fold`, `unfold`, `newChat`)
   - `knowledge` → `<KnowledgeView />`
   - `lookup-guide` → `<LookupGuideView />`
-  - `settings` → `<Settings>` with `onBack` that returns to chat
+  - `settings` → `<Settings>`
+
+### `LookupApp.tsx` — Lookup popup (new, replaces html.ts)
+
+Reimplements the inline `html.ts` popup as a React component, reusing the conversation components:
+
+**Layout:** Header bar ("Delta AI" + transfer button + close ✕), OCR context panel (`#extracted` with section-label), paste hint, ask input, hidden conversation area (revealed on grow).
+
+**Lookup-specific behaviors (ported from html.ts vanilla JS):**
+
+- **Context panel**: driven by `lookupOnContext` — shows OCR text, hints, flash animation.
+- **Paste handling**: on non-grown state, paste replaces context (`lookupPasteText`). On grown state, paste inserts into the ask field (image→OCR via `lookupOcrImage`).
+- **Grow**: first ask triggers `lookupTriggerGrow` which signals main to animate window growth. `lookupOnGrow` updates CSS height transitions and reveals the conversation area.
+- **Escape** closes the popup; **Enter** submits the ask (guarded by `contextReady`); **Ctrl+V** is intercepted for paste-into-context (pre-grown) or OCR-into-ask (post-grown).
+- **Transfer button**: "Send to chat" button in the header, enabled only when turns exist and no expansion is loading. Calls `lookupTransferToChat(state)`.
+- **Blur guard**: communicates `hasText` via `lookupInputChanged` (the main window's blur handler closes only when not grown + no text).
+
+### `hooks/useChatStreaming.ts` — Shared streaming hook (new)
+
+Used by both `App.tsx` (role='chat') and `LookupApp.tsx` (role='lookup').
+
+**Returns:** `{ state, loading, send, expand, fold, unfold, newChat }`
+
+**Owns:**
+
+- `ConversationState` in `useState` — the full conversation model (context, turns, expansions)
+- `pendingRef` — a `Map<requestId, { kind, turnId, expansionId? }>` for correlating streaming responses
+- `expansionIdCounterRef` — per-conversation counter for unique expansion IDs
+
+**Lifecycle:** `useEffect` subscribes to the four `chatOn*` channels (returns cleanup unsubs). The subscribers dispatch by `requestId` to the correct pending request.
+
+**`send(content)`:** Generates a `turnId` + `requestId`, appends user + empty-assistant turns, calls `chatSend`. On `chat-chunk`: updates the assistant turn's `content` (flat text). On `chat-response`: tokenizes into `segments`. On `chat-error`: marks with `error: true`. Handles `role` for lookup (grow-on-first-ask via `lookupTriggerGrow`).
+
+**`expand(turnId, selection, startIndex, endIndex, isNested, parentAnswer)`:** Generates `expansionId` + `requestId`, calls `insertExpansion` (pure model helper) to insert a loading expansion node, calls `buildExpandMessages` + `chatExpand`. On `chat-expand-chunk`: updates `cachedText` and tokenizes into child segments. On error: sets `loading: false, error: true`.
+
+**`fold(id)` / `unfold(id)`:** Pure local state flip — no IPC. Mirrors the lookup's `foldExpansion`/`reexpandExpansion` without the DOM cache (the model's `segments` tree IS the cache).
+
+**`newChat()`:** Clears state, resets pending requests, sets `expansionIdCounter` back to 1.
+
+**Transfer listener:** the hook also subscribes to `chatOnReplaceConversation` (once, in the initial `useEffect`). On receipt, calls `setState(importedState)`, clears pending, and resets `expansionIdCounter` past the max imported id.
+
+### `components/conversation/Conversation.tsx` — Shared conversation (new)
+
+Renders the message list + composer + context menu. Key design decisions:
+
+- **Right-click → anchor**: the `contextmenu` handler computes a segment-index anchor at event time, snapshots it locally, and closes over it. No `Range` objects stored in React state — only `(startIndex, endIndex)` indices, which survive re-renders and are the transfer-safe representation.
+- **Single-word path**: `caretRangeFromPoint` detects the `.word` span under cursor, maps it to a segment index via DOM query.
+- **Multi-word path**: iterates segments to find the text-boundary range.
+- **Cross-frame guard**: `findExpansionInSegments`/`findTextSelectionRange` ensure Expand is disabled when the selection crosses an expansion boundary.
+- **Composer**: identical to the old `ChatView`'s (textarea + send button + Enter/Shift+Enter).
+- **Props**: `state`, `loading`, `onSend`, `onNewChat`, `onExpand`, `onFold`, `onUnfold`.
+- **Toolbar**: "New chat" button at the top, same visual as the old ChatView.
+
+### `components/conversation/Turn.tsx` — Single turn (new)
+
+Renders a user or assistant message. For assistant turns with `segments`, renders an `<InlineSegments>` tree. For plain text (during streaming), renders the `content` string directly. Handles loading dots for the in-progress turn.
+
+### `components/conversation/ExpansionFrame.tsx` — Inline expansion frames (new)
+
+Port of `html.ts`'s frame/pill system:
+
+- **Folded state**: renders a `.queried` pill with `originalText`; clicking calls `onUnfold`.
+- **Expanded state**: renders a `.frame.expanded` with `.frame-inner` containing either plain "Thinking…" (loading, no `cachedText`), tokenized child segments, or the resolved `cachedText` via `tokenizeInline`. Includes a `.fold-toggle` button that calls `onFold`.
+- **Context menu**: propagation stops at `.frame` boundaries so the right-click context menu scopes to the correct turn.
+- **`InlineSegments` sub-component**: iterates `ExpandableSegment[]` — text segments get `.word` spans, expansion segments get `<ExpansionFrame>`.
+
+### `components/conversation/ContextMenu.tsx` — Custom context menu (new)
+
+Renders `#ctxMenu` with Expand (possibly disabled), Copy, Select All. Hides on click-outside or Escape. Expand action calls the snapshot-closed-over `onExpand` callback. Copy restores the cached range before `execCommand('copy')`.
 
 ### `views/home/HomeView.tsx` — Home dashboard
 
 - Brand header "Delta AI"
-- Empty KB canvas placeholder (`<div class="kb-canvas">`) — the central visualization area for the user's knowledge base, ready to be filled when the KB feature is built
+- Empty KB canvas placeholder (`<div class="kb-canvas">`) — unchanged.
 
-### `views/chat/ChatView.tsx` — Chat message list and composer
+### `views/chat/ChatView.tsx` — Deleted
 
-**Props:** `messages`, `loading`, `onSend`, `onNewChat`
-
-**Owns:**
-
-- `input` state for the textarea
-- In-view toolbar with "New chat" button (moved from the sidebar in the IA restructure)
-- Auto-scroll to bottom on new messages
-- Empty state (`"How can I help you today?"`)
-- Message list with role avatars and loading-dots animation
-- Composer with Enter-to-send and send button
+Replaced by `Conversation.tsx` which renders into the app's chat view with the same toolbar/composer layout but with segment rendering, expand, and streaming.
 
 ### `views/knowledge/KnowledgeView.tsx` — Knowledge Base placeholder
 
-- Empty-state stub with "Coming soon.", ready for the KB feature implementation
+- Empty-state stub with "Coming soon." (unchanged)
 
 ### `views/lookup-guide/LookupGuideView.tsx` — Look-Up Guide placeholder
 
-- Empty-state stub with "Coming soon.", ready for the lookup-guide feature implementation
+- Empty-state stub with "Coming soon." (unchanged)
 
-### `views/settings/Settings.tsx` — Settings orchestrator
+### `views/settings/Settings.tsx` — Settings orchestrator (unchanged)
 
 **State:** `modelConfig` (full `ModelConfig`), `hotkey`, `closeToTray`, save state, active tab
 
@@ -436,71 +547,40 @@ Exposes via `contextBridge`:
   - **General** — Renders `<GeneralTab>` (hotkey input + close-to-tray toggle)
   - **Models** — Renders `<ModelsTab>` (roles + connections)
   - **About** — Inline blurb
-- Owns `modelConfig` state and mutation helpers (`updateRole`, `updateConnection`, `addConnection`, `deleteConnection`); passes them down to `<ModelsTab>` as callbacks
-- `handleSave()` — saves full `ModelConfig` via `saveModelConfig()` + app settings via `saveSettings()`
+- Owns `modelConfig` state and mutation helpers; passes them down to `<ModelsTab>` as callbacks
+- `handleSave()` — saves full `ModelConfig` + app settings
 
-### `views/settings/GeneralTab.tsx` — General tab
+### `components/settings/models/ModelsTab.tsx`, `RoleRow.tsx`, `ConnectionCard.tsx`, `HotkeyInput.tsx` (unchanged)
 
-Presentational component rendering `<HotkeyInput>` and the close-to-tray toggle. Receives `hotkey`/`onHotkeyChange`/`closeToTray`/`onCloseToTrayChange` props.
-
-### `components/settings/models/ModelsTab.tsx` — Models tab
-
-Renders two stacked sections within the Models tab:
-
-- **Roles section** — maps over `roleRegistry` (ordered) and renders one `<RoleRow>` per role. Owns the "add connection" provider-type selector state.
-- **Connections section** — maps over `modelConfig.connections` and renders one `<ConnectionCard>` per connection. Includes the "Add Connection" button (delegates connection creation to the parent via `onAddConnection`).
-
-### `components/settings/models/RoleRow.tsx` — Single role row
-
-**Props:** `roleDef`, `roleId`, `assignment`, `modelConfig`, and role-level callbacks
-
-**Renders:**
-
-- Role label + description, lock indicator for KB roles, "(coming soon)" for unimplemented providers
-- Connection selector (dropdown of all connections + "Not configured…")
-- Model field: dropdown with known models + "Custom…" for providers that have `knownModels` (Google AI Studio, OpenAI); free-text input otherwise. Owns local `isCustom`/`customModel` state, remounted via `key` when the connection changes (so `useState` initializer re-runs cleanly without `useEffect`).
-- Web search toggle (only for roles where `offersWebSearch === true`)
-
-### `components/settings/models/ConnectionCard.tsx` — Single connection card
-
-**Props:** `connection`, `onUpdate`, `onDelete`
-
-**Renders:**
-
-- Editable connection label
-- Provider type dropdown (all 5 types from `providerRegistry`)
-- API Key input (for `apiKey` auth shape providers)
-- Host input (for `host` auth shape providers, e.g. Ollama)
-- Base URL input (hidden for Ollama; pre-filled from `defaultBaseUrl` for Google AI Studio, OpenAI, OpenRouter)
-- Delete button
-
-### `components/settings/HotkeyInput.tsx` — Hotkey capture input
-
-**Props:** `value`, `onChange`
-
-**Owns:**
-
-- `capturing` state for focus/blur toggle
-- `renderCombo(e)` — keyboard event → Electron accelerator string
-- ReadOnly input that captures key combination when focused
-
-### Design tokens and CSS architecture
+### CSS architecture
 
 **`base.css`** is the single CSS entry point (imported by `main.tsx`). It uses `@import` to load all sub-stylesheets, then declares the design token `:root` block and the CSS reset:
 
 ```
 base.css  (imported by main.tsx)
-  ├── @import 'home.css'        →  App layout (.app), sidebar (.sidebar, .sidebar-brand,
-  │                                  .sidebar-nav, .sidebar-nav-item), view-shell
-  │                                  (.view-shell, .view-shell-header, .view-shell-content,
-  │                                  .view-empty-state), KB canvas (.kb-canvas), responsive
-  ├── @import 'chat.css'        →  Chat toolbar, message list, avatar, composer,
-  │                                  loading dots, scrollbar, empty state
-  └── @import 'settings.css'    →  Settings page, category tabs, form inputs, toggle,
-                                    save button, scrollbar
+  ├── @import 'home.css'        →  App layout, sidebar, view-shell, KB canvas, responsive
+  ├── @import 'chat.css'        →  Chat toolbar, message list, avatar, composer, loading dots
+  ├── @import 'settings.css'    →  Settings page, category tabs, form inputs, toggle, save button
+  └── @import 'expand.css'      →  Expansion frames, queried pills, frame-inner, fold-toggle,
+                                    custom context menu (shared by chat + lookup)
 ```
 
-Design tokens are declared as CSS custom properties in `:root` inside `base.css`:
+**`lookup.css`** is imported alongside `base.css` by `main.tsx`. It contains:
+
+- Design token `:root` block (mirrors the base.css tokens for the popup window which loads without main app CSS scoping)
+- Lookup layout (`.lookup`, `.lookup-header`, `.lookup-content`, `.lookup-conversation`)
+- Context box (`.extracted`, `.section-label`, `.paste-tip`, `.ocr-hint`)
+- Ask input (`.ask`, `.ask-wrap`)
+- Turn style overrides for the lookup popup (`.lookup .message-*`)
+- Transfer button styles (`.lookup-transfer-btn`)
+- Scrollbar styles
+
+**`expand.css`** contains all shared expansion frame and context menu CSS:
+
+- `.word`, `.frame.expanded`, `.frame.loading`, `.frame.error`, `.frame-inner`, `.fold-toggle`, `.queried`
+- `#ctxMenu` with `.item`, `.disabled`, `.sep`
+
+Design tokens are declared as CSS custom properties in `:root` inside `base.css` and duplicated in `lookup.css`:
 
 | Category | Tokens (examples)                                               |
 | -------- | --------------------------------------------------------------- |
@@ -512,9 +592,7 @@ Design tokens are declared as CSS custom properties in `:root` inside `base.css`
 | Shape    | `--radius-sm`, `--radius-md`, `--radius-lg`                     |
 | Shadows  | `--shadow-1`, `--shadow-2`                                      |
 
-Legacy variables (`--ev-c-*`, `--chat-*`, `--color-*`) are aliased to the new tokens for backward compatibility during the transition.
-
-**`chat.css`** additionally imports the DM Serif Display font from Google Fonts (for the serif accent typeface used in KB / dashboard contexts).
+Legacy variables (`--ev-c-*`, `--chat-*`, `--color-*`) are aliased to the new tokens in `base.css` for backward compatibility during the transition.
 
 ## Configuration file format
 
@@ -571,6 +649,7 @@ electron.vite.config.ts
   ├── main    → out/main/index.js    (SSR, cjs)
   ├── preload → out/preload/index.js (SSR, cjs)
   └── renderer→ out/renderer/        (client, esm + HTML + CSS)
+                                  (lookup popup loads the same bundle with ?role=lookup)
 ```
 
 `npm run build` runs `typecheck:node` + `typecheck:web` (both `tsc --noEmit`), then `electron-vite build`.
@@ -583,20 +662,21 @@ electron.vite.config.ts
 | KDE Plasma Wayland    | XDG GlobalShortcuts portal  | Screenshot portal (silent)     |
 | GNOME / Other Wayland | XDG GlobalShortcuts portal  | `desktopCapturer.getSources()` |
 
-## UI restyle (2026-07-20)
+## Major changes (2026-07-22 — streaming conversation + React lookup)
 
-The renderer and lookup popup were restyled to align with the README "Look and Feel" initiative:
+The last commit replaced the lookup's inline `data:text/html` popup (965 lines of vanilla JS/CSS/html) with a React component (`LookupApp.tsx`) that reuses the chat's conversation components. Key architectural impacts:
 
-- **Visual direction:** Soft dark (`#20212a` deep slate base), dusty blue accent (`#8aa0b8`), reduced contrast, soft shadows, rounded surfaces.
-- **Information architecture:** A persistent sidebar with 5 destinations (Home, Chat, Knowledge Base, Look-Up Guide, Settings) replaces the previous sidebar with only New-chat and Settings. The Home view acts as a dashboard for the future Knowledge Base feature.
-- **CSS architecture:** Consolidated to a single entry point (`base.css`) that imports all sub-stylesheets via `@import`. Design tokens live in a single `:root` block.
-- **Lookup popup:** Mirrors the same design tokens via a `:root` block in its `CSS_STYLES` constant, ensuring visual consistency between the main window and the always-on-top popup.
+- **Unified conversation model**: `src/shared/conversation.ts` defines `ConversationState`, `Turn`, `ExpandableSegment` — a portable, DOM-range-free data model that both the chat and lookup windows operate on. This model is designed for future lookup→chat transfer (already wired: `lookupTransferToChat`).
+- **Shared streaming IPC**: the old one-shot `send-message` handler was replaced by `chat-send` + `chat-expand` (both streaming, both `event.sender`-scoped, both passing an optional `role` discriminator). The `useChatStreaming` hook subscribes to the same channel family from either window.
+- **Ask/Expand moved from lookup handlers to shared IPC**: `handleLookupAsk` and `handleLookupExpand` in `handlers.ts` were deleted. Main handles send/expand through `index.ts` via the same `callProviderStream`, using `role: 'lookup'` for the lookup roleId. The grow-on-first-ask side effect was moved to a `lookup-trigger-grow` handler.
+- **Expand UI shared**: `ExpansionFrame.tsx`, `Turn.tsx`, `ContextMenu.tsx`, and `Conversation.tsx` render the same expandable segment tree for both chat and lookup. The CSS lives in `expand.css` (shared).
+- **Transfer**: the lookup popup has a "Send to chat" button that marshals its `ConversationState` to the main window via `lookup-transfer` IPC. The chat window's hook hydrates it and resets the expansion counter.
 
 ## Current feature status
 
 | Feature                                          | Status                        |
 | ------------------------------------------------ | ----------------------------- |
-| Chat UI (chat view + send)                       | ✅ Complete                   |
+| Chat UI (chat view + send)                       | ✅ Complete (streaming)       |
 | Settings with 3 tabs (General/Models/About)      | ✅ Complete                   |
 | Role-based model config (chat, lookup, KB roles) | ✅ Complete (KB roles locked) |
 | Provider connections (CRUD, per-role model)      | ✅ Complete                   |
@@ -604,8 +684,11 @@ The renderer and lookup popup were restyled to align with the README "Look and F
 | OpenAI Compatible provider                       | ✅ Complete                   |
 | OpenAI / Ollama / OpenRouter providers           | ✅ Complete                   |
 | Shared types/registry module                     | ✅ Complete                   |
+| Shared conversation model with expandable tree   | ✅ Complete                   |
 | OCR from screen (full capture)                   | ✅ Complete                   |
-| AI explanation popup                             | ✅ Complete                   |
+| AI explanation popup (React, streaming)          | ✅ Complete                   |
+| Inline expandable frames (fold/unfold/nested)    | ✅ Complete                   |
+| lookup→chat transfer                             | ✅ Complete                   |
 | Global hotkey (X11 + Wayland)                    | ✅ Complete                   |
 | Infinite recursive lookup                        | ✅ Complete                   |
 | Home dashboard (KB canvas)                       | ✅ Complete                   |

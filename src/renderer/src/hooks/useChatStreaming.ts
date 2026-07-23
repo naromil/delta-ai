@@ -5,7 +5,8 @@ import {
   insertExpansionNested,
   updateExpansionInTurns,
   toggleExpansionFoldedInTurns,
-  serializeForChat
+  serializeForChat,
+  getSystemPrompt
 } from '../../../shared/conversation'
 import { buildExpandMessages } from '../../../shared/expand-prompt'
 
@@ -27,6 +28,7 @@ interface UseChatStreamingOptions {
   role?: 'chat' | 'lookup'
   initial?: Partial<ConversationState>
   onGrown?: () => void
+  onReplaceConversation?: () => void
 }
 
 export function useChatStreaming(options?: UseChatStreamingOptions): {
@@ -183,6 +185,7 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
         }
         scanSegments(imported.turns.flatMap((t) => t.segments ?? []))
         expansionIdCounterRef.current = maxId + 1
+        options?.onReplaceConversation?.()
       })
     )
 
@@ -202,8 +205,16 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
       const requestId = generateRequestId()
 
       setState((prev) => {
-        const newTurn: Turn = { id: turnId - 1, role: 'user', content: trimmed }
-        const messages = serializeForChat({ ...prev, turns: [...prev.turns, newTurn] })
+        const newTurn: Turn = {
+          id: turnId - 1,
+          role: 'user',
+          content: trimmed,
+          segments: tokenize(trimmed)
+        }
+        const messages = serializeForChat(
+          { ...prev, turns: [...prev.turns, newTurn] },
+          role as 'chat' | 'lookup'
+        )
         window.api.chatSend({ messages, requestId, role })
         pendingRef.current.set(requestId, { kind: 'send', turnId })
 
@@ -260,7 +271,7 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
         const allMessages = [
           {
             role: 'system' as const,
-            content: 'You are DeltaAI, a helpful assistant. Always be concise.'
+            content: getSystemPrompt(role as 'chat' | 'lookup')
           },
           ...expandMessages
         ]
@@ -287,7 +298,7 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
   }, [])
 
   const newChat = useCallback(() => {
-    setState({ turns: [] })
+    setState({ context: '', turns: [] })
     setLoading(false)
     pendingRef.current.clear()
   }, [])

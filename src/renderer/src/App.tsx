@@ -91,7 +91,9 @@ const ICONS: Record<string, React.JSX.Element> = {
 
 function App(): React.JSX.Element {
   const [view, setView] = useState<View>('home')
-  const { state, loading, send, expand, fold, unfold, newChat } = useChatStreaming()
+  const { state, loading, send, expand, fold, unfold, newChat } = useChatStreaming({
+    onReplaceConversation: () => setView('chat')
+  })
 
   return (
     <div className="app">

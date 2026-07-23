@@ -95,6 +95,46 @@ body {
   line-height: 1.3;
 }
 
+/* Context banner (when conversation is transferred from lookup) */
+.chat-context {
+  max-width: 768px;
+  width: 100%;
+  margin: 16px auto 0;
+  padding: 0 24px;
+  box-sizing: border-box;
+}
+
+.chat-context-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  margin-bottom: 6px;
+}
+
+.chat-context-text {
+  font-size: 13px;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 80px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+}
+
+.chat-context-text::-webkit-scrollbar {
+  width: 6px;
+}
+
+.chat-context-text::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 3px;
+}
+
 /* Messages */
 .message-list {
   max-width: 768px;
@@ -110,6 +150,10 @@ body {
   display: flex;
   gap: 16px;
   align-items: flex-start;
+}
+
+.chat .message-user {
+  flex-direction: row-reverse;
 }
 
 .message-avatar {
@@ -132,6 +176,13 @@ body {
 .message-assistant .message-avatar {
   background: var(--surface-3);
   color: var(--accent);
+}
+
+.chat .message-user .message-content {
+  background: var(--accent-soft);
+  padding: 8px 14px;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 var(--radius-lg);
+  max-width: 75%;
 }
 
 .message-content {

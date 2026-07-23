@@ -59,7 +59,6 @@ function ContextMenu({ state, onClose }: ContextMenuProps): React.JSX.Element | 
       <div className="item" onClick={() => handleItemClick('copy')}>
         Copy
       </div>
-      <div className="sep" />
       <div className="item" onClick={() => handleItemClick('select-all')}>
         Select All
       </div>
