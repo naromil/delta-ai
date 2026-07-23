@@ -35,7 +35,9 @@ src/
                               #   chat-expand, lookup-trigger-grow, lookup-transfer)
     main-window.ts            # Module-scoped getter/setter for the main BrowserWindow ref
     config.ts                 # Config persistence (v2 model config + app settings), Wayland detection,
-                              #   hotkey registry
+                               #   hotkey registry
+    conversations.ts          # Conversation persistence: CRUD on {userData}/conversations/{id}.json;
+                               #   listConvs, loadMostRecentChat, KB-fed marking + auto-delete
     provider.ts               # Provider dispatch by role (callProvider + callProviderStream)
     models/
       registries.ts           # Re-export from src/shared/models.ts (keeps main import paths stable)
@@ -92,6 +94,7 @@ src/
                               #   child segments, fold button
           ContextMenu.tsx     # Custom right-click menu: Expand, Expand on…, Copy, Select All
           ExpandPrompt.tsx    # Floating inline input for "Expand on…" custom direction
+          ConversationSearch.tsx # Modal overlay for searching + loading past conversations by title
         settings/
           HotkeyInput.tsx     # Hotkey capture input with keyboard combo rendering
           models/
@@ -116,14 +119,23 @@ Renderer (React 19) — App.tsx / LookupApp.tsx
    window.api.chatExpand({ messages, requestId, role? })
    + chatOnChunk / chatOnResponse / chatOnError / chatOnExpandChunk
 
- Lookup-only channels:
-   window.api.lookupTriggerGrow()
-   window.api.lookupTransferToChat(state)
-   window.api.lookupOnContext(cb)
-   window.api.lookupOnGrow(cb)
-   window.api.lookupPasteText / lookupPasteImage / lookupOcrImage
-   window.api.lookupInputChanged(hasText)
-   window.api.lookupClose()
+  Lookup-only channels:
+    window.api.lookupTriggerGrow()
+    window.api.lookupTransferToChat(state, conversationId?)
+    window.api.lookupOnContext(cb)
+    window.api.lookupOnGrow(cb)
+    window.api.lookupPasteText / lookupPasteImage / lookupOcrImage
+    window.api.lookupInputChanged(hasText)
+    window.api.lookupClose()
+
+  Conversation persistence channels:
+    window.api.saveConversation(record)
+    window.api.loadConversation(id)
+    window.api.deleteConversation(id)
+    window.api.listConversations()
+    window.api.loadMostRecentChat()
+    window.api.listUnfedConversations()
+    window.api.markConversationKbFed(id)
 
     ▼
 Main process (Node)          src/main/
@@ -173,7 +185,15 @@ The main process is split by concern across multiple files (not monolithic):
 - `chat-send` (`ipcMain.on`) — streaming send. Calls `callProviderStream(messages, role)` with `role` from payload (default `'chat'`). Responds per-chunk via `event.sender.send('chat-chunk', { requestId, text })` and final via `chat-response` / `chat-error`. All responses scoped to the sending webContents (safe for both chat window and lookup popup to use the same channel).
 - `chat-expand` (`ipcMain.on`) — streaming expand for inline frames. Same pattern as `chat-send`, responds via `chat-expand-chunk`.
 - `lookup-trigger-grow` (`ipcMain.on`) — lookup popup asks main to grow the window on first ask. Finds the session by `event.sender.id`, calls `animateGrowSession` + `sendToSession(..., 'lookup-grow')`.
-- `lookup-transfer` (`ipcMain.on`) — lookup popup sends its `ConversationState` to the chat window. Closes the lookup session, forwards state to main window via `chat-replace-conversation`, focuses the main window.
+- `lookup-transfer` (`ipcMain.on`) — lookup popup sends `{ state: ConversationState, conversationId?: string }`. Transforms screen context into a user turn via `buildScreenContextMessage`, saves the conversation record with `source: 'chat'`, then sends `{ state, conversationId, conversationTitle }` on `chat-replace-conversation` to the main window. Closes the lookup session afterward.
+
+**Conversation persistence handlers** (all `ipcMain.handle`):
+
+- `conversation-save` / `conversation-load` / `conversation-delete` — CRUD for individual `{userData}/conversations/{id}.json` files
+- `conversation-list` — returns `ConversationMeta[]` for all chat-source conversations, sorted by `updatedAt` desc
+- `conversation-load-most-recent` — loads the most recently updated chat conversation (for startup auto-load)
+- `conversation-list-unfed` — returns metadata for all conversations where `kbFed === false` (KB model integration point)
+- `conversation-kb-fed` — marks a conversation as fed to the KB model; if `source === 'lookup'`, also deletes it from disk
 
 **Lifecycle:**
 
@@ -218,6 +238,8 @@ Shared model and pure helpers that drive both the chat and lookup UIs:
 - `ExpandableSegment` — a segment of an assistant answer:
   - `{ kind: 'text', text }` — plain word/whitespace
   - `{ kind: 'expansion', expansionId, originalText, cachedText, error?, loading?, folded, segments[] }` — an inline expansion frame with recursive child segments
+- `ConversationRecord { id, title, createdAt, updatedAt, source, state, kbFed }` — persisted conversation with metadata
+- `ConversationMeta { id, title, createdAt, updatedAt, source, kbFed, turnCount }` — lightweight metadata for search (excludes `state`)
 
 **Pure helpers (no DOM, no React, no IPC):**
 
@@ -438,7 +460,18 @@ Exposes via `contextBridge`:
   lookupInputChanged(bool)   // Whether Ask field has text (guards blur-to-close)
   lookupClose()              // Close the popup
   lookupTriggerGrow()        // Ask main to animate window growth on first question
-  lookupTransferToChat(state)// Send ConversationState to main window, close lookup
+  lookupTransferToChat(state, conversationId?)
+                             // Send ConversationState to main window; optionally ties it to an
+                             // existing conversation record (for source:lookup → source:chat promotion)
+
+  // Conversation persistence
+  saveConversation(record)   // Persist a ConversationRecord to {userData}/conversations/{id}.json
+  loadConversation(id)       // Load a single conversation record (returns null if missing)
+  deleteConversation(id)     // Remove a conversation from disk (silent if missing)
+  listConversations()        // List metadata for all chat-source conversations (sorted by updatedAt desc)
+  loadMostRecentChat()       // Load the full record of the most recently updated chat conversation
+  listUnfedConversations()   // KB prep: list all conversations where kbFed === false
+  markConversationKbFed(id)  // KB prep: set kbFed = true; auto-deletes if source === 'lookup'
 
   // Chat streaming (correlated by requestId)
   chatSend({messages, requestId, role?})
@@ -447,7 +480,7 @@ Exposes via `contextBridge`:
   chatOnResponse(cb)         // {requestId, text} — returns unsub function
   chatOnError(cb)            // {requestId, error} — returns unsub function
   chatOnExpandChunk(cb)      // {requestId, text?, error?, done?} — returns unsub function
-  chatOnReplaceConversation(cb) // {ConversationState} — injected from lookup transfer
+  chatOnReplaceConversation(cb) // {state, conversationId, conversationTitle} — from lookup transfer
 }
 ```
 
@@ -464,7 +497,8 @@ Checks `window.location.search.includes('role=lookup')` to decide whether to ren
 **State:**
 
 - `view: 'home' | 'chat' | 'knowledge' | 'lookup-guide' | 'settings'` — which view is showing (default `'home'`)
-- `ConversationState` + streaming callbacks from `useChatStreaming()`
+- `ConversationState` + streaming callbacks from `useChatStreaming()`, plus `conversationId` and `loadConversation`
+- On mount, auto-loads the most recently updated chat conversation via `loadMostRecentChat` IPC
 
 **Behavior:**
 
@@ -489,32 +523,42 @@ Reimplements the inline `html.ts` popup as a React component, reusing the conver
 - **Paste handling**: on non-grown state, paste replaces context (`lookupPasteText`). On grown state, paste inserts into the ask field (image→OCR via `lookupOcrImage`).
 - **Grow**: first ask triggers `lookupTriggerGrow` which signals main to animate window growth. `lookupOnGrow` updates CSS height transitions and reveals the conversation area.
 - **Escape** closes the popup; **Enter** submits the ask (guarded by `contextReady`); **Ctrl+V** is intercepted for paste-into-context (pre-grown) or OCR-into-ask (post-grown).
-- **Transfer button**: "Send to chat" button in the header, enabled only when turns exist and no expansion is loading. Calls `lookupTransferToChat(state)`.
+- **Transfer button**: "Send to chat" button in the header, enabled only when turns exist and no expansion is loading. Calls `lookupTransferToChat(state, conversationId)` to promote the lookup conversation to a chat conversation on disk.
 - **Blur guard**: communicates `hasText` via `lookupInputChanged` (the main window's blur handler closes only when not grown + no text).
 
-### `hooks/useChatStreaming.ts` — Shared streaming hook (new)
+### `hooks/useChatStreaming.ts` — Shared streaming hook (updated)
 
 Used by both `App.tsx` (role='chat') and `LookupApp.tsx` (role='lookup').
 
-**Returns:** `{ state, loading, send, expand, fold, unfold, newChat }`
+**Returns:** `{ state, loading, contextReady, conversationId, conversationTitle, send, expand, fold, unfold, newChat, loadConversation, setState }`
 
 **Owns:**
 
 - `ConversationState` in `useState` — the full conversation model (context, turns, expansions)
+- `conversationId: string | null` — UUID of the current conversation (null until first send)
+- `conversationTitle: string` — auto-extracted from first user message (flatten markdown, truncate 60 chars)
 - `pendingRef` — a `Map<requestId, { kind, turnId, expansionId? }>` for correlating streaming responses
 - `expansionIdCounterRef` — per-conversation counter for unique expansion IDs
+- `conversationMetaRef` — ref mirroring id/title/createdAt for use inside stable effect closures
+- `stateRef` — ref mirroring current `ConversationState` for use in `loadConversation`/`newChat` pre-save
 
-**Lifecycle:** `useEffect` subscribes to the four `chatOn*` channels (returns cleanup unsubs). The subscribers dispatch by `requestId` to the correct pending request.
+**Lifecycle:**
 
-**`send(content)`:** Generates a `turnId` + `requestId`, appends user + empty-assistant turns, calls `chatSend`. On `chat-chunk`: updates the assistant turn's `content` (flat text). On `chat-response`: tokenizes into `segments`. On `chat-error`: marks with `error: true`. Handles `role` for lookup (grow-on-first-ask via `lookupTriggerGrow`).
+`useEffect` subscribes to the `chatOn*` channels (returns cleanup unsubs). The subscribers dispatch by `requestId` to the correct pending request.
 
-**`expand(turnId, selection, startIndex, endIndex, isNested, parentAnswer, parentExpansionId?, prompt?)`:** Generates `expansionId` + `requestId`, calls `insertExpansion` (pure model helper) to insert a loading expansion node, calls `buildExpandMessages` + `chatExpand`. The optional `prompt` parameter customises the expand direction ("elaborate on", "why", "how", etc.) — when omitted the default "Define..." instruction is used. On `chat-expand-chunk`: updates `cachedText` and tokenizes into child segments. On error: sets `loading: false, error: true`.
+**Auto-save:** On every completed response (`chatOnResponse`), expand completion (`chatOnExpandChunk.done`), fold, and unfold, the hook persists the full `ConversationRecord` to disk via `window.api.saveConversation`. The record's `createdAt` is set once on first send; `updatedAt` updates on every save. Empty conversations (no turns or all-blank) are not saved.
 
-**`fold(id)` / `unfold(id)`:** Pure local state flip — no IPC. Mirrors the lookup's `foldExpansion`/`reexpandExpansion` without the DOM cache (the model's `segments` tree IS the cache).
+**`send(content)`:** On first send, generates a UUID via `crypto.randomUUID()`, extracts a title from the user message, and stores it in `conversationMetaRef`. Then follows the existing send flow.
 
-**`newChat()`:** Clears state, resets pending requests, sets `expansionIdCounter` back to 1.
+**`expand(...)`:** Same as before; auto-save is handled by `chatOnExpandChunk`'s `done` listener.
 
-**Transfer listener:** the hook also subscribes to `chatOnReplaceConversation` (once, in the initial `useEffect`). On receipt, calls `setState(importedState)`, clears pending, and resets `expansionIdCounter` past the max imported id.
+**`fold(id)` / `unfold(id)`:** Toggles the collapsed state and auto-saves.
+
+**`newChat()`:** Saves the current conversation (if non-empty), resets conversationId/title/meta, clears state.
+
+**`loadConversation(id)`:** Saves the current conversation (if non-empty), loads the target record from disk via IPC, sets conversationId/title/state, resets the expansion counter past the max imported id.
+
+**Transfer listener:** `chatOnReplaceConversation` now receives `{ state, conversationId, conversationTitle }` — the main process already transformed lookup context into a user turn and persisted the record. The hook sets state directly, updates conversationId/title, and resets the expansion counter.
 
 ### `components/conversation/Conversation.tsx` — Shared conversation (new)
 
@@ -525,8 +569,9 @@ Renders the message list + composer + context menu. Key design decisions:
 - **Multi-word path**: iterates segments to find the text-boundary range.
 - **Cross-frame guard**: `findExpansionInSegments`/`findTextSelectionRange` ensure Expand is disabled when the selection crosses an expansion boundary.
 - **Composer**: identical to the old `ChatView`'s (textarea + send button + Enter/Shift+Enter).
-- **Props**: `state`, `loading`, `onSend`, `onNewChat`, `onExpand`, `onFold`, `onUnfold`.
-- **Toolbar**: "New chat" button at the top, same visual as the old ChatView.
+- **Props**: `state`, `loading`, `onSend`, `onNewChat`, `onExpand`, `onFold`, `onUnfold`, `onLoadConversation?`, `conversationId?`, `transferKey?`
+- **Toolbar**: "New chat" button + "Search" button (magnifying glass icon) that opens the `ConversationSearch` modal overlay. Only rendered when `hideToolbar` is falsy.
+- **Scroll behavior**: Auto-scrolls to bottom when new chunks arrive (if user is near bottom), on `transferKey` change (lookup transfer), and on `conversationId` change (search/load conversation switch).
 
 ### `components/conversation/Turn.tsx` — Single turn (new)
 
@@ -697,11 +742,23 @@ electron.vite.config.ts
 | KDE Plasma Wayland    | XDG GlobalShortcuts portal  | Screenshot portal (silent)     |
 | GNOME / Other Wayland | XDG GlobalShortcuts portal  | `desktopCapturer.getSources()` |
 
+## Major changes (2026-07-23 — conversation persistence + search)
+
+Conversations are now persisted to `{userData}/conversations/{id}.json` and survive app restarts. Key impacts:
+
+- **Persistence module** (`src/main/conversations.ts`): CRUD operations for `ConversationRecord` JSON files, with helpers for listing by source, loading the most recent chat, and KB model integration hooks (`markConversationKbFed`, `listUnfedConversations`).
+- **New IPC handlers**: 7 invoke channels for conversation CRUD (`conversation-save`, `-load`, `-delete`, `-list`, `-load-most-recent`, `-list-unfed`, `-kb-fed`) registered in `index.ts`.
+- **Auto-save**: `useChatStreaming` now saves on every completed response, expand completion, fold, and unfold. Title is auto-extracted from the first user message.
+- **`lookup-transfer` overhaul**: The main process handler now transforms screen context into a formatted user turn via `buildScreenContextMessage`, persists the conversation as `source: 'chat'`, and passes `{state, conversationId, conversationTitle}` on `chat-replace-conversation`. The renderer hook no longer prepends context — the main process handles it.
+- **Conversation search**: A "Search" button next to "New chat" opens a modal overlay (`ConversationSearch.tsx`) that performs client-side filtering by title. Keyboard-navigable with real-time results.
+- **Startup auto-load**: `App.tsx` loads the most recently updated chat conversation on mount via `loadMostRecentChat` IPC.
+- **KB prep channels**: `conversation-list-unfed` and `conversation-kb-fed` IPC channels exist for future KB maintenance model consumption. The `kb-fed` handler auto-deletes lookup-source conversations after marking.
+
 ## Major changes (2026-07-22 — streaming conversation + React lookup)
 
 The last commit replaced the lookup's inline `data:text/html` popup (965 lines of vanilla JS/CSS/html) with a React component (`LookupApp.tsx`) that reuses the chat's conversation components. Key architectural impacts:
 
-- **Unified conversation model**: `src/shared/conversation.ts` defines `ConversationState`, `Turn`, `ExpandableSegment` — a portable, DOM-range-free data model that both the chat and lookup windows operate on. This model is designed for future lookup→chat transfer (already wired: `lookupTransferToChat`).
+- **Unified conversation model**: `src/shared/conversation.ts` defines `ConversationState`, `Turn`, `ExpandableSegment` — a portable, DOM-range-free data model that both the chat and lookup windows operate on.
 - **Shared streaming IPC**: the old one-shot `send-message` handler was replaced by `chat-send` + `chat-expand` (both streaming, both `event.sender`-scoped, both passing an optional `role` discriminator). The `useChatStreaming` hook subscribes to the same channel family from either window.
 - **Ask/Expand moved from lookup handlers to shared IPC**: `handleLookupAsk` and `handleLookupExpand` in `handlers.ts` were deleted. Main handles send/expand through `index.ts` via the same `callProviderStream`, using `role: 'lookup'` for the lookup roleId. The grow-on-first-ask side effect was moved to a `lookup-trigger-grow` handler.
 - **Expand UI shared**: `ExpansionFrame.tsx`, `Turn.tsx`, `ContextMenu.tsx`, and `Conversation.tsx` render the same expandable segment tree for both chat and lookup. The CSS lives in `expand.css` (shared).
@@ -724,6 +781,7 @@ The last commit replaced the lookup's inline `data:text/html` popup (965 lines o
 | AI explanation popup (React, streaming)          | ✅ Complete                   |
 | Inline expandable frames (fold/unfold/nested)    | ✅ Complete                   |
 | lookup→chat transfer                             | ✅ Complete                   |
+| Conversation persistence (save/load/search)      | ✅ Complete                   |
 | Global hotkey (X11 + Wayland)                    | ✅ Complete                   |
 | Infinite recursive lookup                        | ✅ Complete                   |
 | Home dashboard (KB canvas)                       | ✅ Complete                   |

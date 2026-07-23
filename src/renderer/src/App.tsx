@@ -92,7 +92,7 @@ const ICONS: Record<string, React.JSX.Element> = {
 function App(): React.JSX.Element {
   const [view, setView] = useState<View>('home')
   const [transferKey, setTransferKey] = useState(0)
-  const { state, loading, send, expand, fold, unfold, newChat, loadConversation } =
+  const { state, loading, send, expand, fold, unfold, newChat, loadConversation, conversationId } =
     useChatStreaming({
       onReplaceConversation: () => {
         setView('chat')
@@ -159,6 +159,7 @@ function App(): React.JSX.Element {
             onSend={send}
             onNewChat={newChat}
             onLoadConversation={loadConversation}
+            conversationId={conversationId}
             onExpand={expand}
             onFold={fold}
             onUnfold={unfold}

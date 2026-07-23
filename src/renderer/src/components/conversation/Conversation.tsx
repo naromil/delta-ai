@@ -30,6 +30,7 @@ interface ConversationProps {
   onUnfold: (id: number) => void
   hideToolbar?: boolean
   transferKey?: number
+  conversationId?: string | null
 }
 
 function Conversation({
@@ -42,7 +43,8 @@ function Conversation({
   onUnfold,
   onLoadConversation,
   hideToolbar = false,
-  transferKey
+  transferKey,
+  conversationId
 }: ConversationProps): React.JSX.Element {
   const [input, setInput] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -62,6 +64,12 @@ function Conversation({
     if (!el) return
     el.scrollTop = el.scrollHeight
   }, [transferKey])
+
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+  }, [conversationId])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
     if (e.key === 'Enter' && !e.shiftKey) {

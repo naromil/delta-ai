@@ -86,6 +86,23 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
     stateRef.current = state
   }, [state])
 
+  const saveCurrentState = useCallback((s: ConversationState): void => {
+    const meta = conversationMetaRef.current
+    if (!meta) return
+    if (s.turns.length === 0 || s.turns.every((t) => t.content.trim() === '')) return
+    const record: ConversationRecord = {
+      id: meta.id,
+      title: meta.title,
+      createdAt: meta.createdAt,
+      updatedAt: new Date().toISOString(),
+      source: role === 'lookup' ? 'lookup' : 'chat',
+      state: s,
+      kbFed: false
+    }
+    window.api.saveConversation(record)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   useEffect(() => {
     const unsubs: Array<() => void> = []
 
@@ -119,19 +136,7 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
             segments: tokenize(data.text)
           }
           const newState = { ...prev, turns }
-          const meta = conversationMetaRef.current
-          if (meta) {
-            const record: ConversationRecord = {
-              id: meta.id,
-              title: meta.title,
-              createdAt: meta.createdAt,
-              updatedAt: new Date().toISOString(),
-              source: role === 'lookup' ? 'lookup' : 'chat',
-              state: newState,
-              kbFed: false
-            }
-            window.api.saveConversation(record)
-          }
+          saveCurrentState(newState)
           return newState
         })
         pendingRef.current.delete(data.requestId)
@@ -173,6 +178,7 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
             })
           }))
           pendingRef.current.delete(data.requestId)
+          setTimeout(() => saveCurrentState(stateRef.current), 0)
           return
         }
 
@@ -190,6 +196,7 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
 
         if (data.done) {
           pendingRef.current.delete(data.requestId)
+          setTimeout(() => saveCurrentState(stateRef.current), 0)
         }
       })
     )
@@ -339,48 +346,54 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
     [role]
   )
 
-  const fold = useCallback((expansionId: number) => {
-    setState((prev) => ({
-      ...prev,
-      turns: toggleExpansionFoldedInTurns(prev.turns, expansionId, true)
-    }))
-  }, [])
+  const fold = useCallback(
+    (expansionId: number) => {
+      setState((prev) => {
+        const newState = {
+          ...prev,
+          turns: toggleExpansionFoldedInTurns(prev.turns, expansionId, true)
+        }
+        setTimeout(() => saveCurrentState(newState), 0)
+        return newState
+      })
+    },
+    [saveCurrentState]
+  )
 
-  const unfold = useCallback((expansionId: number) => {
-    setState((prev) => ({
-      ...prev,
-      turns: toggleExpansionFoldedInTurns(prev.turns, expansionId, false)
-    }))
-  }, [])
+  const unfold = useCallback(
+    (expansionId: number) => {
+      setState((prev) => {
+        const newState = {
+          ...prev,
+          turns: toggleExpansionFoldedInTurns(prev.turns, expansionId, false)
+        }
+        setTimeout(() => saveCurrentState(newState), 0)
+        return newState
+      })
+    },
+    [saveCurrentState]
+  )
 
   const newChat = useCallback(() => {
-    const meta = conversationMetaRef.current
     const currentState = stateRef.current
-    if (meta && currentState.turns.length > 0) {
-      const record: ConversationRecord = {
-        id: meta.id,
-        title: meta.title,
-        createdAt: meta.createdAt,
-        updatedAt: new Date().toISOString(),
-        source: role === 'lookup' ? 'lookup' : 'chat',
-        state: currentState,
-        kbFed: false
-      }
-      window.api.saveConversation(record)
-    }
+    saveCurrentState(currentState)
     setState({ context: '', turns: [] })
     setLoading(false)
     pendingRef.current.clear()
     setConversationId(null)
     setConversationTitle('')
     conversationMetaRef.current = null
-  }, [role])
+  }, [saveCurrentState])
 
   const loadConversation = useCallback(
     async (id: string) => {
-      const meta = conversationMetaRef.current
       const currentState = stateRef.current
-      if (meta && currentState.turns.length > 0) {
+      const meta = conversationMetaRef.current
+      if (
+        meta &&
+        currentState.turns.length > 0 &&
+        currentState.turns.some((t) => t.content.trim() !== '')
+      ) {
         const record: ConversationRecord = {
           id: meta.id,
           title: meta.title,

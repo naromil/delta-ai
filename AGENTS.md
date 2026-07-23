@@ -48,9 +48,9 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | `chat-error`                              | Main → Renderer | Error for a chat-send                                                         |
 | `chat-expand`                             | Renderer → Main | Request an inline word-expansion stream                                       |
 | `chat-expand-chunk`                       | Main → Renderer | Streaming chunks for an expand request (keyed by `requestId`)                 |
-| `chat-replace-conversation`               | Main → Renderer | Hydrate a transferred ConversationState into the chat window                  |
+| `chat-replace-conversation`               | Main → Renderer | Hydrate transferred state + conversationId/title into the chat window         |
 | `lookup-trigger-grow`                     | Lookup → Main   | On first ask, signal main to animate window growth                            |
-| `lookup-transfer`                         | Lookup → Main   | Send ConversationState to chat, close lookup                                  |
+| `lookup-transfer`                         | Lookup → Main   | Send `{state, conversationId?}` to chat; main transforms context, persists    |
 | `ai-error`                                | Main → Lookup   | Capture or OCR error message (sent from lookup.ts & window.ts)                |
 | `lookup-context`                          | Main → Lookup   | OCR context state (`{status, text, hint}`)                                    |
 | `lookup-grow`                             | Main → Lookup   | (`width, height`) signal grow animation on the renderer side                  |
@@ -61,6 +61,10 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | `lookup-close`                            | Lookup → Main   | Close the lookup window                                                       |
 | `load-model-config` / `save-model-config` | Renderer ↔ Main | Model config CRUD                                                             |
 | `load-settings` / `save-settings`         | Renderer ↔ Main | App settings CRUD                                                             |
+| `conversation-save` / `-load` / `-delete` | Renderer → Main | Conversation CRUD to `{userData}/conversations/`                              |
+| `conversation-list`                       | Renderer → Main | List chat-source conversations (metadata sorted by updatedAt desc)            |
+| `conversation-load-most-recent`           | Renderer → Main | Load most recently updated chat conversation (startup auto-load)              |
+| `conversation-list-unfed` / `-kb-fed`     | Renderer → Main | KB model integration: list unfed; mark fed (+ auto-delete lookup source)      |
 
 #### Module map
 
@@ -78,6 +82,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | Module              | Path                          | Role                                                                                                     |
 | ------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------- |
 | App lifecycle       | `index.ts`                    | Main window, tray, streaming IPC handlers (chat-send, chat-expand, lookup-trigger-grow, lookup-transfer) |
+| Conversation store  | `conversations.ts`            | Persistence: CRUD on `{userData}/conversations/{id}.json`; list, search, KB-fed marking                  |
 | Main window ref     | `main-window.ts`              | Module-scoped getter/setter for BrowserWindow ref (used by transfer handler)                             |
 | Config              | `config.ts`                   | Persistence, hotkey registry, Wayland detection                                                          |
 | Provider dispatch   | `provider.ts`                 | `callProvider` + `callProviderStream` (resolves role → connection → backend)                             |
@@ -104,6 +109,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | ExpansionFrame | `components/conversation/ExpansionFrame.tsx`             | Inline expandable frames, folded pills, nested children                      |
 | ContextMenu    | `components/conversation/ContextMenu.tsx`                | Right-click Expand / Expand on… / Copy / Select All                          |
 | ExpandPrompt   | `components/conversation/ExpandPrompt.tsx`               | Floating inline input for custom expand direction ("Expand on…")             |
+| Search         | `components/conversation/ConversationSearch.tsx`         | Modal overlay for searching + loading past conversations by title            |
 | Settings       | `views/settings/Settings.tsx`                            | 3-tab settings orchestrator                                                  |
 | Views          | `views/home/`, `views/knowledge/`, `views/lookup-guide/` | Dashboard and placeholder views                                              |
 
@@ -125,7 +131,8 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | KDE Wayland silent screenshot         | `services/screen-capture.ts`                                                         |
 | Add a new IPC channel                 | preload `index.ts` + `.d.ts`, then main `index.ts`                                   |
 | Change the chat streaming hook        | `hooks/useChatStreaming.ts`                                                          |
-| Renderer chat UI                      | `App.tsx`, `Conversation.tsx`, `Turn.tsx`                                            |
+| Persist or load conversations          | `conversations.ts` (main) + `useChatStreaming.ts` (renderer)                         |
+| Renderer chat UI                      | `App.tsx`, `Conversation.tsx`, `Turn.tsx`, `ConversationSearch.tsx`                  |
 | Provider config form                  | `components/settings/models/ModelsTab.tsx` (+ `RoleRow.tsx`, `ConnectionCard.tsx`)   |
 
 #### Important conventions
@@ -153,6 +160,9 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   X11/macOS/Windows and non-KDE Wayland.
 - **Config files** live under `{userData}/config/` (`providers.json`, `settings.json`).
   Always go through `config.ts` helpers; call `ensureConfigDir()` before writing.
+- **Conversation files** live under `{userData}/conversations/` (`{id}.json`).
+  Always go through `conversations.ts` helpers; `ensureConversationsDir()` is called
+  automatically by save/list operations.
 - **Hotkey registry** is in `config.ts:registerHotkey`. It auto-routes through the XDG
   portal on Wayland. When `save-settings` changes the hotkey, it re-registers by calling
   `registerHotkey` with `handleHotkeyPressed` — keep that callback wiring intact.
@@ -175,8 +185,15 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   live DOM. The `ExpansionFrame` React component re-renders from the pure data. No
   `expansionCache` with detached frame elements — the segment tree IS the cache.
 - **Transfer (lookup → chat) marshals the full `ConversationState`** via
-  `lookup-transfer` IPC. The chat hook hydrates it into its `useState`, resets the
-  `expansionIdCounter` past the max imported id. No DOM serialization needed.
+  `lookup-transfer` IPC. The main process transforms screen context into a user turn
+  via `buildScreenContextMessage`, persists the conversation as `source: 'chat'`,
+  and sends `{state, conversationId, conversationTitle}` to the chat window. The
+  chat hook hydrates it into its `useState`, resets the `expansionIdCounter` past
+  the   max imported id. No DOM serialization needed.
+- **Conversation auto-save fires on response completion, expand done, fold, and unfold.**
+  `useChatStreaming.saveCurrentState` writes the full `ConversationRecord` to disk with an
+  updated `updatedAt` timestamp. Empty conversations (no turns or all-blank) are never saved.
+  The record's `createdAt` is set once on the first send and never changed afterward.
 - **Inline expansions use index-based anchoring, not live DOM Range.** Right-click
   computes `(startIndex, endIndex)` against the `ExpandableSegment[]` at event time,
   snapshots the indices, and closes over them. No `Range` objects survive into React state.
