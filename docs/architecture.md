@@ -1,7 +1,7 @@
 # Delta AI — Architecture
 
 > Auto-generated from source as built. Update after major changes to provide essential context about the project.
-> Last updated: 2026-07-22
+> Last updated: 2026-07-23
 
 ## High-level stack
 
@@ -26,7 +26,10 @@ src/
     models.ts                 # Shared types + provider/role registries (no runtime deps)
     conversation.ts           # ConversationState model + helpers (tokenize, insertExpansion,
                               #   updateExpansionInSegments, findExpansionParent, serializeForChat, etc.)
-    expand-prompt.ts          # Shared buildExpandMessages helper (constructs API messages for expand)
+    expand-prompt.ts          # Shared buildExpandMessages helper (constructs API messages for expand,
+                              #   supports optional prompt for custom direction)
+    prompts.ts                # All LLM-facing prompt strings: system prompts (CHAT/LOOKUP), context
+                              #   template, expand instructions (default + prompted), lookup defaults
   main/
     index.ts                  # App lifecycle, main window, streaming IPC handlers (chat-send,
                               #   chat-expand, lookup-trigger-grow, lookup-transfer)
@@ -87,7 +90,8 @@ src/
           Turn.tsx            # Single message turn with avatars, loading dots, segment rendering
           ExpansionFrame.tsx  # Inline expansion frames: folded pill vs. expanded frame with
                               #   child segments, fold button
-          ContextMenu.tsx     # Custom right-click menu: Expand, Copy, Select All
+          ContextMenu.tsx     # Custom right-click menu: Expand, Expand on…, Copy, Select All
+          ExpandPrompt.tsx    # Floating inline input for "Expand on…" custom direction
         settings/
           HotkeyInput.tsx     # Hotkey capture input with keyboard combo rendering
           models/
@@ -145,8 +149,10 @@ Shared (pure types + helpers)  src/shared/
     ├── conversation.ts     ConversationState, Turn, ExpandableSegment types; pure helpers:
     │                          tokenize, flattenMarkdown, insertExpansion, serializeForChat,
     │                          findExpansionParent, updateExpansionInSegments, etc.
-    └── expand-prompt.ts    buildExpandMessages({ answer, selection }) — constructs API messages
-    ▼
+    ├── expand-prompt.ts    buildExpandMessages({ answer, selection, prompt? }) — constructs
+    │                          API messages for expand requests (supports custom direction)
+    └── prompts.ts           All LLM-facing prompt strings: system prompts, context template,
+                             lookup default, expand default + prompted instructions
 OS  (fs {userData}/config/, Google Gemini API / OpenAI-compatible endpoints,
       tesseract WASM, D-Bus portals, desktopCapturer)
 ```
@@ -227,7 +233,26 @@ Shared model and pure helpers that drive both the chat and lookup UIs:
 
 ### `src/shared/expand-prompt.ts` — Expand prompt builder (new)
 
-`buildExpandMessages({ answer, selection })` — shared helper that builds the API messages for an inline expansion request. Used by both the chat hook and (previously) the lookup `handleLookupExpand`. Prompt: "Define `{selection}` from the text above" with guardrails against restating the word.
+`buildExpandMessages({ answer, selection, prompt? })` — shared helper that builds the API messages
+for an inline expansion request. When `prompt` is provided, uses `buildExpandPromptedInstruction`
+(a user-customisable verb like "elaborate on"); otherwise uses `buildExpandUserInstruction`
+("Define `{selection}` from the text above") with guardrails against restating the word.
+
+### `src/shared/prompts.ts` — Unified prompts file (new)
+
+All LLM-facing prompt/instruction strings are defined here, organised by section:
+
+- **System prompts** — `LOOKUP_SYSTEM_PROMPT` and `CHAT_SYSTEM_PROMPT` with `getSystemPrompt(role)` selector
+- **Context injection** — `buildScreenContextMessage(context)` wraps OCR text into a user message
+- **Lookup defaults** — `LOOKUP_DEFAULT_QUERY` ("summarize") used when the user submits an empty ask
+- **Expand instructions** — `buildExpandUserInstruction(selection)` for the default "Define..." expand;
+  `buildExpandPromptedInstruction(selection, prompt)` for custom-direction expands;
+  `EXPAND_DEFAULT_PROMPT` ("elaborate on") used when the prompt input is submitted empty
+
+Constraints are split into shared (restating prohibition, concise output) and define-specific
+(no "refers to", bare phrase, examples) so the prompted variant uses only the shared ones.
+
+Pure module — no runtime deps. Imported by `expand-prompt.ts`, `conversation.ts`, and `useChatStreaming.ts`.
 
 ### `models/registries.ts` — Main-process re-export
 
@@ -483,7 +508,7 @@ Used by both `App.tsx` (role='chat') and `LookupApp.tsx` (role='lookup').
 
 **`send(content)`:** Generates a `turnId` + `requestId`, appends user + empty-assistant turns, calls `chatSend`. On `chat-chunk`: updates the assistant turn's `content` (flat text). On `chat-response`: tokenizes into `segments`. On `chat-error`: marks with `error: true`. Handles `role` for lookup (grow-on-first-ask via `lookupTriggerGrow`).
 
-**`expand(turnId, selection, startIndex, endIndex, isNested, parentAnswer)`:** Generates `expansionId` + `requestId`, calls `insertExpansion` (pure model helper) to insert a loading expansion node, calls `buildExpandMessages` + `chatExpand`. On `chat-expand-chunk`: updates `cachedText` and tokenizes into child segments. On error: sets `loading: false, error: true`.
+**`expand(turnId, selection, startIndex, endIndex, isNested, parentAnswer, parentExpansionId?, prompt?)`:** Generates `expansionId` + `requestId`, calls `insertExpansion` (pure model helper) to insert a loading expansion node, calls `buildExpandMessages` + `chatExpand`. The optional `prompt` parameter customises the expand direction ("elaborate on", "why", "how", etc.) — when omitted the default "Define..." instruction is used. On `chat-expand-chunk`: updates `cachedText` and tokenizes into child segments. On error: sets `loading: false, error: true`.
 
 **`fold(id)` / `unfold(id)`:** Pure local state flip — no IPC. Mirrors the lookup's `foldExpansion`/`reexpandExpansion` without the DOM cache (the model's `segments` tree IS the cache).
 
@@ -518,7 +543,16 @@ Port of `html.ts`'s frame/pill system:
 
 ### `components/conversation/ContextMenu.tsx` — Custom context menu (new)
 
-Renders `#ctxMenu` with Expand (possibly disabled), Copy, Select All. Hides on click-outside or Escape. Expand action calls the snapshot-closed-over `onExpand` callback. Copy restores the cached range before `execCommand('copy')`.
+Renders `#ctxMenu` with Expand, Expand on…, Copy, Select All. Hides on click-outside or
+Escape. Expand action calls the snapshot-closed-over `onExpand` callback.
+"Expand on…" calls `onExpandPrompted` which opens the `ExpandPrompt` input.
+Copy restores the cached range before `execCommand('copy')`.
+
+### `components/conversation/ExpandPrompt.tsx` — Custom expand direction input (new)
+
+Floating `<input>` at the right-click position, auto-focused on mount. Submits on Enter
+(empty → "elaborate on"), closes on Escape or click-outside. The submitted value flows
+through `useChatStreaming.expand(prompt?)` → `buildExpandPromptedInstruction`.
 
 ### `views/home/HomeView.tsx` — Home dashboard
 
@@ -579,6 +613,7 @@ base.css  (imported by main.tsx)
 
 - `.word`, `.frame.expanded`, `.frame.loading`, `.frame.error`, `.frame-inner`, `.fold-toggle`, `.queried`
 - `#ctxMenu` with `.item`, `.disabled`, `.sep`
+- `#expandPrompt` with `.expand-prompt-input` — the floating custom-expand-direction input
 
 Design tokens are declared as CSS custom properties in `:root` inside `base.css` and duplicated in `lookup.css`:
 

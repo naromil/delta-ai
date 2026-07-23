@@ -43,7 +43,8 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
     endIndex: number,
     isNested: boolean,
     parentAnswer: string,
-    parentExpansionId?: number
+    parentExpansionId?: number,
+    prompt?: string
   ) => void
   fold: (id: number) => void
   unfold: (id: number) => void
@@ -241,7 +242,8 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
       endIndex: number,
       _isNested: boolean,
       parentAnswer: string,
-      parentExpansionId?: number
+      parentExpansionId?: number,
+      prompt?: string
     ) => {
       const expansionId = expansionIdCounterRef.current++
       const requestId = generateRequestId()
@@ -267,7 +269,7 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
 
         pendingRef.current.set(requestId, { kind: 'expand', turnId, expansionId })
 
-        const expandMessages = buildExpandMessages({ answer: parentAnswer, selection })
+        const expandMessages = buildExpandMessages({ answer: parentAnswer, selection, prompt })
         const allMessages = [
           {
             role: 'system' as const,

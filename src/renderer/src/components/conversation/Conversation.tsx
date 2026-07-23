@@ -4,6 +4,8 @@ import { findTextSelectionRange } from '../../../../shared/conversation'
 import Turn from './Turn'
 import ContextMenu from './ContextMenu'
 import type { ContextMenuState } from './ContextMenu'
+import ExpandPrompt from './ExpandPrompt'
+import type { ExpandPromptState } from './ExpandPrompt'
 
 interface ConversationProps {
   state: ConversationState
@@ -17,7 +19,8 @@ interface ConversationProps {
     endIndex: number,
     isNested: boolean,
     parentAnswer: string,
-    parentExpansionId?: number
+    parentExpansionId?: number,
+    prompt?: string
   ) => void
   onFold: (id: number) => void
   onUnfold: (id: number) => void
@@ -37,6 +40,7 @@ function Conversation({
   const [input, setInput] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null)
+  const [expandPrompt, setExpandPrompt] = useState<ExpandPromptState | null>(null)
 
   useEffect(() => {
     const el = scrollRef.current
@@ -81,6 +85,7 @@ function Conversation({
           y: e.clientY,
           canExpand: false,
           onExpand: () => {},
+          onExpandPrompted: () => {},
           onCopy: () => {
             const sel_ = window.getSelection()
             if (sel_ && sel_.rangeCount > 0) {
@@ -175,6 +180,25 @@ function Conversation({
               )
             }
           },
+          onExpandPrompted: () => {
+            if (canExpand && startIdx >= 0) {
+              setExpandPrompt({
+                x: e.clientX,
+                y: e.clientY,
+                onSubmit: (prompt) =>
+                  onExpand(
+                    turnId,
+                    cachedSelection,
+                    startIdx,
+                    endIdx,
+                    !!frameEl,
+                    parentAnswer,
+                    parentExpansionId,
+                    prompt
+                  )
+              })
+            }
+          },
           onCopy: () => {
             const sel_ = window.getSelection()
             if (cachedRange) {
@@ -238,6 +262,25 @@ function Conversation({
                     onExpand(turnId, wordText, childIdx, childIdx + 1, true, parentAnswer, parentId)
                   }
                 },
+                onExpandPrompted: () => {
+                  if (childIdx >= 0) {
+                    setExpandPrompt({
+                      x: e.clientX,
+                      y: e.clientY,
+                      onSubmit: (prompt) =>
+                        onExpand(
+                          turnId,
+                          wordText,
+                          childIdx,
+                          childIdx + 1,
+                          true,
+                          parentAnswer,
+                          parentId,
+                          prompt
+                        )
+                    })
+                  }
+                },
                 onCopy: () => {
                   const sel_ = window.getSelection()
                   sel_?.removeAllRanges()
@@ -265,30 +308,59 @@ function Conversation({
             const segIdx = turn.segments[segmentIndex]?.kind === 'text' ? segmentIndex : -1
             const canExpand = segIdx >= 0
 
+            let isNested = false
+            let parentAnswer = ''
+            let parentExpansionId: number | undefined
+
+            const frameEl = (e.target as HTMLElement).closest(
+              '[data-expansion-id]'
+            ) as HTMLElement | null
+            if (frameEl) {
+              const parentId = Number(frameEl.dataset.expansionId)
+              const parentSeg = findExpansionInSegments(turn.segments!, parentId)
+              if (parentSeg) {
+                isNested = true
+                parentAnswer = parentSeg.cachedText || parentSeg.originalText || ''
+                parentExpansionId = parentId
+              }
+            } else {
+              parentAnswer = turn.content
+            }
+
             setCtxMenu({
               x: e.clientX,
               y: e.clientY,
               canExpand,
               onExpand: () => {
                 if (canExpand && segIdx >= 0) {
-                  let isNested = false
-                  let parentAnswer = ''
-
-                  const frameEl = (e.target as HTMLElement).closest(
-                    '[data-expansion-id]'
-                  ) as HTMLElement | null
-                  if (frameEl) {
-                    const parentId = Number(frameEl.dataset.expansionId)
-                    const parentSeg = findExpansionInSegments(turn.segments!, parentId)
-                    if (parentSeg) {
-                      isNested = true
-                      parentAnswer = parentSeg.cachedText || parentSeg.originalText || ''
-                    }
-                  } else {
-                    parentAnswer = turn.content
-                  }
-
-                  onExpand(turnId, wordText, segIdx, segIdx + 1, isNested, parentAnswer)
+                  onExpand(
+                    turnId,
+                    wordText,
+                    segIdx,
+                    segIdx + 1,
+                    isNested,
+                    parentAnswer,
+                    parentExpansionId
+                  )
+                }
+              },
+              onExpandPrompted: () => {
+                if (canExpand && segIdx >= 0) {
+                  setExpandPrompt({
+                    x: e.clientX,
+                    y: e.clientY,
+                    onSubmit: (prompt) =>
+                      onExpand(
+                        turnId,
+                        wordText,
+                        segIdx,
+                        segIdx + 1,
+                        isNested,
+                        parentAnswer,
+                        parentExpansionId,
+                        prompt
+                      )
+                  })
                 }
               },
               onCopy: () => {
@@ -322,6 +394,10 @@ function Conversation({
 
   const closeContextMenu = useCallback(() => {
     setCtxMenu(null)
+  }, [])
+
+  const closeExpandPrompt = useCallback(() => {
+    setExpandPrompt(null)
   }, [])
 
   const visibleTurns = state.turns.filter(
@@ -398,6 +474,7 @@ function Conversation({
         <p className="composer-hint">Delta AI can make mistakes. Check important info.</p>
       </div>
       <ContextMenu state={ctxMenu} onClose={closeContextMenu} />
+      <ExpandPrompt state={expandPrompt} onClose={closeExpandPrompt} />
     </main>
   )
 }

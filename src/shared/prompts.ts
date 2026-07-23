@@ -31,14 +31,36 @@ export const LOOKUP_DEFAULT_QUERY = 'summarize'
 
 export const ANSWER_FALLBACK = '(empty answer)'
 
+export const EXPAND_DEFAULT_PROMPT = 'elaborate on'
+
+const EXPAND_SHARED_CONSTRAINTS = [
+  'Do NOT repeat the word itself or re-state the sentence it appears in.',
+  'Keep it to at most two short phrases. Respond in inline text only.'
+]
+
+const EXPAND_DEFINE_CONSTRAINTS = [
+  'Do NOT use phrases like "refers to" or "is" that introduce the word.',
+  'Output just the definition — a bare phrase or noun phrase.',
+  'Example good output for "HKUMed": Li Ka Shing Faculty of Medicine at the University of Hong Kong',
+  'Example bad output: "HKUMed" refers to the Li Ka Shing Faculty of Medicine...'
+]
+
 export function buildExpandUserInstruction(selection: string): string {
   return [
     `Define "${selection}" from the text above.`,
-    'Do NOT repeat the word itself or re-state the sentence it appears in.',
-    'Do NOT use phrases like "refers to" or "is" that introduce the word.',
-    'Output just the definition — a bare phrase or noun phrase.',
-    'Example good output for "HKUMed": Li Ka Shing Faculty of Medicine at the University of Hong Kong',
-    'Example bad output: "HKUMed" refers to the Li Ka Shing Faculty of Medicine...',
-    'Keep it to at most two short phrases. Respond in inline text only.'
+    ...EXPAND_SHARED_CONSTRAINTS,
+    ...EXPAND_DEFINE_CONSTRAINTS
   ].join(' ')
+}
+
+export function buildExpandPromptedInstruction(selection: string, prompt: string): string {
+  const verb = prompt.trim() || EXPAND_DEFAULT_PROMPT
+  return [
+    `${capitalizeFirst(verb)} "${selection}" from the text above.`,
+    ...EXPAND_SHARED_CONSTRAINTS
+  ].join(' ')
+}
+
+function capitalizeFirst(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1)
 }

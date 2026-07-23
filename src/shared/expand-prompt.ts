@@ -1,13 +1,18 @@
 import type { ProviderMessage } from './conversation'
-import { ANSWER_FALLBACK, buildExpandUserInstruction } from './prompts'
+import {
+  ANSWER_FALLBACK,
+  buildExpandUserInstruction,
+  buildExpandPromptedInstruction
+} from './prompts'
 
 export interface BuildExpandMessagesInput {
   answer: string
   selection: string
+  prompt?: string
 }
 
 export function buildExpandMessages(input: BuildExpandMessagesInput): ProviderMessage[] {
-  const { answer, selection } = input
+  const { answer, selection, prompt } = input
   const messages: ProviderMessage[] = []
 
   messages.push({
@@ -16,7 +21,10 @@ export function buildExpandMessages(input: BuildExpandMessagesInput): ProviderMe
   })
   messages.push({
     role: 'user',
-    content: buildExpandUserInstruction(selection)
+    content:
+      prompt !== undefined
+        ? buildExpandPromptedInstruction(selection, prompt)
+        : buildExpandUserInstruction(selection)
   })
 
   return messages

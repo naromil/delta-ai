@@ -131,3 +131,33 @@
   background: var(--border-strong);
   margin: 4px 0;
 }
+
+/* Expand-on prompt input */
+#expandPrompt {
+  position: fixed;
+  z-index: 1000;
+  background: var(--surface-2);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-2);
+  padding: 6px 10px;
+  display: none;
+}
+
+#expandPrompt.visible {
+  display: block;
+}
+
+.expand-prompt-input {
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-1);
+  font-size: 13px;
+  font-family: inherit;
+  min-width: 200px;
+}
+
+.expand-prompt-input::placeholder {
+  color: var(--text-muted);
+}

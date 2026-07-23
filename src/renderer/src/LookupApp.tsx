@@ -6,6 +6,8 @@ import type { ContextMenuState } from './components/conversation/ContextMenu'
 import type { ExpandableSegment } from '../../shared/conversation'
 import { findTextSelectionRange } from '../../shared/conversation'
 import { LOOKUP_DEFAULT_QUERY } from '../../shared/prompts'
+import ExpandPrompt from './components/conversation/ExpandPrompt'
+import type { ExpandPromptState } from './components/conversation/ExpandPrompt'
 
 function findExpansionInSegments(
   segments: ExpandableSegment[],
@@ -46,6 +48,7 @@ function LookupApp(): React.JSX.Element {
   const [ocrProcessing, setOcrProcessing] = useState(false)
   const [input, setInput] = useState('')
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null)
+  const [expandPrompt, setExpandPrompt] = useState<ExpandPromptState | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const askRef = useRef<HTMLInputElement>(null)
@@ -128,13 +131,17 @@ function LookupApp(): React.JSX.Element {
           setCtxMenu(null)
           return
         }
+        if (expandPrompt) {
+          setExpandPrompt(null)
+          return
+        }
         e.preventDefault()
         window.api.lookupClose()
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [ctxMenu])
+  }, [ctxMenu, expandPrompt])
 
   /* ---- Paste ---- */
   useEffect(() => {
@@ -245,6 +252,7 @@ function LookupApp(): React.JSX.Element {
           y: e.clientY,
           canExpand: false,
           onExpand: () => {},
+          onExpandPrompted: () => {},
           onCopy: () => {
             const sel_ = window.getSelection()
             if (sel_ && sel_.rangeCount > 0) {
@@ -341,6 +349,25 @@ function LookupApp(): React.JSX.Element {
               )
             }
           },
+          onExpandPrompted: () => {
+            if (canExpand && startIdx >= 0) {
+              setExpandPrompt({
+                x: e.clientX,
+                y: e.clientY,
+                onSubmit: (prompt) =>
+                  expand(
+                    turnId,
+                    cachedSelection,
+                    startIdx,
+                    endIdx,
+                    !!frameEl,
+                    parentAnswer,
+                    parentExpansionId,
+                    prompt
+                  )
+              })
+            }
+          },
           onCopy: () => {
             const sel_ = window.getSelection()
             if (cachedRange) {
@@ -409,6 +436,25 @@ function LookupApp(): React.JSX.Element {
                     expand(turnId, wordText, childIdx, childIdx + 1, true, parentAnswer, parentId)
                   }
                 },
+                onExpandPrompted: () => {
+                  if (childIdx >= 0) {
+                    setExpandPrompt({
+                      x: e.clientX,
+                      y: e.clientY,
+                      onSubmit: (prompt) =>
+                        expand(
+                          turnId,
+                          wordText,
+                          childIdx,
+                          childIdx + 1,
+                          true,
+                          parentAnswer,
+                          parentId,
+                          prompt
+                        )
+                    })
+                  }
+                },
                 onCopy: () => {
                   const sel_ = window.getSelection()
                   sel_?.removeAllRanges()
@@ -436,30 +482,59 @@ function LookupApp(): React.JSX.Element {
             const segIdx = turn.segments[segmentIndex]?.kind === 'text' ? segmentIndex : -1
             const canExpand = segIdx >= 0
 
+            let isNested = false
+            let parentAnswer = ''
+            let parentExpansionId: number | undefined
+
+            const frameEl = (e.target as HTMLElement).closest(
+              '[data-expansion-id]'
+            ) as HTMLElement | null
+            if (frameEl) {
+              const parentId = Number(frameEl.dataset.expansionId)
+              const parentSeg = findExpansionInSegments(turn.segments!, parentId)
+              if (parentSeg) {
+                isNested = true
+                parentAnswer = parentSeg.cachedText || parentSeg.originalText || ''
+                parentExpansionId = parentId
+              }
+            } else {
+              parentAnswer = turn.content
+            }
+
             setCtxMenu({
               x: e.clientX,
               y: e.clientY,
               canExpand,
               onExpand: () => {
                 if (canExpand && segIdx >= 0) {
-                  let isNested = false
-                  let parentAnswer = ''
-
-                  const frameEl = (e.target as HTMLElement).closest(
-                    '[data-expansion-id]'
-                  ) as HTMLElement | null
-                  if (frameEl) {
-                    const parentId = Number(frameEl.dataset.expansionId)
-                    const parentSeg = findExpansionInSegments(turn.segments!, parentId)
-                    if (parentSeg) {
-                      isNested = true
-                      parentAnswer = parentSeg.cachedText || parentSeg.originalText || ''
-                    }
-                  } else {
-                    parentAnswer = turn.content
-                  }
-
-                  expand(turnId, wordText, segIdx, segIdx + 1, isNested, parentAnswer)
+                  expand(
+                    turnId,
+                    wordText,
+                    segIdx,
+                    segIdx + 1,
+                    isNested,
+                    parentAnswer,
+                    parentExpansionId
+                  )
+                }
+              },
+              onExpandPrompted: () => {
+                if (canExpand && segIdx >= 0) {
+                  setExpandPrompt({
+                    x: e.clientX,
+                    y: e.clientY,
+                    onSubmit: (prompt) =>
+                      expand(
+                        turnId,
+                        wordText,
+                        segIdx,
+                        segIdx + 1,
+                        isNested,
+                        parentAnswer,
+                        parentExpansionId,
+                        prompt
+                      )
+                  })
                 }
               },
               onCopy: () => {
@@ -497,6 +572,10 @@ function LookupApp(): React.JSX.Element {
   }, [state])
 
   const isTransferDisabled = state.turns.length === 0 || loading
+
+  const closeExpandPrompt = useCallback(() => {
+    setExpandPrompt(null)
+  }, [])
 
   /* ---- Visible turns (skip empty turns unless loading) ---- */
   const visibleTurns = state.turns.filter(
@@ -570,6 +649,7 @@ function LookupApp(): React.JSX.Element {
         </div>
       </div>
       <ContextMenu state={ctxMenu} onClose={() => setCtxMenu(null)} />
+      <ExpandPrompt state={expandPrompt} onClose={closeExpandPrompt} />
     </div>
   )
 }

@@ -69,7 +69,8 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | ------------------ | ------------------------------------------------------------------------------------------------------------------- |
 | `models.ts`        | Shared types + registries (ProviderType, RoleId, Connection, etc.)                                                  |
 | `conversation.ts`  | ConversationState, Turn, ExpandableSegment types + pure helpers (tokenize, insertExpansion, serializeForChat, etc.) |
-| `expand-prompt.ts` | `buildExpandMessages({answer, selection})` — constructs API messages for expand requests                            |
+| `expand-prompt.ts` | `buildExpandMessages({answer, selection, prompt?})` — constructs API messages for expand requests                   |
+| `prompts.ts`       | All LLM-facing prompt/instruction strings: system prompts, context template, lookup default, expand instructions   |
 
 ##### Main process (`src/main/`)
 
@@ -99,7 +100,8 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | Conversation   | `components/conversation/Conversation.tsx`               | Message list + composer + context menu                                       |
 | Turn           | `components/conversation/Turn.tsx`                       | Single message (user/assistant) with avatars, segments, loading              |
 | ExpansionFrame | `components/conversation/ExpansionFrame.tsx`             | Inline expandable frames, folded pills, nested children                      |
-| ContextMenu    | `components/conversation/ContextMenu.tsx`                | Right-click Expand/Copy/Select All                                           |
+| ContextMenu    | `components/conversation/ContextMenu.tsx`                | Right-click Expand / Expand on… / Copy / Select All                          |
+| ExpandPrompt   | `components/conversation/ExpandPrompt.tsx`               | Floating inline input for custom expand direction ("Expand on…")             |
 | Settings       | `views/settings/Settings.tsx`                            | 3-tab settings orchestrator                                                  |
 | Views          | `views/home/`, `views/knowledge/`, `views/lookup-guide/` | Dashboard and placeholder views                                              |
 
@@ -111,7 +113,9 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | Change the OCR/capture pipeline       | `lookup/capture.ts`                                                                |
 | Change the hotkey response flow       | `lookup/lookup.ts` (`handleHotkeyPressed`)                                         |
 | Reposition / restyle the lookup popup | `lookup/window.ts` + CSS in `lookup.css`, `LookupApp.tsx`                          |
-| Change the expand prompt              | `shared/expand-prompt.ts` (`buildExpandMessages`)                                  |
+| Change the expand prompt              | `shared/expand-prompt.ts` (`buildExpandMessages`)                              |
+| Change the expand instruction text    | `shared/prompts.ts` (`buildExpandUserInstruction`, `buildExpandPromptedInstruction`) |
+| Change the Expand Prompt UI           | `components/conversation/ExpandPrompt.tsx`                                     |
 | Change frame fold/unfold behaviour    | `shared/conversation.ts` helpers + `ExpansionFrame.tsx`                            |
 | Change the expansion targeting logic  | `Conversation.tsx` (contextmenu handler) + `shared/conversation.ts` helpers        |
 | Persist or load user config/settings  | `config.ts`                                                                        |
@@ -174,6 +178,10 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 - **Cross-frame selection disables Expand.** The contextmenu handler in
   `Conversation.tsx` uses `findExpansionInSegments` to detect whether a selection spans
   an expansion boundary; `insertExpansion` in `conversation.ts` also refuses cross-frame.
+- **Custom expansion prompt ("Expand on…")** opens a floating `ExpandPrompt` input at the
+  right-click position. It appears as a third item in the context menu. On submit,
+  the prompt text (defaulting to `"elaborate on"` if empty) replaces the `"Define..."`
+  instruction via `buildExpandPromptedInstruction` in `prompts.ts`.
 
 ### Coding Style Guidelines
 

@@ -5,6 +5,7 @@ interface ContextMenuState {
   y: number
   canExpand: boolean
   onExpand: () => void
+  onExpandPrompted: () => void
   onCopy: () => void
   onSelectAll: () => void
 }
@@ -40,8 +41,9 @@ function ContextMenu({ state, onClose }: ContextMenuProps): React.JSX.Element | 
 
   if (!state) return null
 
-  const handleItemClick = (action: 'expand' | 'copy' | 'select-all'): void => {
+  const handleItemClick = (action: 'expand' | 'expand-prompted' | 'copy' | 'select-all'): void => {
     if (action === 'expand') state.onExpand()
+    else if (action === 'expand-prompted') state.onExpandPrompted()
     else if (action === 'copy') state.onCopy()
     else if (action === 'select-all') state.onSelectAll()
     onClose()
@@ -54,6 +56,12 @@ function ContextMenu({ state, onClose }: ContextMenuProps): React.JSX.Element | 
         onClick={() => state.canExpand && handleItemClick('expand')}
       >
         Expand
+      </div>
+      <div
+        className={`item${state.canExpand ? '' : ' disabled'}`}
+        onClick={() => state.canExpand && handleItemClick('expand-prompted')}
+      >
+        Expand on…
       </div>
       <div className="sep" />
       <div className="item" onClick={() => handleItemClick('copy')}>
