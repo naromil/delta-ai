@@ -66,14 +66,14 @@ export const providerRegistry: Record<ProviderType, ProviderTypeDef> = {
   'openai-compatible': {
     label: 'OpenAI Compatible',
     authShape: 'apiKey',
-    capabilities: { webSearch: false },
+    capabilities: { webSearch: true },
     implemented: true
   },
   openai: {
     label: 'OpenAI',
     authShape: 'apiKey',
     defaultBaseUrl: 'https://api.openai.com/v1',
-    capabilities: { webSearch: false },
+    capabilities: { webSearch: true },
     implemented: true,
     knownModels: ['gpt-4o-mini', 'gpt-4.1-mini', 'gpt-5-nano', 'gpt-4o', 'gpt-5.6-luna']
   },
@@ -88,7 +88,7 @@ export const providerRegistry: Record<ProviderType, ProviderTypeDef> = {
     label: 'OpenRouter',
     authShape: 'apiKey',
     defaultBaseUrl: 'https://openrouter.ai/api/v1',
-    capabilities: { webSearch: false },
+    capabilities: { webSearch: true },
     implemented: true,
     knownModels: [
       'google/gemini-3.5-flash',

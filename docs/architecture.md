@@ -297,12 +297,12 @@ The app uses a **role-based model assignment** system. Instead of a single globa
 
 **Roles** (`roleRegistry` in `src/shared/models.ts`):
 
-| Role ID             | Label                      | Locked | Web search | Used by                                  |
-| ------------------- | -------------------------- | ------ | ---------- | ---------------------------------------- |
-| `chat`              | Chat                       | No     | Yes        | `chat-send` IPC (main chat)              |
-| `lookup`            | Lookup                     | No     | Yes        | `chat-send` IPC (lookup, role='lookup')  |
-| `kb-maintenance`    | Knowledge Base Maintenance | Yes    | No         | (planned: KB processing)                 |
-| `context-injection` | Context Injection          | Yes    | No         | (planned: KB → lookup injection)         |
+| Role ID             | Label                      | Locked | Web search | Used by                                 |
+| ------------------- | -------------------------- | ------ | ---------- | --------------------------------------- |
+| `chat`              | Chat                       | No     | Yes        | `chat-send` IPC (main chat)             |
+| `lookup`            | Lookup                     | No     | Yes        | `chat-send` IPC (lookup, role='lookup') |
+| `kb-maintenance`    | Knowledge Base Maintenance | Yes    | No         | (planned: KB processing)                |
+| `context-injection` | Context Injection          | Yes    | No         | (planned: KB → lookup injection)        |
 
 Locked roles are shown greyed in Settings with a "🔒 Locked" indicator; their dispatch is not wired until the KB feature ships.
 

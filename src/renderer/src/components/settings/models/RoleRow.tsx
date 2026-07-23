@@ -32,6 +32,7 @@ function RoleRow({
   const def = providerType ? providerRegistry[providerType] : undefined
   const knownModels = def?.knownModels
   const isUnimplemented = providerType ? !def?.implemented : false
+  const supportsWebSearch = def?.capabilities?.webSearch ?? false
 
   // Role-local tracking of whether the custom-model input is being shown.
   // Re-initialized from the assignment when the parent remounts the row on
@@ -159,19 +160,26 @@ function RoleRow({
 
       {/* Web search toggle */}
       {roleDef.offersWebSearch && (
-        <label className="toggle-row" style={{ marginTop: '8px' }}>
+        <label
+          className="toggle-row"
+          style={{ marginTop: '8px', opacity: supportsWebSearch ? 1 : 0.5 }}
+        >
           <input
             type="checkbox"
             className="toggle-input"
             checked={assignment.webSearchEnabled}
-            disabled={roleDef.locked || !assignment.connectionId}
+            disabled={roleDef.locked || !assignment.connectionId || !supportsWebSearch}
             onChange={(e) => onWebSearchChange(roleId, e.target.checked)}
           />
           <span className="toggle-track">
             <span className="toggle-thumb" />
           </span>
           <span className="toggle-label">
-            {assignment.webSearchEnabled ? 'Web search enabled' : 'Web search disabled'}
+            {!supportsWebSearch
+              ? 'Web search (not supported by this provider)'
+              : assignment.webSearchEnabled
+                ? 'Web search enabled'
+                : 'Web search disabled'}
           </span>
         </label>
       )}

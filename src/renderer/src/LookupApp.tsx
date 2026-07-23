@@ -5,6 +5,7 @@ import ContextMenu from './components/conversation/ContextMenu'
 import type { ContextMenuState } from './components/conversation/ContextMenu'
 import type { ExpandableSegment } from '../../shared/conversation'
 import { findTextSelectionRange } from '../../shared/conversation'
+import { LOOKUP_DEFAULT_QUERY } from '../../shared/prompts'
 
 function findExpansionInSegments(
   segments: ExpandableSegment[],
@@ -217,7 +218,7 @@ function LookupApp(): React.JSX.Element {
       flashHint('Context is still being prepared\u2026')
       return
     }
-    const text = trimmed || 'summarize'
+    const text = trimmed || LOOKUP_DEFAULT_QUERY
     setInput('')
     send(text)
   }, [input, loading, contextReady, send, flashHint])

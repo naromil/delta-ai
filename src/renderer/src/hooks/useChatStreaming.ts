@@ -5,9 +5,9 @@ import {
   insertExpansionNested,
   updateExpansionInTurns,
   toggleExpansionFoldedInTurns,
-  serializeForChat,
-  getSystemPrompt
+  serializeForChat
 } from '../../../shared/conversation'
+import { getSystemPrompt } from '../../../shared/prompts'
 import { buildExpandMessages } from '../../../shared/expand-prompt'
 
 function generateId(): number {
