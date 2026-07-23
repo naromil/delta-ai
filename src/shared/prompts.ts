@@ -17,25 +17,24 @@ export function getSystemPrompt(role?: 'chat' | 'lookup'): string {
   return role === 'lookup' ? LOOKUP_SYSTEM_PROMPT : CHAT_SYSTEM_PROMPT
 }
 
+/* ---- Default and Fallback ---- */
+
+export const ANSWER_FALLBACK = '(empty answer)' // the provider returns an empty answer
+
+export const LOOKUP_DEFAULT_QUERY = 'summarize' // the default for the lookup when user question is empty
+
+export const EXPAND_DEFAULT_PROMPT = 'more' // the default prompt for expanding a selection
 /* ---- Context Injection ---- */
 
 export function buildScreenContextMessage(context: string): string {
   return `The following context was extracted from my screen:\n\n"${context}"`
 }
 
-/* ---- Lookup Default ---- */
-
-export const LOOKUP_DEFAULT_QUERY = 'summarize'
-
 /* ---- Expand Instructions ---- */
-
-export const ANSWER_FALLBACK = '(empty answer)'
-
-export const EXPAND_DEFAULT_PROMPT = 'elaborate on'
 
 const EXPAND_SHARED_CONSTRAINTS = [
   'Do NOT repeat the word itself or re-state the sentence it appears in.',
-  'Keep it to at most two short phrases. Respond in inline text only.'
+  'Keep it concise, but provide enough detail to be helpful. Respond in inline text only.'
 ]
 
 const EXPAND_DEFINE_CONSTRAINTS = [
@@ -47,20 +46,17 @@ const EXPAND_DEFINE_CONSTRAINTS = [
 
 export function buildExpandUserInstruction(selection: string): string {
   return [
-    `Define "${selection}" from the text above.`,
+    `The user wants to define "${selection}" from the text above.`,
     ...EXPAND_SHARED_CONSTRAINTS,
     ...EXPAND_DEFINE_CONSTRAINTS
   ].join(' ')
 }
 
 export function buildExpandPromptedInstruction(selection: string, prompt: string): string {
+  // potential choices: "more", "why", "how", "when", "where", "what "compare ...", "contrast ...", "clarify"
   const verb = prompt.trim() || EXPAND_DEFAULT_PROMPT
   return [
-    `${capitalizeFirst(verb)} "${selection}" from the text above.`,
+    `The user wants to know "${verb}" about "${selection}" from the text above.`,
     ...EXPAND_SHARED_CONSTRAINTS
   ].join(' ')
-}
-
-function capitalizeFirst(text: string): string {
-  return text.charAt(0).toUpperCase() + text.slice(1)
 }
