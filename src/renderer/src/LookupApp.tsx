@@ -39,7 +39,7 @@ function readFileAsBase64(file: File): Promise<string | null> {
 
 function LookupApp(): React.JSX.Element {
   const [grown, setGrown] = useState(false)
-  const [contextText, setContextText] = useState('Waiting for OCR\u2026')
+  const [contextText, setContextText] = useState('Waiting for context\u2026')
   const [contextHint, setContextHint] = useState(true)
   const [ocrProcessing, setOcrProcessing] = useState(false)
   const [input, setInput] = useState('')
@@ -97,6 +97,10 @@ function LookupApp(): React.JSX.Element {
       setContextText(err)
       setContextHint(false)
     })
+
+    /* Signal main that the renderer's IPC listeners are registered so
+     * any pending context notification can be re-sent. */
+    window.api.lookupReady()
   }, [setState, flashHint])
 
   /* ---- Focus input on mount ---- */

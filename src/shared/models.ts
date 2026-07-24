@@ -7,6 +7,8 @@ export type PrivacyTier = 'local' | 'cloud-zdr' | 'cloud'
 
 export type RoleId = 'chat' | 'lookup' | 'kb-maintenance'
 
+export type LookupContextMode = 'clipboard' | 'fullscreen-ocr'
+
 export interface ProviderTypeDef {
   label: string
   authShape: AuthShape

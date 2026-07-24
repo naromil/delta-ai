@@ -305,3 +305,114 @@
     padding: 24px 20px 32px;
   }
 }
+
+/* ---- Look-Up Guide page ---- */
+.lookup-guide-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.lookup-guide-section {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 18px 20px;
+}
+
+.lookup-guide-section-title {
+  margin: 0 0 10px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.lookup-guide-section-list {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.lookup-guide-section-list li {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-2);
+}
+
+.lookup-guide-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 24px 0;
+}
+
+.lookup-guide-mode-section {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 18px 20px;
+}
+
+.lookup-guide-mode-hint {
+  font-size: 13px;
+  color: var(--text-2);
+  margin: 0 0 14px;
+  line-height: 1.5;
+}
+
+.lookup-guide-mode-toggle {
+  display: flex;
+  gap: 10px;
+}
+
+.lookup-guide-mode-option {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: 13px;
+  transition:
+    border-color 150ms ease,
+    background 150ms ease,
+    color 150ms ease;
+}
+
+.lookup-guide-mode-option:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--surface-3);
+}
+
+.lookup-guide-mode-option:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.lookup-guide-mode-option.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--text-1);
+}
+
+.lookup-guide-mode-option-label {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.lookup-guide-mode-option-desc {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-3);
+}
+
+.lookup-guide-mode-option.active .lookup-guide-mode-option-desc {
+  color: var(--text-2);
+}

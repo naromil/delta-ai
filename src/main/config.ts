@@ -8,6 +8,7 @@ import {
   type ModelConfig,
   type Connection,
   type CategorizedKeyword,
+  type LookupContextMode,
   createDefaultModelConfig
 } from './models/registries'
 
@@ -33,6 +34,7 @@ export type { Connection, RoleAssignment, ModelConfig } from './models/registrie
 interface AppSettings {
   hotkey: string
   closeToTray: boolean
+  lookupContextMode: LookupContextMode
 }
 
 /* ---- Wayland detection ----
@@ -84,17 +86,23 @@ export async function registerHotkey(accelerator: string, onPressed: () => void)
 }
 
 export let currentCloseToTray = true
+export let currentLookupContextMode: LookupContextMode = 'clipboard'
 
 /* ---- App general settings management -- */
 
 export function loadAppSettings(): AppSettings {
-  const defaults: AppSettings = { hotkey: 'Ctrl+Shift+D', closeToTray: true }
+  const defaults: AppSettings = {
+    hotkey: 'Ctrl+Shift+D',
+    closeToTray: true,
+    lookupContextMode: 'clipboard'
+  }
   try {
     const settingsPath = join(app.getPath('userData'), 'config', 'settings.json')
     if (existsSync(settingsPath)) {
       const loaded = JSON.parse(readFileSync(settingsPath, 'utf-8'))
       const settings = { ...defaults, ...loaded }
       currentCloseToTray = settings.closeToTray
+      currentLookupContextMode = settings.lookupContextMode
       return settings
     }
   } catch {
@@ -162,6 +170,7 @@ export function registerConfigIpcHandlers(): void {
       const ok = saveAppSettings(settings)
       if (ok) {
         currentCloseToTray = settings.closeToTray
+        currentLookupContextMode = settings.lookupContextMode
         // Re-register hotkey
         await registerHotkey(settings.hotkey, handleHotkeyPressed)
       }

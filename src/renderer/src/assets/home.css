@@ -120,6 +120,19 @@
   padding: 16px 32px 32px;
 }
 
+.view-shell-content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.view-shell-content::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 4px;
+}
+
+.view-shell-content::-webkit-scrollbar-thumb:hover {
+  background: var(--text-3);
+}
+
 .view-empty-state {
   color: var(--text-3);
   font-size: 14px;

@@ -12,10 +12,15 @@ declare global {
     api: {
       loadModelConfig: () => Promise<unknown>
       saveModelConfig: (config: unknown) => Promise<{ success: boolean }>
-      loadSettings: () => Promise<{ hotkey: string; closeToTray: boolean }>
+      loadSettings: () => Promise<{
+        hotkey: string
+        closeToTray: boolean
+        lookupContextMode: string
+      }>
       saveSettings: (settings: {
         hotkey: string
         closeToTray: boolean
+        lookupContextMode: string
       }) => Promise<{ success: boolean }>
 
       /* Lookup channels */
@@ -28,6 +33,7 @@ declare global {
       lookupInputChanged: (hasText: boolean) => void
       lookupClose: () => void
       lookupTriggerGrow: () => void
+      lookupReady: () => void
       lookupTransferToChat: (state: ConversationState, conversationId?: string) => void
 
       /* Chat streaming channels */

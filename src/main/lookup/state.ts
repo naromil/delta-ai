@@ -7,6 +7,7 @@ export interface LookupSession {
   contextReady: boolean
   ocrToken: number
   hasText: boolean
+  pendingState: { status: 'processing' | 'ready'; text: string; hint: string } | null
 }
 
 export function clamp(v: number, lo: number, hi: number): number {
@@ -26,6 +27,7 @@ export function notifySessionState(
   text: string,
   hint: string
 ): void {
+  session.pendingState = { status, text, hint }
   sendToSession(session, 'lookup-context', { status, text, hint })
 }
 

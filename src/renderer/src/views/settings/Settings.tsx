@@ -11,9 +11,11 @@ function Settings(): React.JSX.Element {
   const [modelConfig, setModelConfig] = useState<ModelConfig>(createDefaultModelConfig)
   const [hotkey, setHotkey] = useState('Ctrl+Shift+D')
   const [closeToTray, setCloseToTray] = useState(true)
+  const [lookupContextMode, setLookupContextMode] = useState('clipboard')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const hotkeyRef = useRef(hotkey)
+  const lookupContextModeRef = useRef(lookupContextMode)
 
   /* Load existing config on mount */
   useEffect(() => {
@@ -24,13 +26,21 @@ function Settings(): React.JSX.Element {
     })
 
     window.api.loadSettings().then((s) => {
-      const settings = s as { hotkey?: string; closeToTray?: boolean } | null
+      const settings = s as {
+        hotkey?: string
+        closeToTray?: boolean
+        lookupContextMode?: string
+      } | null
       if (settings?.hotkey) {
         setHotkey(settings.hotkey)
         hotkeyRef.current = settings.hotkey
       }
       if (settings?.closeToTray !== undefined) {
         setCloseToTray(settings.closeToTray)
+      }
+      if (settings?.lookupContextMode) {
+        setLookupContextMode(settings.lookupContextMode)
+        lookupContextModeRef.current = settings.lookupContextMode
       }
     })
   }, [])
@@ -83,7 +93,8 @@ function Settings(): React.JSX.Element {
     const cfgRes = await window.api.saveModelConfig(modelConfig)
     const settingsRes = await window.api.saveSettings({
       hotkey: hotkeyRef.current,
-      closeToTray
+      closeToTray,
+      lookupContextMode: lookupContextModeRef.current
     })
     setSaving(false)
     if (cfgRes.success && settingsRes.success) {

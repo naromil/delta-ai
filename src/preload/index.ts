@@ -7,11 +7,15 @@ const api = {
   loadModelConfig: (): Promise<unknown> => ipcRenderer.invoke('load-model-config'),
   saveModelConfig: (config: unknown): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('save-model-config', config),
-  loadSettings: (): Promise<{ hotkey: string; closeToTray: boolean }> =>
-    ipcRenderer.invoke('load-settings'),
+  loadSettings: (): Promise<{
+    hotkey: string
+    closeToTray: boolean
+    lookupContextMode: string
+  }> => ipcRenderer.invoke('load-settings'),
   saveSettings: (settings: {
     hotkey: string
     closeToTray: boolean
+    lookupContextMode: string
   }): Promise<{ success: boolean }> => ipcRenderer.invoke('save-settings', settings),
 
   /* Lookup-overlay channels */
@@ -27,6 +31,7 @@ const api = {
   lookupInputChanged: (hasText: boolean) => ipcRenderer.send('lookup-input-changed', hasText),
   lookupClose: () => ipcRenderer.send('lookup-close'),
   lookupTriggerGrow: () => ipcRenderer.send('lookup-trigger-grow'),
+  lookupReady: () => ipcRenderer.send('lookup-ready'),
   lookupTransferToChat: (state: ConversationState, conversationId?: string) =>
     ipcRenderer.send('lookup-transfer', { state, conversationId }),
 

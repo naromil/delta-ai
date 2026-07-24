@@ -30,7 +30,8 @@ export function createLookupSession(cursorX: number, cursorY: number): LookupSes
     grown: false,
     contextReady: false,
     ocrToken: 0,
-    hasText: false
+    hasText: false,
+    pendingState: null
   }
 
   const window = new BrowserWindow({
@@ -92,6 +93,12 @@ export function createLookupSession(cursorX: number, cursorY: number): LookupSes
 
   window.webContents.ipc.on('lookup-input-changed', (_event, hasText: boolean) => {
     session.hasText = hasText
+  })
+
+  window.webContents.ipc.on('lookup-ready', () => {
+    if (session.pendingState && !window.isDestroyed()) {
+      window.webContents.send('lookup-context', session.pendingState)
+    }
   })
 
   ocrHandlerRefCount++
