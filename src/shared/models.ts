@@ -138,3 +138,13 @@ export function createDefaultModelConfig(): ModelConfig {
 export function generateConnectionId(): string {
   return `conn_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
 }
+
+export type KeywordCategory = 'topic' | 'knowledge_area' | 'learning_preference'
+
+export const MAX_KEYWORDS_PER_CATEGORY = 20
+
+export interface CategorizedKeyword {
+  keyword: string
+  category: KeywordCategory
+  count: number
+}

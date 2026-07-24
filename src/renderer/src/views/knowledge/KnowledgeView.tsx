@@ -72,7 +72,8 @@ function KnowledgeView(): React.JSX.Element {
 
   const confirmReanalyze = async (): Promise<void> => {
     const n = parseInt(reanalyzeCount, 10)
-    if (isNaN(n) || n < 1 || n > totalCount) return
+    if (isNaN(n) || n < 1) return
+    const reanalyzeLimit = Math.min(n, totalCount)
 
     setShowReanalyzeInput(false)
     setReanalyzeCount('')
@@ -80,7 +81,7 @@ function KnowledgeView(): React.JSX.Element {
     setError(null)
     setLastResult(null)
     try {
-      const result = await window.api.kbReanalyze(n)
+      const result = await window.api.kbReanalyze(reanalyzeLimit)
       setPrompt(result.newPrompt)
       if (result.conversationsAnalyzed === 0) {
         setLastResult('No conversations found.')

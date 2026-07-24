@@ -1,6 +1,7 @@
 import { loadConversation } from '../conversations'
-import { KB_ANALYSIS_SYSTEM_PROMPT } from '../../shared/prompts'
+import { KB_ANALYSIS_SYSTEM_PROMPT, KB_KEYWORD_SYSTEM_PROMPT } from '../../shared/prompts'
 import type { ConversationRecord, ExpandableSegment } from '../../shared/conversation'
+import type { CategorizedKeyword } from '../../shared/models'
 import type { ProviderMessage } from '../provider'
 
 function collectExpansionContexts(
@@ -84,19 +85,19 @@ export function buildSingleMaterial(record: ConversationRecord): string {
   return parts.join('\n')
 }
 
-export async function buildKbMaterials(metas: Array<{ id: string }>): Promise<string[]> {
+export async function buildKbMaterials(metas: Array<{ id: string }>): Promise<string> {
   const materials: string[] = []
   for (const meta of metas) {
     const record = await loadConversation(meta.id)
     if (!record) continue
     materials.push(buildSingleMaterial(record))
   }
-  return materials
+  return materials.join('\n\n=====\n\n')
 }
 
 export function buildKbAnalysisMessages(
   currentPrompt: string,
-  transcripts: string[]
+  materialsText: string
 ): ProviderMessage[] {
   return [
     {
@@ -113,13 +114,46 @@ export function buildKbAnalysisMessages(
             '',
             'Below are new conversation summaries. Rewrite/adjust the prompt above with new insights from these conversations:',
             '',
-            transcripts.join('\n\n=====\n\n')
+            materialsText
           ].join('\n')
         : [
             "Analyze these conversation summaries and generate a personalization prompt describing the user's learning preferences:",
             '',
-            transcripts.join('\n\n=====\n\n')
+            materialsText
           ].join('\n')
+    }
+  ]
+}
+
+export function buildKbKeywordMessages(
+  learningPreference: string,
+  existingKeywords: CategorizedKeyword[]
+): ProviderMessage[] {
+  const existingLines = existingKeywords.map(
+    (kw) => `${kw.keyword} [${kw.category}] (count: ${kw.count})`
+  )
+  const existingBlock =
+    existingLines.length > 0
+      ? [
+          '',
+          'Existing keywords (reuse where still applicable; increment count by re-emiting):',
+          ...existingLines
+        ].join('\n')
+      : ''
+
+  return [
+    {
+      role: 'system',
+      content: KB_KEYWORD_SYSTEM_PROMPT
+    },
+    {
+      role: 'user',
+      content: [
+        "Extract categorized keywords from this user's learning preference description:",
+        '',
+        learningPreference,
+        existingBlock
+      ].join('\n')
     }
   ]
 }

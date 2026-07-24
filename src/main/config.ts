@@ -7,6 +7,7 @@ import {
   type RoleId,
   type ModelConfig,
   type Connection,
+  type CategorizedKeyword,
   createDefaultModelConfig
 } from './models/registries'
 
@@ -203,4 +204,20 @@ export function loadKbPrompt(): string {
 export function saveKbPrompt(content: string): void {
   const promptPath = join(kbDir(), 'prompt.txt')
   writeFileSync(promptPath, content, 'utf-8')
+}
+
+export function loadKbKeywords(): CategorizedKeyword[] {
+  try {
+    const keywordsPath = join(kbDir(), 'keywords.json')
+    if (!existsSync(keywordsPath)) return []
+    const raw = readFileSync(keywordsPath, 'utf-8')
+    return JSON.parse(raw)
+  } catch {
+    return []
+  }
+}
+
+export function saveKbKeywords(keywords: CategorizedKeyword[]): void {
+  const keywordsPath = join(kbDir(), 'keywords.json')
+  writeFileSync(keywordsPath, JSON.stringify(keywords), 'utf-8')
 }

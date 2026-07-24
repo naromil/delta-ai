@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import type { ConversationState, ConversationRecord } from '../shared/conversation'
+import type { CategorizedKeyword } from '../shared/models'
 
 const api = {
   loadModelConfig: (): Promise<unknown> => ipcRenderer.invoke('load-model-config'),
@@ -101,11 +102,20 @@ const api = {
   markConversationKbFed: (id: string): Promise<void> =>
     ipcRenderer.invoke('conversation-kb-fed', id),
 
-  kbLoadPrompt: (): Promise<{ prompt: string }> => ipcRenderer.invoke('kb-load-prompt'),
-  kbAnalyze: (): Promise<{ newPrompt: string; conversationsAnalyzed: number }> =>
-    ipcRenderer.invoke('kb-analyze'),
-  kbReanalyze: (n: number): Promise<{ newPrompt: string; conversationsAnalyzed: number }> =>
-    ipcRenderer.invoke('kb-reanalyze', n)
+  kbLoadPrompt: (): Promise<{ prompt: string; keywords: CategorizedKeyword[] }> =>
+    ipcRenderer.invoke('kb-load-prompt'),
+  kbAnalyze: (): Promise<{
+    newPrompt: string
+    keywords: CategorizedKeyword[]
+    conversationsAnalyzed: number
+  }> => ipcRenderer.invoke('kb-analyze'),
+  kbReanalyze: (
+    n: number
+  ): Promise<{
+    newPrompt: string
+    keywords: CategorizedKeyword[]
+    conversationsAnalyzed: number
+  }> => ipcRenderer.invoke('kb-reanalyze', n)
 }
 
 if (process.contextIsolated) {

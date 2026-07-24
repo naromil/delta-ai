@@ -4,6 +4,7 @@ import type {
   ConversationRecord,
   ConversationMeta
 } from '../shared/conversation'
+import type { CategorizedKeyword } from '../shared/models'
 
 declare global {
   interface Window {
@@ -63,9 +64,17 @@ declare global {
       listUnfedConversations: () => Promise<ConversationMeta[]>
       markConversationKbFed: (id: string) => Promise<void>
 
-      kbLoadPrompt: () => Promise<{ prompt: string }>
-      kbAnalyze: () => Promise<{ newPrompt: string; conversationsAnalyzed: number }>
-      kbReanalyze: (n: number) => Promise<{ newPrompt: string; conversationsAnalyzed: number }>
+      kbLoadPrompt: () => Promise<{ prompt: string; keywords: CategorizedKeyword[] }>
+      kbAnalyze: () => Promise<{
+        newPrompt: string
+        keywords: CategorizedKeyword[]
+        conversationsAnalyzed: number
+      }>
+      kbReanalyze: (n: number) => Promise<{
+        newPrompt: string
+        keywords: CategorizedKeyword[]
+        conversationsAnalyzed: number
+      }>
     }
   }
 }

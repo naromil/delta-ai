@@ -32,13 +32,30 @@ export const KB_ANALYSIS_SYSTEM_PROMPT = [
   "Your task is to analyze conversation transcripts and produce a concise paragraph that describes the user's learning preferences. Focus on:",
   '- Interested topics and current areas of knowledge',
   '- Preferred explanation formats (e.g. examples first, definitions first, comparisons)',
-  '- Current knowledge level in topics discussed',
+  "- Current knowledge level in topics discussed (inferred from what the user didn't ask about)",
   '- Recurring question patterns',
   "Output ONLY a structured description of the user's learning preference.",
   'No preamble, no explanations, no "Based on the analysis..."',
   "just the paragraph text that will be injected as a system prompt to personalize an AI assistant's responses.",
-  "No content related to the specific details of the conversations, just the user's learning preferences."
+  "No content related to the specific details of the conversations, just the user's learning preferences.",
+  'Always answer in one paragraph. No irrelevant information.'
 ].join(' ')
+
+export const KB_KEYWORD_SYSTEM_PROMPT = [
+  'You are a user profiler.',
+  'Given a paragraph describing a user, extract a short list of keywords or "hashtags" that summarize the user.',
+  'Each keyword must be at most 3 words. They can be nouns or adjectives describing:',
+  '- Interested topics (category: topic) — e.g. "Earth sciences", "machine learning"',
+  '- Knowledge areas (category: knowledge_area) — e.g. "analytical chemistry", "distributed systems"',
+  '- Learning preferences (category: learning_preference) — e.g. "scientific methodology", "cause-and-effect"',
+  'The input will include a list of existing keywords with occurrence counters.',
+  'Reuse existing keywords where they still apply — do not invent synonymous keywords.',
+  'Only add new keywords for genuinely new topics, knowledge areas, or preferences not already covered.',
+  '6 to 12 keywords total across all three categories.',
+  'Output EXACTLY one entry per line in this format:',
+  'keyword [category]',
+  'No preamble, no explanations, no bullet points, no numbering.'
+].join('\n')
 
 /* ---- Context Injection ---- */
 

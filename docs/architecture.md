@@ -1,20 +1,20 @@
 # Delta AI — Architecture
 
 > Auto-generated from source as built. Update after major changes to provide essential context about the project.
-> Last updated: 2026-07-23
+> Last updated: 2026-07-24
 
 ## High-level stack
 
-| Layer     | Technology                                                                               |
-| --------- | ---------------------------------------------------------------------------------------- |
-| Shell     | Electron 34 (electron-vite 4)                                                            |
-| Main      | TypeScript, Node.js                                                                      |
-| Preload   | TypeScript, contextBridge                                                                |
-| Shared    | TypeScript (pure types + helpers, no runtime deps)                                       |
-| Renderer  | React 19, TypeScript, vanilla CSS                                                        |
-| OCR       | tesseract.js (WASM)                                                                      |
-| AI        | Multi-provider (Google AI Studio, OpenAI Compatible; OpenAI, Ollama, OpenRouter planned) |
-| Packaging | electron-builder                                                                         |
+| Layer     | Technology                                                                       |
+| --------- | -------------------------------------------------------------------------------- |
+| Shell     | Electron 34 (electron-vite 4)                                                    |
+| Main      | TypeScript, Node.js                                                              |
+| Preload   | TypeScript, contextBridge                                                        |
+| Shared    | TypeScript (pure types + helpers, no runtime deps)                               |
+| Renderer  | React 19, TypeScript, vanilla CSS                                                |
+| OCR       | tesseract.js (WASM)                                                              |
+| AI        | Multi-provider (Google AI Studio, OpenAI Compatible; OpenAI, Ollama, OpenRouter) |
+| Packaging | electron-builder                                                                 |
 
 ## Project tree
 
@@ -41,6 +41,11 @@ src/
     provider.ts               # Provider dispatch by role (callProvider + callProviderStream)
     models/
       registries.ts           # Re-export from src/shared/models.ts (keeps main import paths stable)
+    kb/
+      analysis.ts             # KB analysis: serialize conversations into structured materials,
+                              #   collect expansion contexts, build API messages for kb-maintenance role
+      handlers.ts             # KB IPC handlers: kb-load-prompt, kb-analyze (iterates unfed
+                              #   conversations), kb-reanalyze (re-analyzes last n conversations)
     lookup/
       lookup.ts               # Orchestrator: IPC wiring + handleHotkeyPressed entry point
       capture.ts              # Screen capture + OCR pipeline (tesseract.js worker)
@@ -134,10 +139,15 @@ Renderer (React 19) — App.tsx / LookupApp.tsx
     window.api.deleteConversation(id)
     window.api.listConversations()
     window.api.loadMostRecentChat()
-    window.api.listUnfedConversations()
-    window.api.markConversationKbFed(id)
+     window.api.listUnfedConversations()
+     window.api.markConversationKbFed(id)
 
-    ▼
+   Knowledge Base channels:
+     window.api.kbLoadPrompt()
+     window.api.kbAnalyze()
+     window.api.kbReanalyze(n)
+
+     ▼
 Main process (Node)          src/main/
     ├── index.ts            App lifecycle + main window + streaming IPC handlers
     │                         (chat-send, chat-expand, lookup-trigger-grow, lookup-transfer)
@@ -151,6 +161,10 @@ Main process (Node)          src/main/
     │   ├── handlers.ts     Paste-only handlers (Ask/Expand moved to streaming IPC)
     │   ├── state.ts        Per-window LookupSession interface + helpers
     │   └── window.ts       Lookup popup window + grow animation (loads React entry via ?role=lookup)
+    ├── kb/
+    │   ├── analysis.ts     Build structured conversation materials, expansion context extraction,
+    │   │                      KB analysis message construction
+    │   └── handlers.ts     Register kb-load-prompt / kb-analyze / kb-reanalyze IPC handlers
     └── services/
         ├── global-shortcut.ts  XDG GlobalShortcuts D-Bus (Wayland)
         └── screen-capture.ts   Freedesktop Screenshot (KDE Wayland)
@@ -182,7 +196,7 @@ The main process is split by concern across multiple files (not monolithic):
 
 **IPC handlers:**
 
-- `chat-send` (`ipcMain.on`) — streaming send. Calls `callProviderStream(messages, role)` with `role` from payload (default `'chat'`). Responds per-chunk via `event.sender.send('chat-chunk', { requestId, text })` and final via `chat-response` / `chat-error`. All responses scoped to the sending webContents (safe for both chat window and lookup popup to use the same channel).
+- `chat-send` (`ipcMain.on`) — streaming send. Calls `callProviderStream(messages, role)` with `role` from payload (default `'chat'`). When `role === 'lookup'`, loads the KB personalization prompt and appends it to the system message before sending — this injects the user's learned preferences into lookup queries transparently. Responds per-chunk via `event.sender.send('chat-chunk', { requestId, text })` and final via `chat-response` / `chat-error`. All responses scoped to the sending webContents (safe for both chat window and lookup popup to use the same channel).
 - `chat-expand` (`ipcMain.on`) — streaming expand for inline frames. Same pattern as `chat-send`, responds via `chat-expand-chunk`.
 - `lookup-trigger-grow` (`ipcMain.on`) — lookup popup asks main to grow the window on first ask. Finds the session by `event.sender.id`, calls `animateGrowSession` + `sendToSession(..., 'lookup-grow')`.
 - `lookup-transfer` (`ipcMain.on`) — lookup popup sends `{ state: ConversationState, conversationId?: string }`. Transforms screen context into a user turn via `buildScreenContextMessage`, saves the conversation record with `source: 'chat'`, then sends `{ state, conversationId, conversationTitle }` on `chat-replace-conversation` to the main window. Closes the lookup session afterward.
@@ -267,6 +281,7 @@ All LLM-facing prompt/instruction strings are defined here, organised by section
 - **System prompts** — `LOOKUP_SYSTEM_PROMPT` and `CHAT_SYSTEM_PROMPT` with `getSystemPrompt(role)` selector
 - **Context injection** — `buildScreenContextMessage(context)` wraps OCR text into a user message
 - **Lookup defaults** — `LOOKUP_DEFAULT_QUERY` ("summarize") used when the user submits an empty ask
+- **KB analysis prompt** — `KB_ANALYSIS_SYSTEM_PROMPT` instructs the LLM to analyze conversation transcripts and produce a concise paragraph describing the user's learning preferences (topics, preferred explanation formats, knowledge level, recurring question patterns). Used by `kb/analysis.ts` when building messages for the `kb-maintenance` role.
 - **Expand instructions** — `buildExpandUserInstruction(selection)` for the default "Define..." expand;
   `buildExpandPromptedInstruction(selection, prompt)` for custom-direction expands;
   `EXPAND_DEFAULT_PROMPT` ("elaborate on") used when the prompt input is submitted empty
@@ -325,6 +340,8 @@ interface AppSettings {
 - `loadAppSettings()` — reads `settings.json` → `AppSettings` (default `{ hotkey: 'Ctrl+Shift+D', closeToTray: true }`)
 - `saveAppSettings(settings)` — writes `settings.json`, returns `boolean`
 - `registerHotkey(accelerator, onPressed)` — async; routes through XDG portal on Wayland
+- `loadKbPrompt()` — reads the KB personalization prompt from `{userData}/kb/prompt.txt`; returns empty string if missing
+- `saveKbPrompt(content)` — writes the KB personalization prompt to `{userData}/kb/prompt.txt`, creating the `kb/` directory if needed
 
 **IPC handlers:**
 
@@ -413,6 +430,29 @@ per-window `LookupSession` object in `state.ts`; handlers operate on the passed-
 
 **`html.ts` — deleted (was 965 lines).** The lookup popup HTML/CSS/JS inline data: URL is replaced by the React `LookupApp` component in `src/renderer/src/LookupApp.tsx`. The expansion frame, context menu, paste, and keyboard logic moved to React components and shared model helpers.
 
+### `kb/` — Knowledge Base analysis backend
+
+The KB module implements a personalization pipeline: conversations are serialized into structured text materials, analyzed by an LLM (via the `kb-maintenance` role), and the resulting personalization prompt is persisted to disk. The prompt is then injected into lookup queries so the AI assistant adapts to the user's learning preferences.
+
+**`analysis.ts` — Material construction and message building:**
+
+- `collectExpansionContexts(segments, result)` — recursively traverses `ExpandableSegment[]` trees, collecting each expansion's term, custom prompt (if any), and surrounding context (up to 80 chars before/after). Handles nested expansions.
+- `buildSingleMaterial(record)` — serializes a single `ConversationRecord` into a structured text summary containing: title, date, source, question/response pairs (with previous assistant answer truncated to 300 chars), and expansion term contexts.
+- `buildKbMaterials(metas)` — loads multiple conversation records by ID and builds an array of text materials via `buildSingleMaterial`.
+- `buildKbAnalysisMessages(currentPrompt, transcripts)` — constructs `ProviderMessage[]` for the KB analysis API call. If a current personalization prompt exists, asks the LLM to rewrite/adjust it with new insights; otherwise asks it to generate a fresh prompt describing the user's learning preferences.
+
+**`handlers.ts` — IPC handler registration:**
+
+- `registerKbIpcHandlers()` — called from `index.ts` during app startup. Registers three `ipcMain.handle` channels:
+  - **`kb-load-prompt`** — returns the current personalization prompt from `{userData}/kb/prompt.txt`
+  - **`kb-analyze`** — iterates all unfed conversations (via `listUnfedConversations`), processes each through `buildSingleMaterial` → `buildKbAnalysisMessages` → `callProvider(messages, 'kb-maintenance')`, cumulatively refining the prompt. Marks each conversation as `kbFed` after analysis. Saves the final prompt.
+  - **`kb-reanalyze(n)`** — re-analyzes the most recent `n` conversations (via `listConversations`) without marking them fed. Useful for adjusting the prompt after editing or after mis-categorization.
+- `analyzeConversations(metas, markFed)` — core analysis loop shared by both handlers. Returns `{ newPrompt: string, conversationsAnalyzed: number }`.
+
+**KB prompt injection (in `index.ts`):**
+
+When the `chat-send` handler receives a message with `role: 'lookup'`, it loads the current KB personalization prompt and appends it to the system message. This makes the lookup AI assistant aware of the user's learning preferences without the user explicitly including them each time.
+
 ### `services/global-shortcut.ts` — XDG GlobalShortcuts for Wayland
 
 Routes global shortcut registration through `org.freedesktop.portal.GlobalShortcuts` on Wayland sessions where Electron's `globalShortcut.register()` fails silently.
@@ -481,6 +521,11 @@ Exposes via `contextBridge`:
   chatOnError(cb)            // {requestId, error} — returns unsub function
   chatOnExpandChunk(cb)      // {requestId, text?, error?, done?} — returns unsub function
   chatOnReplaceConversation(cb) // {state, conversationId, conversationTitle} — from lookup transfer
+
+  // Knowledge Base
+  kbLoadPrompt()             // Load current personalization prompt from {userData}/kb/prompt.txt
+  kbAnalyze()                // Analyze all unfed conversations → {newPrompt, conversationsAnalyzed}
+  kbReanalyze(n)             // Re-analyze last n conversations (doesn't mark fed) → {newPrompt, conversationsAnalyzed}
 }
 ```
 
@@ -754,6 +799,17 @@ Conversations are now persisted to `{userData}/conversations/{id}.json` and surv
 - **Startup auto-load**: `App.tsx` loads the most recently updated chat conversation on mount via `loadMostRecentChat` IPC.
 - **KB prep channels**: `conversation-list-unfed` and `conversation-kb-fed` IPC channels exist for future KB maintenance model consumption. The `kb-fed` handler auto-deletes lookup-source conversations after marking.
 
+## Major changes (2026-07-24 — KB analysis backend)
+
+The Knowledge Base personalization pipeline backend is implemented, though the renderer-side UI ("Knowledge Base" view) remains a placeholder:
+
+- **`src/main/kb/analysis.ts`** (`collectExpansionContexts`, `buildSingleMaterial`, `buildKbMaterials`, `buildKbAnalysisMessages`): Serializes conversations into structured text summaries (question/response pairs, expansion term contexts). Builds API messages instructing the LLM to analyze learning preferences from conversation transcripts.
+- **`src/main/kb/handlers.ts`** (`registerKbIpcHandlers`): Registers three IPC handlers — `kb-load-prompt` returns the current personalization prompt; `kb-analyze` iterates unfed conversations through the kb-maintenance role, cumulatively refining a personalization prompt; `kb-reanalyze` re-processes the last n conversations without marking them fed.
+- **KB prompt persistence** (`config.ts`: `loadKbPrompt`, `saveKbPrompt`): Reads/writes the personalization prompt to `{userData}/kb/prompt.txt`, with auto-created directory.
+- **KB prompt injection** (`index.ts` `chat-send` handler): When `role === 'lookup'`, the current KB personalization prompt is appended to the system message, transparently personalizing lookup queries.
+- **New shared prompt** (`prompts.ts`: `KB_ANALYSIS_SYSTEM_PROMPT`): Instructs the LLM to produce a concise learning-preference paragraph from conversation transcripts.
+- **New preload methods**: `kbLoadPrompt`, `kbAnalyze`, `kbReanalyze` exposed on `window.api`.
+
 ## Major changes (2026-07-22 — streaming conversation + React lookup)
 
 The last commit replaced the lookup's inline `data:text/html` popup (965 lines of vanilla JS/CSS/html) with a React component (`LookupApp.tsx`) that reuses the chat's conversation components. Key architectural impacts:
@@ -766,25 +822,25 @@ The last commit replaced the lookup's inline `data:text/html` popup (965 lines o
 
 ## Current feature status
 
-| Feature                                          | Status                        |
-| ------------------------------------------------ | ----------------------------- |
-| Chat UI (chat view + send)                       | ✅ Complete (streaming)       |
-| Settings with 3 tabs (General/Models/About)      | ✅ Complete                   |
-| Role-based model config (chat, lookup, KB roles) | ✅ Complete (KB roles locked) |
-| Provider connections (CRUD, per-role model)      | ✅ Complete                   |
-| Google AI Studio provider                        | ✅ Complete                   |
-| OpenAI Compatible provider                       | ✅ Complete                   |
-| OpenAI / Ollama / OpenRouter providers           | ✅ Complete                   |
-| Shared types/registry module                     | ✅ Complete                   |
-| Shared conversation model with expandable tree   | ✅ Complete                   |
-| OCR from screen (full capture)                   | ✅ Complete                   |
-| AI explanation popup (React, streaming)          | ✅ Complete                   |
-| Inline expandable frames (fold/unfold/nested)    | ✅ Complete                   |
-| lookup→chat transfer                             | ✅ Complete                   |
-| Conversation persistence (save/load/search)      | ✅ Complete                   |
-| Global hotkey (X11 + Wayland)                    | ✅ Complete                   |
-| Infinite recursive lookup                        | ✅ Complete                   |
-| Home dashboard (KB canvas)                       | ✅ Complete                   |
-| Knowledge Base                                   | ❌ Not started                |
-| Built-in local model                             | ❌ Not started                |
-| Look-Up Guide view                               | ❌ Not started                |
+| Feature                                          | Status                             |
+| ------------------------------------------------ | ---------------------------------- |
+| Chat UI (chat view + send)                       | ✅ Complete (streaming)            |
+| Settings with 3 tabs (General/Models/About)      | ✅ Complete                        |
+| Role-based model config (chat, lookup, KB roles) | ✅ Complete (KB roles locked)      |
+| Provider connections (CRUD, per-role model)      | ✅ Complete                        |
+| Google AI Studio provider                        | ✅ Complete                        |
+| OpenAI Compatible provider                       | ✅ Complete                        |
+| OpenAI / Ollama / OpenRouter providers           | ✅ Complete                        |
+| Shared types/registry module                     | ✅ Complete                        |
+| Shared conversation model with expandable tree   | ✅ Complete                        |
+| OCR from screen (full capture)                   | ✅ Complete                        |
+| AI explanation popup (React, streaming)          | ✅ Complete                        |
+| Inline expandable frames (fold/unfold/nested)    | ✅ Complete                        |
+| lookup→chat transfer                             | ✅ Complete                        |
+| Conversation persistence (save/load/search)      | ✅ Complete                        |
+| Global hotkey (X11 + Wayland)                    | ✅ Complete                        |
+| Infinite recursive lookup                        | ✅ Complete                        |
+| Home dashboard (KB canvas)                       | ✅ Complete                        |
+| Knowledge Base                                   | 🔨 Backend analysis pipeline ready |
+| Built-in local model                             | ❌ Not started                     |
+| Look-Up Guide view                               | ❌ Not started                     |

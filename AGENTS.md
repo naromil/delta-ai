@@ -133,7 +133,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | KDE Wayland silent screenshot         | `services/screen-capture.ts`                                                         |
 | Add a new IPC channel                 | preload `index.ts` + `.d.ts`, then main `index.ts`                                   |
 | Change the chat streaming hook        | `hooks/useChatStreaming.ts`                                                          |
-| Persist or load conversations          | `conversations.ts` (main) + `useChatStreaming.ts` (renderer)                         |
+| Persist or load conversations         | `conversations.ts` (main) + `useChatStreaming.ts` (renderer)                         |
 | Renderer chat UI                      | `App.tsx`, `Conversation.tsx`, `Turn.tsx`, `ConversationSearch.tsx`                  |
 | Provider config form                  | `components/settings/models/ModelsTab.tsx` (+ `RoleRow.tsx`, `ConnectionCard.tsx`)   |
 
@@ -191,7 +191,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   via `buildScreenContextMessage`, persists the conversation as `source: 'chat'`,
   and sends `{state, conversationId, conversationTitle}` to the chat window. The
   chat hook hydrates it into its `useState`, resets the `expansionIdCounter` past
-  the   max imported id. No DOM serialization needed.
+  the max imported id. No DOM serialization needed.
 - **Conversation auto-save fires on response completion, expand done, fold, and unfold.**
   `useChatStreaming.saveCurrentState` writes the full `ConversationRecord` to disk with an
   updated `updatedAt` timestamp. Empty conversations (no turns or all-blank) are never saved.
