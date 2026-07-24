@@ -49,8 +49,8 @@ export function registerKbIpcHandlers(): void {
     return analyzeConversations(unfed, true)
   })
 
-  ipcMain.handle('kb-reanalyze', async () => {
+  ipcMain.handle('kb-reanalyze', async (_event, n: number) => {
     const all = await listConversations()
-    return analyzeConversations(all, false)
+    return analyzeConversations(all.slice(0, n), false)
   })
 }

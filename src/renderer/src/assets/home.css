@@ -218,3 +218,30 @@
 .kb-prompt-textarea::-webkit-scrollbar-thumb:hover {
   background: var(--text-3);
 }
+
+.kb-reanalyze-prompt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.kb-reanalyze-input {
+  width: 60px;
+  padding: 4px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--bg-1);
+  color: var(--text-1);
+  font-size: 13px;
+  text-align: center;
+  -moz-appearance: textfield;
+}
+
+.kb-reanalyze-input::-webkit-inner-spin-button,
+.kb-reanalyze-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}

@@ -111,7 +111,7 @@ export function buildKbAnalysisMessages(
             '',
             currentPrompt,
             '',
-            'Below are new conversation summaries. Update/augment the prompt above with new insights from these conversations:',
+            'Below are new conversation summaries. Rewrite/adjust the prompt above with new insights from these conversations:',
             '',
             transcripts.join('\n\n=====\n\n')
           ].join('\n')

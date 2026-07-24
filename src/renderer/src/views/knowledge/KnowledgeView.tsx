@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 
 function KnowledgeView(): React.JSX.Element {
   const [prompt, setPrompt] = useState<string>('')
@@ -8,6 +8,9 @@ function KnowledgeView(): React.JSX.Element {
   const [loadingReanalyze, setLoadingReanalyze] = useState<boolean>(false)
   const [error, setError] = useState<string | null>(null)
   const [lastResult, setLastResult] = useState<string | null>(null)
+  const [showReanalyzeInput, setShowReanalyzeInput] = useState<boolean>(false)
+  const [reanalyzeCount, setReanalyzeCount] = useState<string>('')
+  const reanalyzeInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -62,12 +65,22 @@ function KnowledgeView(): React.JSX.Element {
     }
   }
 
-  const handleReanalyze = async (): Promise<void> => {
+  const startReanalyze = (): void => {
+    setShowReanalyzeInput(true)
+    setTimeout(() => reanalyzeInputRef.current?.focus(), 0)
+  }
+
+  const confirmReanalyze = async (): Promise<void> => {
+    const n = parseInt(reanalyzeCount, 10)
+    if (isNaN(n) || n < 1 || n > totalCount) return
+
+    setShowReanalyzeInput(false)
+    setReanalyzeCount('')
     setLoadingReanalyze(true)
     setError(null)
     setLastResult(null)
     try {
-      const result = await window.api.kbReanalyze()
+      const result = await window.api.kbReanalyze(n)
       setPrompt(result.newPrompt)
       if (result.conversationsAnalyzed === 0) {
         setLastResult('No conversations found.')
@@ -107,12 +120,48 @@ function KnowledgeView(): React.JSX.Element {
             <button
               className="settings-header-save"
               disabled={busy || totalCount === 0}
-              onClick={handleReanalyze}
+              onClick={startReanalyze}
             >
-              {loadingReanalyze ? 'Re-analyzing...' : 'Re-Analyze All'}
+              {loadingReanalyze ? 'Re-analyzing...' : 'Re-Analyze'}
             </button>
           </div>
         </div>
+
+        {showReanalyzeInput && (
+          <div className="kb-reanalyze-prompt">
+            <label htmlFor="reanalyze-count">Re-analyze the most recent </label>
+            <input
+              id="reanalyze-count"
+              ref={reanalyzeInputRef}
+              className="kb-reanalyze-input"
+              type="number"
+              min={1}
+              max={totalCount}
+              value={reanalyzeCount}
+              onChange={(e) => setReanalyzeCount(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') confirmReanalyze()
+                if (e.key === 'Escape') {
+                  setShowReanalyzeInput(false)
+                  setReanalyzeCount('')
+                }
+              }}
+            />
+            <span> conversation(s).</span>
+            <button className="settings-header-save" onClick={confirmReanalyze}>
+              Go
+            </button>
+            <button
+              className="settings-header-save"
+              onClick={() => {
+                setShowReanalyzeInput(false)
+                setReanalyzeCount('')
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        )}
 
         {error && <p className="kb-error">{error}</p>}
         {lastResult && <p className="kb-result">{lastResult}</p>}

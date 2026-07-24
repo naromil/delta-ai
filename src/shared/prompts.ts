@@ -50,13 +50,13 @@ export function buildScreenContextMessage(context: string): string {
 
 const EXPAND_SHARED_CONSTRAINTS = [
   'Do NOT repeat the word itself or re-state the sentence it appears in.',
-  'Keep it concise (less than 3 sentences), but provide enough detail to be helpful.'
+  'Keep it concise (less than 4 sentences), but provide enough detail to explain clearly.'
 ]
 
 const EXPAND_DEFINE_CONSTRAINTS = [
   'Do NOT use phrases like "refers to" or "is" that introduce the word.',
   'Output just the definition — a bare phrase or noun phrase.',
-  'Keep it concise (less than 3 sentences), but provide enough detail to be helpful.',
+  'Keep it concise (less than 4 sentences), but provide enough detail to explain clearly.',
   'Example good output for "HKUMed": Li Ka Shing Faculty of Medicine at the University of Hong Kong',
   'Example bad output: "HKUMed" refers to the Li Ka Shing Faculty of Medicine...'
 ]

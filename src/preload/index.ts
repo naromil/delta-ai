@@ -104,8 +104,8 @@ const api = {
   kbLoadPrompt: (): Promise<{ prompt: string }> => ipcRenderer.invoke('kb-load-prompt'),
   kbAnalyze: (): Promise<{ newPrompt: string; conversationsAnalyzed: number }> =>
     ipcRenderer.invoke('kb-analyze'),
-  kbReanalyze: (): Promise<{ newPrompt: string; conversationsAnalyzed: number }> =>
-    ipcRenderer.invoke('kb-reanalyze')
+  kbReanalyze: (n: number): Promise<{ newPrompt: string; conversationsAnalyzed: number }> =>
+    ipcRenderer.invoke('kb-reanalyze', n)
 }
 
 if (process.contextIsolated) {

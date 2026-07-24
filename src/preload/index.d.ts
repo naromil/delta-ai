@@ -65,7 +65,7 @@ declare global {
 
       kbLoadPrompt: () => Promise<{ prompt: string }>
       kbAnalyze: () => Promise<{ newPrompt: string; conversationsAnalyzed: number }>
-      kbReanalyze: () => Promise<{ newPrompt: string; conversationsAnalyzed: number }>
+      kbReanalyze: (n: number) => Promise<{ newPrompt: string; conversationsAnalyzed: number }>
     }
   }
 }

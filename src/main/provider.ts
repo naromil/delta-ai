@@ -3,7 +3,7 @@ import { RoleUnassignedError } from './config'
 import type { RoleId } from './models/registries'
 export { RoleUnassignedError }
 
-const FETCH_TIMEOUT_MS = 30_000
+const FETCH_TIMEOUT_MS = 40_000
 
 async function fetchWithTimeout(
   url: string,
