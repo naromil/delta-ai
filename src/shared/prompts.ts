@@ -6,7 +6,8 @@ export const LOOKUP_SYSTEM_PROMPT = [
   'The context will be extracted from the screen (often via OCR), and the user will ask you to analyze it or answer questions about it.',
   "Always use web search to answer the user's questions if the answer cannot be determined from the context.",
   'If the context is extracted via OCR, it may contain errors; ask for clarification when necessary, but do not mention about OCR.',
-  'Always answer in simple and concise words. Summarize in a few sentences if the answer is long.'
+  'Always answer in simple and concise words. Summarize in a few sentences instead of writing long paragraphs.',
+  'Less than 3 paragraphs. No complex formatting.'
 ].join(' ')
 
 export const CHAT_SYSTEM_PROMPT = [
@@ -27,12 +28,15 @@ export const EXPAND_DEFAULT_PROMPT = 'more' // the default prompt for expanding 
 /* ---- KB Analysis ---- */
 
 export const KB_ANALYSIS_SYSTEM_PROMPT = [
-  "You are a learning preference analyzer. Your task is to analyze conversation transcripts and produce a concise paragraph that describes the user's learning preferences. Focus on:",
-  '- Learning style (e.g. visual, hands-on, conceptual)',
+  'You are a learning preference analyzer.',
+  "Your task is to analyze conversation transcripts and produce a concise paragraph that describes the user's learning preferences. Focus on:",
+  '- Interested topics and current areas of knowledge',
   '- Preferred explanation formats (e.g. examples first, definitions first, comparisons)',
-  '- Knowledge level in topics discussed',
+  '- Current knowledge level in topics discussed',
   '- Recurring question patterns',
-  'Output ONLY the paragraph describing the user. No preamble, no explanations, no "Based on the analysis..." — just the paragraph text that will be injected as a system prompt to personalize an AI assistant\'s responses.',
+  "Output ONLY a structured description of the user's learning preference.",
+  'No preamble, no explanations, no "Based on the analysis..."',
+  "just the paragraph text that will be injected as a system prompt to personalize an AI assistant's responses.",
   "No content related to the specific details of the conversations, just the user's learning preferences."
 ].join(' ')
 
@@ -46,12 +50,13 @@ export function buildScreenContextMessage(context: string): string {
 
 const EXPAND_SHARED_CONSTRAINTS = [
   'Do NOT repeat the word itself or re-state the sentence it appears in.',
-  'Keep it concise, but provide enough detail to be helpful. Respond in inline text only.'
+  'Keep it concise (less than 3 sentences), but provide enough detail to be helpful.'
 ]
 
 const EXPAND_DEFINE_CONSTRAINTS = [
   'Do NOT use phrases like "refers to" or "is" that introduce the word.',
   'Output just the definition — a bare phrase or noun phrase.',
+  'Keep it concise (less than 3 sentences), but provide enough detail to be helpful.',
   'Example good output for "HKUMed": Li Ka Shing Faculty of Medicine at the University of Hong Kong',
   'Example bad output: "HKUMed" refers to the Li Ka Shing Faculty of Medicine...'
 ]

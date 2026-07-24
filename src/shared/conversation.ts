@@ -10,6 +10,7 @@ export type ExpandableSegment =
       expansionId: number
       originalText: string
       cachedText: string
+      prompt?: string
       error?: string
       loading?: boolean
       folded: boolean
@@ -81,6 +82,13 @@ export function tokenize(text: string): ExpandableSegment[] {
   const parts = flattened.split(/(\n+)/)
   for (const part of parts) {
     if (part === '') continue
+    if (/^\n+$/.test(part) && segments.length > 0) {
+      const last = segments[segments.length - 1]
+      if (last.kind === 'text') {
+        last.text += part
+        continue
+      }
+    }
     segments.push({ kind: 'text', text: part })
   }
   return segments
@@ -93,7 +101,8 @@ export function insertExpansion(
   selection: string,
   newExpansionId: number,
   startOffset?: number,
-  endOffset?: number
+  endOffset?: number,
+  prompt?: string
 ): { segments: ExpandableSegment[]; startIndex: number } {
   // Refuse if any segment in [startIndex, endIndex) is an expansion boundary
   for (let i = startIndex; i < endIndex; i++) {
@@ -110,6 +119,7 @@ export function insertExpansion(
     expansionId: newExpansionId,
     originalText: selection,
     cachedText: '',
+    prompt,
     loading: true,
     folded: false,
     segments: []
@@ -164,7 +174,8 @@ export function insertExpansionNested(
   selection: string,
   newExpansionId: number,
   startOffset?: number,
-  endOffset?: number
+  endOffset?: number,
+  prompt?: string
 ): ExpandableSegment[] {
   if (parentExpansionId === undefined) {
     return insertExpansion(
@@ -174,7 +185,8 @@ export function insertExpansionNested(
       selection,
       newExpansionId,
       startOffset,
-      endOffset
+      endOffset,
+      prompt
     ).segments
   }
   return segments.map((seg) => {
@@ -186,7 +198,8 @@ export function insertExpansionNested(
         selection,
         newExpansionId,
         startOffset,
-        endOffset
+        endOffset,
+        prompt
       )
       return { ...seg, segments: result.segments }
     }
@@ -201,7 +214,8 @@ export function insertExpansionNested(
           selection,
           newExpansionId,
           startOffset,
-          endOffset
+          endOffset,
+          prompt
         )
       }
     }

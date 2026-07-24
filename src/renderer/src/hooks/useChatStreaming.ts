@@ -323,7 +323,8 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
           selection,
           expansionId,
           startOffset,
-          endOffset
+          endOffset,
+          prompt
         )
 
         turns[turnIdx] = { ...turn, segments: newSegments }
