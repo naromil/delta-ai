@@ -20,6 +20,8 @@ The build will fail on typecheck errors, so fix them before committing.
 - Don't import Electron main APIs into the renderer; use the preload bridge.
 - Don't bypass `registerHotkey` for global shortcuts — the portal path won't fire on Wayland.
 - Don't commit secrets. API keys live only in `{userData}/config/providers.json`.
+- Use custom scrollbars everywhere — never the native OS scrollbar. Style `::-webkit-scrollbar` on scrollable elements.
+- Store all AI-facing prompt strings as exported constants in `src/shared/prompts.ts`. Never inline a prompt in a handler or component.
 - When architecture changes, update this file.
 
 ## Detailed guidelines
@@ -204,6 +206,10 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   right-click position. It appears as a third item in the context menu. On submit,
   the prompt text (defaulting to `"elaborate on"` if empty) replaces the `"Define..."`
   instruction via `buildExpandPromptedInstruction` in `prompts.ts`.
+
+#### More Details
+
+Refer to `docs/architecture.md` for more details.
 
 ### Coding Style Guidelines
 

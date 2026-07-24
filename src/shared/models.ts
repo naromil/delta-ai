@@ -5,7 +5,7 @@ export type AuthShape = 'apiKey' | 'none' | 'host'
 
 export type PrivacyTier = 'local' | 'cloud-zdr' | 'cloud'
 
-export type RoleId = 'chat' | 'lookup' | 'kb-maintenance' | 'context-injection'
+export type RoleId = 'chat' | 'lookup' | 'kb-maintenance'
 
 export interface ProviderTypeDef {
   label: string
@@ -58,7 +58,7 @@ export const providerRegistry: Record<ProviderType, ProviderTypeDef> = {
     knownModels: [
       'gemini-3.6-flash',
       'gemini-3.5-flash-lite',
-      'gemini-3.1-flash',
+      'gemini-3.5-flash',
       'gemini-3.1-flash-lite',
       'gemma-4-31b-it'
     ]
@@ -116,13 +116,7 @@ export const roleRegistry: Record<RoleId, RoleDef> = {
   'kb-maintenance': {
     label: 'Knowledge Base Maintenance',
     description: 'Model used to process and maintain the local knowledge base',
-    locked: true,
-    offersWebSearch: false
-  },
-  'context-injection': {
-    label: 'Context Injection',
-    description: 'Model or algorithm that injects relevant knowledge into lookup queries',
-    locked: true,
+    locked: false,
     offersWebSearch: false
   }
 }
@@ -130,8 +124,7 @@ export const roleRegistry: Record<RoleId, RoleDef> = {
 export const DEFAULT_ROLES: Record<RoleId, RoleAssignment> = {
   chat: { connectionId: null, model: '', webSearchEnabled: false },
   lookup: { connectionId: null, model: '', webSearchEnabled: false },
-  'kb-maintenance': { connectionId: null, model: '', webSearchEnabled: false },
-  'context-injection': { connectionId: null, model: '', webSearchEnabled: false }
+  'kb-maintenance': { connectionId: null, model: '', webSearchEnabled: false }
 }
 
 export function createDefaultModelConfig(): ModelConfig {

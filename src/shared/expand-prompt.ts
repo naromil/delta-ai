@@ -1,9 +1,5 @@
 import type { ProviderMessage } from './conversation'
-import {
-  ANSWER_FALLBACK,
-  buildExpandUserInstruction,
-  buildExpandPromptedInstruction
-} from './prompts'
+import { buildExpandUserInstruction, buildExpandPromptedInstruction } from './prompts'
 
 export interface BuildExpandMessagesInput {
   answer: string
@@ -17,7 +13,7 @@ export function buildExpandMessages(input: BuildExpandMessagesInput): ProviderMe
 
   messages.push({
     role: 'assistant',
-    content: answer || ANSWER_FALLBACK
+    content: answer || '(empty answer)'
   })
   messages.push({
     role: 'user',

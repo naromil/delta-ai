@@ -18,13 +18,24 @@ export function getSystemPrompt(role?: 'chat' | 'lookup'): string {
   return role === 'lookup' ? LOOKUP_SYSTEM_PROMPT : CHAT_SYSTEM_PROMPT
 }
 
-/* ---- Default and Fallback ---- */
-
-export const ANSWER_FALLBACK = '(empty answer)' // the provider returns an empty answer
+/* ---- Defaults ---- */
 
 export const LOOKUP_DEFAULT_QUERY = 'summarize' // the default for the lookup when user question is empty
 
 export const EXPAND_DEFAULT_PROMPT = 'more' // the default prompt for expanding a selection
+
+/* ---- KB Analysis ---- */
+
+export const KB_ANALYSIS_SYSTEM_PROMPT = [
+  "You are a learning preference analyzer. Your task is to analyze conversation transcripts and produce a concise paragraph that describes the user's learning preferences. Focus on:",
+  '- Learning style (e.g. visual, hands-on, conceptual)',
+  '- Preferred explanation formats (e.g. examples first, definitions first, comparisons)',
+  '- Knowledge level in topics discussed',
+  '- Recurring question patterns',
+  'Output ONLY the paragraph describing the user. No preamble, no explanations, no "Based on the analysis..." — just the paragraph text that will be injected as a system prompt to personalize an AI assistant\'s responses.',
+  "No content related to the specific details of the conversations, just the user's learning preferences."
+].join(' ')
+
 /* ---- Context Injection ---- */
 
 export function buildScreenContextMessage(context: string): string {

@@ -99,7 +99,13 @@ const api = {
     ipcRenderer.invoke('conversation-load-most-recent'),
   listUnfedConversations: () => ipcRenderer.invoke('conversation-list-unfed'),
   markConversationKbFed: (id: string): Promise<void> =>
-    ipcRenderer.invoke('conversation-kb-fed', id)
+    ipcRenderer.invoke('conversation-kb-fed', id),
+
+  kbLoadPrompt: (): Promise<{ prompt: string }> => ipcRenderer.invoke('kb-load-prompt'),
+  kbAnalyze: (): Promise<{ newPrompt: string; conversationsAnalyzed: number }> =>
+    ipcRenderer.invoke('kb-analyze'),
+  kbReanalyze: (): Promise<{ newPrompt: string; conversationsAnalyzed: number }> =>
+    ipcRenderer.invoke('kb-reanalyze')
 }
 
 if (process.contextIsolated) {

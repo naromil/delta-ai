@@ -62,6 +62,10 @@ declare global {
       loadMostRecentChat: () => Promise<ConversationRecord | null>
       listUnfedConversations: () => Promise<ConversationMeta[]>
       markConversationKbFed: (id: string) => Promise<void>
+
+      kbLoadPrompt: () => Promise<{ prompt: string }>
+      kbAnalyze: () => Promise<{ newPrompt: string; conversationsAnalyzed: number }>
+      kbReanalyze: () => Promise<{ newPrompt: string; conversationsAnalyzed: number }>
     }
   }
 }

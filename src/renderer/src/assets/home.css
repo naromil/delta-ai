@@ -144,3 +144,77 @@
     display: none;
   }
 }
+
+/* ---- Knowledge Base view ---- */
+
+.kb-status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px;
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  margin-bottom: 24px;
+}
+
+.kb-status-text {
+  font-size: 14px;
+  color: var(--text-2);
+}
+
+.kb-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.kb-result {
+  color: var(--success);
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+
+.kb-error {
+  color: var(--error);
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+
+.kb-section {
+  margin-bottom: 24px;
+}
+
+.kb-section-desc {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.kb-section-title {
+  margin: 0 0 4px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.kb-prompt-textarea {
+  resize: vertical;
+  min-height: 200px;
+  font-family: 'SF Mono', 'Fira Code', 'Fira Mono', Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.kb-prompt-textarea::-webkit-scrollbar {
+  width: 8px;
+}
+
+.kb-prompt-textarea::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 4px;
+}
+
+.kb-prompt-textarea::-webkit-scrollbar-thumb:hover {
+  background: var(--text-3);
+}

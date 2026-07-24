@@ -17,8 +17,7 @@ export class RoleUnassignedError extends Error {
     const label: Record<RoleId, string> = {
       chat: 'Chat',
       lookup: 'Lookup',
-      'kb-maintenance': 'Knowledge Base Maintenance',
-      'context-injection': 'Context Injection'
+      'kb-maintenance': 'Knowledge Base Maintenance'
     }
     super(
       `No model assigned to the ${label[roleId] ?? roleId} role. Open Settings → Models to configure it.`
@@ -154,8 +153,8 @@ export function resolveRole(
 
 /* ---- IPC handlers ---- */
 
-app.whenReady().then(() => {
-  /* Settings (hotkey) */
+export function registerConfigIpcHandlers(): void {
+  // Settings (hotkey)
   ipcMain.handle(
     'save-settings',
     async (_event, settings: AppSettings): Promise<{ success: boolean }> => {
@@ -181,4 +180,27 @@ app.whenReady().then(() => {
   ipcMain.handle('save-model-config', (_event, config: ModelConfig): { success: boolean } => {
     return { success: saveModelConfig(config) }
   })
-})
+}
+
+/* ---- KB prompt persistence ---- */
+
+function kbDir(): string {
+  const dir = join(app.getPath('userData'), 'kb')
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  return dir
+}
+
+export function loadKbPrompt(): string {
+  try {
+    const promptPath = join(kbDir(), 'prompt.txt')
+    if (!existsSync(promptPath)) return ''
+    return readFileSync(promptPath, 'utf-8')
+  } catch {
+    return ''
+  }
+}
+
+export function saveKbPrompt(content: string): void {
+  const promptPath = join(kbDir(), 'prompt.txt')
+  writeFileSync(promptPath, content, 'utf-8')
+}

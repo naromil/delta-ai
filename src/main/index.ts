@@ -3,7 +3,13 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { unregisterGlobalShortcutPortal } from './services/global-shortcut'
-import { loadAppSettings, registerHotkey, currentCloseToTray } from './config'
+import {
+  loadAppSettings,
+  registerHotkey,
+  currentCloseToTray,
+  loadKbPrompt,
+  registerConfigIpcHandlers
+} from './config'
 import { handleHotkeyPressed } from './lookup/lookup'
 import {
   callProviderStream,
@@ -33,6 +39,7 @@ import {
   markConversationKbFed,
   listUnfedConversations
 } from './conversations'
+import { registerKbIpcHandlers } from './kb/handlers'
 
 /* ---- App lifecycle ---- */
 app.whenReady().then(async () => {
@@ -46,8 +53,18 @@ app.whenReady().then(async () => {
   ipcMain.on(
     'chat-send',
     async (event, payload: { messages: ProviderMessage[]; requestId: string; role?: string }) => {
-      const { messages, requestId } = payload
+      const { requestId } = payload
       const role: RoleId = (payload.role as RoleId) ?? 'chat'
+      const messages = [...payload.messages]
+      if (role === 'lookup') {
+        const kbPrompt = loadKbPrompt()
+        if (kbPrompt) {
+          const sysMsg = messages.find((m) => m.role === 'system')
+          if (sysMsg) {
+            sysMsg.content = sysMsg.content + '\n\n' + kbPrompt
+          }
+        }
+      }
       try {
         let fullResponse = ''
         for await (const chunk of callProviderStream(messages, role)) {
@@ -210,6 +227,9 @@ app.whenReady().then(async () => {
   ipcMain.handle('conversation-kb-fed', async (_event, id: string) => {
     await markConversationKbFed(id)
   })
+
+  registerConfigIpcHandlers()
+  registerKbIpcHandlers()
 
   const settings = loadAppSettings()
   await registerHotkey(settings.hotkey, handleHotkeyPressed)
