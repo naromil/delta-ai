@@ -6,6 +6,8 @@ on:
 
 jobs:
   build:
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -51,10 +53,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            delta-ai*
-            *.dmg
-            *.deb
-            *.AppImage
-            *.exe
-            *.snap
-          fail_on_unmatched: false
+            dist/delta-ai*
+            dist/*.dmg
+            dist/*.deb
+            dist/*.AppImage
+            dist/*.exe
+            dist/*.snap
+          fail_on_unmatched_files: false
