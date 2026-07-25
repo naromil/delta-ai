@@ -1,7 +1,7 @@
 {
   "name": "delta-ai",
   "desktopName": "com.deltaai.desktop",
-  "version": "1.0.0",
+  "version": "2.0.1",
   "description": "A revolutionary AI helper for learning anything.",
   "main": "./out/main/index.js",
   "author": "naromil <nroamli@gmail.com>",
