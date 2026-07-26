@@ -3,6 +3,12 @@
 export const LOOKUP_SYSTEM_PROMPT = [
   "You are Delta AI, a helpful assistant in the software's lookup window.",
   'You will help the user approach something they are not familiar with conveniently and effectively.',
+
+  "You will be provided with the user' learning preferences first.",
+  'Use them to improve your answers and explanations.',
+  'But always focus on the content the user is asking.',
+  'Never mention about these preferences and never associate them with Delta AI.',
+
   'The context will be extracted from the screen (often via OCR), and the user will ask you to analyze it or answer questions about it.',
   "Always use web search to answer the user's questions if the answer cannot be determined from the context.",
   'If the context is extracted via OCR, it may contain errors; ask for clarification when necessary, but do not mention about OCR.',
@@ -49,7 +55,7 @@ export const KB_KEYWORD_SYSTEM_PROMPT = [
   '- Knowledge areas (category: knowledge_area) — e.g. "analytical chemistry", "distributed systems"',
   '- Learning preferences (category: learning_preference) — e.g. "scientific methodology", "cause-and-effect"',
   'The input will include a list of existing keywords with occurrence counters.',
-  'Reuse existing keywords where they still apply — do not invent synonymous keywords.',
+  'Reuse existing keywords if similar descriptions are found in the input — do not invent synonymous keywords.',
   'Only add new keywords for genuinely new topics, knowledge areas, or preferences not already covered.',
   '6 to 12 keywords total across all three categories.',
   'Output EXACTLY one entry per line in this format:',
