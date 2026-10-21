@@ -27,7 +27,8 @@ export async function loadConversation(id: string): Promise<ConversationRecord |
   try {
     const data = await readFile(filePath, 'utf-8')
     return JSON.parse(data) as ConversationRecord
-  } catch {
+  } catch (err) {
+    console.warn(`Failed to read conversation ${id}:`, err)
     return null
   }
 }
@@ -50,11 +51,10 @@ export async function listConversations(source?: 'chat' | 'lookup'): Promise<Con
   } catch {
     return []
   }
+  const ids = files.filter((file) => file.endsWith('.json')).map((file) => file.slice(0, -5))
+  const records = await Promise.all(ids.map((id) => loadConversation(id)))
   const results: ConversationMeta[] = []
-  for (const file of files) {
-    if (!file.endsWith('.json')) continue
-    const id = file.slice(0, -5)
-    const record = await loadConversation(id)
+  for (const record of records) {
     if (!record) continue
     if (source && record.source !== source) continue
     results.push(toConversationMeta(record))
@@ -72,11 +72,12 @@ export async function loadMostRecentChat(): Promise<ConversationRecord | null> {
 export async function markConversationKbFed(id: string): Promise<void> {
   const record = await loadConversation(id)
   if (!record) return
-  record.kbFed = true
-  await saveConversation(record)
   if (record.source === 'lookup') {
     await deleteConversation(id)
+    return
   }
+  record.kbFed = true
+  await saveConversation(record)
 }
 
 export async function listUnfedConversations(): Promise<ConversationMeta[]> {
