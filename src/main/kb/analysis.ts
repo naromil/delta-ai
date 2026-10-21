@@ -1,4 +1,3 @@
-import { loadConversation } from '../conversations'
 import { KB_ANALYSIS_SYSTEM_PROMPT, KB_KEYWORD_SYSTEM_PROMPT } from '../../shared/prompts'
 import type { ConversationRecord, ExpandableSegment } from '../../shared/conversation'
 import type { CategorizedKeyword } from '../../shared/models'
@@ -83,16 +82,6 @@ export function buildSingleMaterial(record: ConversationRecord): string {
   }
 
   return parts.join('\n')
-}
-
-export async function buildKbMaterials(metas: Array<{ id: string }>): Promise<string> {
-  const materials: string[] = []
-  for (const meta of metas) {
-    const record = await loadConversation(meta.id)
-    if (!record) continue
-    materials.push(buildSingleMaterial(record))
-  }
-  return materials.join('\n\n=====\n\n')
 }
 
 export function buildKbAnalysisMessages(
