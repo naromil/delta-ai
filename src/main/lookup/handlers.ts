@@ -1,5 +1,5 @@
 import type { LookupSession } from './state'
-import { isSessionAlive, notifySessionState } from './state'
+import { isSessionAlive, notifySessionState, notifyProcessing, applyOcrResult } from './state'
 import { runOCRTokenedFor, cancelOCR } from './capture'
 
 export async function handlePasteText(session: LookupSession, text: string): Promise<void> {
@@ -22,14 +22,10 @@ export async function handlePasteImage(session: LookupSession, base64: string): 
 
   session.ocrToken++
   session.contextReady = false
-  notifySessionState(session, 'processing', '', 'OCR running on pasted image\u2026')
+  notifyProcessing(session, 'OCR running on pasted image\u2026')
 
   const text = await runOCRTokenedFor(session, buffer)
   if (text === null) return
 
-  if (!isSessionAlive(session)) return
-
-  session.context = text
-  session.contextReady = true
-  notifySessionState(session, 'ready', text, text ? '' : 'No text detected in pasted image')
+  applyOcrResult(session, session.ocrToken, text, 'No text detected in pasted image')
 }

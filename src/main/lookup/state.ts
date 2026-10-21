@@ -31,6 +31,33 @@ export function notifySessionState(
   sendToSession(session, 'lookup-context', { status, text, hint })
 }
 
+export function notifyProcessing(session: LookupSession, hint: string): void {
+  notifySessionState(session, 'processing', '', hint)
+}
+
 export function isSessionAlive(session: LookupSession | null): boolean {
   return !!session && !session.window.isDestroyed()
+}
+
+/**
+ * Apply an async OCR outcome to a session. Stale results (dead window or a token
+ * bumped by a newer job) are dropped. An `Error` means the OCR job failed.
+ */
+export function applyOcrResult(
+  session: LookupSession,
+  token: number,
+  text: string | Error,
+  emptyHint: string
+): void {
+  if (!isSessionAlive(session) || token !== session.ocrToken) return
+
+  if (text instanceof Error) {
+    session.contextReady = true
+    notifySessionState(session, 'ready', '', `OCR error: ${text.message}`)
+    return
+  }
+
+  session.context = text
+  session.contextReady = true
+  notifySessionState(session, 'ready', text, text ? '' : emptyHint)
 }

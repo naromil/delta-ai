@@ -2,7 +2,7 @@ import { screen, clipboard } from 'electron'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { createLookupSession } from './window'
-import { isSessionAlive, notifySessionState } from './state'
+import { isSessionAlive, notifyProcessing, applyOcrResult } from './state'
 import { captureScreen, runOCR } from './capture'
 import { currentLookupContextMode, isWaylandSession } from '../config'
 
@@ -60,36 +60,26 @@ async function doFullscreenOCR(cursorX: number, cursorY: number): Promise<void> 
 
   const token = ++session.ocrToken
   session.contextReady = false
-  notifySessionState(session, 'processing', '', 'Waiting for context…')
+  notifyProcessing(session, 'Waiting for context…')
 
-  let ocrText = ''
   try {
-    ocrText = await runOCR(imageBuffer)
+    const ocrText = await runOCR(imageBuffer)
+    applyOcrResult(session, token, ocrText, 'No text detected on screen')
   } catch (err) {
-    if (!isSessionAlive(session)) return
-    if (token !== session.ocrToken) return
-    const msg = err instanceof Error ? err.message : String(err)
-    session.contextReady = true
-    notifySessionState(session, 'ready', '', `OCR error: ${msg}`)
-    return
+    applyOcrResult(
+      session,
+      token,
+      err instanceof Error ? err : new Error(String(err)),
+      'No text detected on screen'
+    )
   }
-
-  if (!isSessionAlive(session)) return
-  if (token !== session.ocrToken) return
-
-  session.context = ocrText
-  session.contextReady = true
-  notifySessionState(session, 'ready', ocrText, ocrText ? '' : 'No text detected on screen')
 }
 
 async function tryClipboardContext(cursorX: number, cursorY: number): Promise<boolean> {
   const text = await readClipboardText()
   if (text && text.trim()) {
     const session = createLookupSession(cursorX, cursorY)
-    if (!isSessionAlive(session)) return true
-    session.context = text.trim()
-    session.contextReady = true
-    notifySessionState(session, 'ready', session.context, '')
+    applyOcrResult(session, session.ocrToken, text.trim(), '')
     return true
   }
 
@@ -100,26 +90,18 @@ async function tryClipboardContext(cursorX: number, cursorY: number): Promise<bo
 
     const token = ++session.ocrToken
     session.contextReady = false
-    notifySessionState(session, 'processing', '', 'Running OCR on clipboard image…')
+    notifyProcessing(session, 'Running OCR on clipboard image…')
 
     try {
       const ocrText = await runOCR(pngBuffer)
-      if (!isSessionAlive(session)) return true
-      if (token !== session.ocrToken) return true
-      session.context = ocrText
-      session.contextReady = true
-      notifySessionState(
-        session,
-        'ready',
-        ocrText,
-        ocrText ? '' : 'No text detected in clipboard image'
-      )
+      applyOcrResult(session, token, ocrText, 'No text detected in clipboard image')
     } catch (err) {
-      if (!isSessionAlive(session)) return true
-      if (token !== session.ocrToken) return true
-      const msg = err instanceof Error ? err.message : String(err)
-      session.contextReady = true
-      notifySessionState(session, 'ready', '', `OCR error: ${msg}`)
+      applyOcrResult(
+        session,
+        token,
+        err instanceof Error ? err : new Error(String(err)),
+        'No text detected in clipboard image'
+      )
     }
     return true
   }
