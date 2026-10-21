@@ -1,8 +1,9 @@
 import { useCallback } from 'react'
-import type { ExpandableSegment } from '../../../../shared/conversation'
+import type { ExpandableSegment, ExpansionSegment } from '../../../../shared/conversation'
+import { tokenize } from '../../../../shared/conversation'
 
 interface ExpansionFrameProps {
-  segment: ExpandableSegment & { kind: 'expansion' }
+  segment: ExpansionSegment
   onFold: (id: number) => void
   onUnfold: (id: number) => void
   onContextMenu: (e: React.MouseEvent, segmentIndex: number) => void
@@ -78,7 +79,7 @@ function ExpansionFrame({
           'Thinking\u2026'
         ) : (
           <InlineSegments
-            segments={childSegments.length > 0 ? childSegments : tokenizeInline(cachedText)}
+            segments={childSegments.length > 0 ? childSegments : tokenize(cachedText)}
             onFold={onFold}
             onUnfold={onUnfold}
             onContextMenu={onContextMenu}
@@ -99,11 +100,6 @@ function ExpansionFrame({
       )}
     </span>
   )
-}
-
-function tokenizeInline(text: string): ExpandableSegment[] {
-  const parts = text.split(/(\n+)/)
-  return parts.filter((p) => p !== '').map((part) => ({ kind: 'text' as const, text: part }))
 }
 
 interface InlineSegmentsProps {
