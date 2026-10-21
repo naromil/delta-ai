@@ -53,30 +53,34 @@ Renderer (React 19)          Preload (contextBridge)        Main process (Node)
 
 ### Key modules
 
-| Module                                       | Role                                                                                                                                                         |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `src/shared/models.ts`                       | Provider/role type registries, connection & config types — pure TS, no runtime deps                                                                          |
-| `src/shared/conversation.ts`                 | `ConversationState` model + pure helpers: tokenize, expand/insert/fold/unfold, serialize for API                                                             |
-| `src/shared/expand-prompt.ts`                | `buildExpandMessages` — constructs API messages for inline expansions with optional custom direction                                                         |
-| `src/shared/prompts.ts`                      | All LLM-facing prompt strings (system prompts, context template, expand instructions, KB analysis)                                                           |
-| `src/main/index.ts`                          | App lifecycle, main window, tray, streaming IPC handlers (chat-send, chat-expand, lookup-transfer)                                                           |
-| `src/main/config.ts`                         | Config persistence (providers.json, settings.json), Wayland detection, hotkey registry, KB prompt I/O                                                        |
-| `src/main/provider.ts`                       | Provider dispatch by role — resolves connection + model, routes to Google AI Studio / OpenAI-compatible / Ollama / OpenAI / OpenRouter                       |
-| `src/main/conversations.ts`                  | Conversation CRUD on `{userData}/conversations/{id}.json`, list/search, KB-fed marking                                                                       |
-| `src/main/lookup/lookup.ts`                  | Hotkey entry point: capture screen → OCR → create popup session                                                                                              |
-| `src/main/lookup/capture.ts`                 | Screen capture (portal-first on KDE Wayland) + tesseract.js OCR worker                                                                                       |
-| `src/main/lookup/window.ts`                  | Lookup popup BrowserWindow, grow animation, ref-counted handlers                                                                                             |
-| `src/main/lookup/state.ts`                   | `LookupSession` interface, session management, IPC helpers                                                                                                   |
-| `src/main/services/global-shortcut.ts`       | XDG GlobalShortcuts D-Bus portal for Wayland                                                                                                                 |
-| `src/main/services/screen-capture.ts`        | Freedesktop Screenshot D-Bus portal for KDE Wayland (silent capture)                                                                                         |
-| `src/main/kb/analysis.ts`                    | KB personalization pipeline: serialize conversations, build analysis messages, extract learning preferences                                                  |
-| `src/main/kb/handlers.ts`                    | KB IPC handlers (kb-load-prompt, kb-analyze, kb-reanalyze)                                                                                                   |
-| `src/preload/index.ts`                       | `contextBridge` API — config, lookup, chat streaming, conversation persistence, KB channels                                                                  |
-| `src/renderer/src/Root.tsx`                  | Routes between `App` (main window) and `LookupApp` (popup) via `?role=lookup`                                                                                |
-| `src/renderer/src/App.tsx`                   | App shell: sidebar navigation with 5 views (Home, Chat, Knowledge Base, Look-Up Guide, Settings)                                                             |
-| `src/renderer/src/LookupApp.tsx`             | Lookup popup UI: OCR context panel, ask input, paste handling, transfer-to-chat, grow transitions                                                            |
-| `src/renderer/src/hooks/useChatStreaming.ts` | Shared streaming hook — owns `ConversationState`, dispatches `chat-send`/`chat-expand`, auto-saves                                                           |
-| `src/renderer/src/components/conversation/`  | Conversation UI: message list (`Conversation.tsx`), turns (`Turn.tsx`), expansion frames (`ExpansionFrame.tsx`), context menu, expand prompt, search overlay |
+| Module                                              | Role                                                                                                                                                         |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/shared/models.ts`                              | Provider/role type registries, connection & config types — pure TS, no runtime deps                                                                          |
+| `src/shared/conversation.ts`                        | `ConversationState` model + pure helpers: tokenize, expand/insert/fold/unfold, serialize for API                                                             |
+| `src/shared/expand-prompt.ts`                       | `buildExpandMessages` — constructs API messages for inline expansions with optional custom direction                                                         |
+| `src/shared/prompts.ts`                             | All LLM-facing prompt strings (system prompts, context template, expand instructions, KB analysis)                                                           |
+| `src/main/index.ts`                                 | App lifecycle, main window, tray, streaming IPC handlers (chat-send, chat-expand, lookup-transfer)                                                           |
+| `src/main/config.ts`                                | Config persistence (providers.json, settings.json), Wayland detection, hotkey registry                                                                       |
+| `src/main/provider.ts`                              | Provider dispatch by role — resolves connection + model, routes to Google AI Studio / OpenAI-compatible / Ollama / OpenAI / OpenRouter                       |
+| `src/main/conversations.ts`                         | Conversation CRUD on `{userData}/conversations/{id}.json`, list/search, KB-fed marking                                                                       |
+| `src/main/lookup/lookup.ts`                         | Hotkey entry point: capture screen → OCR → create popup session                                                                                              |
+| `src/main/lookup/capture.ts`                        | Screen capture (portal-first on KDE Wayland) + tesseract.js OCR worker                                                                                       |
+| `src/main/lookup/window.ts`                         | Lookup popup BrowserWindow, grow animation, one-time OCR IPC handler                                                                                         |
+| `src/main/lookup/state.ts`                          | `LookupSession` interface, session management, `applyOcrResult`, IPC helpers                                                                                 |
+| `src/main/services/global-shortcut.ts`              | XDG GlobalShortcuts D-Bus portal for Wayland                                                                                                                 |
+| `src/main/services/screen-capture.ts`               | Freedesktop Screenshot D-Bus portal for KDE Wayland (silent capture)                                                                                         |
+| `src/main/kb/analysis.ts`                           | KB personalization pipeline: serialize conversations, build analysis messages, extract learning preferences                                                  |
+| `src/main/kb/keywords.ts`                           | Pure keyword parsing, merging and per-category trimming                                                                                                      |
+| `src/main/kb/store.ts`                              | KB prompt/keyword files under `{userData}/kb/`                                                                                                               |
+| `src/main/kb/handlers.ts`                           | KB IPC handlers (kb-load-prompt, kb-analyze, kb-reanalyze)                                                                                                   |
+| `src/preload/index.ts`                              | `contextBridge` API — config, lookup, chat streaming, conversation persistence, KB channels                                                                  |
+| `src/renderer/src/Root.tsx`                         | Routes between `App` (main window) and `LookupApp` (popup) via `?role=lookup`                                                                                |
+| `src/renderer/src/App.tsx`                          | App shell: sidebar navigation with 5 views (Home, Chat, Knowledge Base, Look-Up Guide, Settings)                                                             |
+| `src/renderer/src/LookupApp.tsx`                    | Lookup popup UI: OCR context panel, ask input, paste handling, transfer-to-chat, grow transitions                                                            |
+| `src/renderer/src/hooks/useChatStreaming.ts`        | Shared streaming hook — owns `ConversationState`, dispatches `chat-send`/`chat-expand`, auto-saves                                                           |
+| `src/renderer/src/hooks/useExpansionContextMenu.ts` | Right-click → selection/word → Expand pipeline shared by both windows                                                                                        |
+| `src/renderer/src/components/conversation/`         | Conversation UI: message list (`Conversation.tsx`), turns (`Turn.tsx`), expansion frames (`ExpansionFrame.tsx`), context menu, expand prompt, search overlay |
+| `tests/`                                            | Vitest suites for pure modules (`shared/conversation`, `main/kb/keywords`, `main/provider`)                                                                  |
 
 ### IPC channels
 
@@ -100,7 +104,7 @@ Renderer (React 19)          Preload (contextBridge)        Main process (Node)
 
 ### Prerequisites
 
-- **Node.js** >= 18
+- **Node.js** >= 20.19 (CI uses 22)
 - **npm** >= 9
 - **wl-clipboard** (Linux Wayland only) — `sudo apt install wl-clipboard`
 
@@ -111,13 +115,25 @@ npm install
 npm run dev           # Launch with HMR (electron-vite)
 ```
 
+Before pushing anything, run the full gate:
+
+```bash
+npm run verify        # typecheck + lint + tests + formatting
+```
+
+Unit tests cover the pure modules only — the conversation/expansion model, the KB keyword
+pipeline, and provider dispatch with a mocked config. There is no renderer or end-to-end
+harness yet, so UI changes still need a manual pass with `npm run dev`.
+
 ### Commands
 
 | Command               | Description                                      |
 | --------------------- | ------------------------------------------------ |
 | `npm run dev`         | Launch app with HMR                              |
 | `npm run typecheck`   | TypeScript check (`tsc --noEmit` for node + web) |
-| `npm run lint`        | ESLint + Prettier                                |
+| `npm run lint`        | ESLint                                           |
+| `npm run test`        | Unit tests (Vitest)                              |
+| `npm run verify`      | typecheck + lint + tests + formatting (CI gate)  |
 | `npm run format`      | Prettier write across the repo                   |
 | `npm run build`       | Typecheck then `electron-vite build`             |
 | `npm run build:linux` | Build Linux AppImage                             |
@@ -184,17 +200,18 @@ src/
   shared/         # Pure TypeScript: types, conversation model, prompts, expand logic
   main/           # Electron main process: lifecycle, IPC, config, OCR, KB, services
     lookup/       # Screen capture, OCR, popup window orchestration
-    kb/           # Knowledge Base analysis and personalization
+    kb/           # Knowledge Base analysis, keyword extraction, storage
     services/     # D-Bus portal integrations (Wayland)
   preload/        # contextBridge API surface
   renderer/       # React 19 UI
     src/
       assets/     # CSS (base.css, chat.css, expand.css, lookup.css, settings.css)
       components/ # React components (Conversation, Turn, ExpansionFrame, Settings)
-      hooks/      # useChatStreaming — shared streaming state management
+      hooks/      # useChatStreaming, useExpansionContextMenu
       views/      # Home, Knowledge, LookupGuide, Settings views
+tests/            # Vitest suites for pure modules
 docs/
-  architecture.md # Detailed architecture reference
+  architecture.md # Current architecture reference
 ```
 
 ---
