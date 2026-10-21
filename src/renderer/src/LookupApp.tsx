@@ -22,8 +22,9 @@ function readFileAsBase64(file: File): Promise<string | null> {
 
 function LookupApp(): React.JSX.Element {
   const [grown, setGrown] = useState(false)
-  const [contextText, setContextText] = useState('Waiting for context\u2026')
+  const [contextText, setContextText] = useState('Waiting for context…')
   const [contextHint, setContextHint] = useState(true)
+  const [flash, setFlash] = useState(false)
   const [ocrProcessing, setOcrProcessing] = useState(false)
   const [input, setInput] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -45,17 +46,21 @@ function LookupApp(): React.JSX.Element {
 
   /* ---- Flash hint helper ---- */
   const flashHint = useCallback((msg?: string) => {
-    const extractedEl = document.getElementById('extracted')
-    if (!extractedEl) return
     if (msg) {
-      extractedEl.textContent = msg
-      extractedEl.classList.add('hint')
+      setContextText(msg)
+      setContextHint(true)
     }
-    extractedEl.classList.add('flash')
+    setFlash(false)
+    requestAnimationFrame(() => setFlash(true))
     if (flashTimerRef.current !== null) window.clearTimeout(flashTimerRef.current)
-    flashTimerRef.current = window.setTimeout(() => {
-      extractedEl.classList.remove('flash')
-    }, 600)
+    flashTimerRef.current = window.setTimeout(() => setFlash(false), 600)
+  }, [])
+
+  /* ---- Clear pending flash timer on unmount ---- */
+  useEffect(() => {
+    return () => {
+      if (flashTimerRef.current !== null) window.clearTimeout(flashTimerRef.current)
+    }
   }, [])
 
   /* ---- Listeners ---- */
@@ -72,7 +77,7 @@ function LookupApp(): React.JSX.Element {
           setContextHint(true)
         }
       } else {
-        setContextText(status.hint || 'Processing\u2026')
+        setContextText(status.hint || 'Processing…')
         setContextHint(true)
       }
     })
@@ -207,7 +212,7 @@ function LookupApp(): React.JSX.Element {
     const trimmed = input.trim()
     if (loading) return
     if (!contextReady) {
-      flashHint('Context is still being prepared\u2026')
+      flashHint('Context is still being prepared…')
       return
     }
     const text = trimmed || LOOKUP_DEFAULT_QUERY
@@ -254,7 +259,10 @@ function LookupApp(): React.JSX.Element {
       </div>
       <div className="lookup-content">
         <div className="section-label">Context</div>
-        <div id="extracted" className={`extracted${contextHint ? ' hint' : ''}`}>
+        <div
+          id="extracted"
+          className={`extracted${contextHint ? ' hint' : ''}${flash ? ' flash' : ''}`}
+        >
           {contextText}
         </div>
         <div className="paste-tip">Ctrl+V to paste text or an image as context.</div>
@@ -275,11 +283,10 @@ function LookupApp(): React.JSX.Element {
             }}
           />
           {ocrProcessing && (
-            <div className="ocr-hint visible">Recognizing pasted image through OCR\u2026</div>
+            <div className="ocr-hint visible">Recognizing pasted image through OCR…</div>
           )}
         </div>
         <div ref={scrollRef} className={`lookup-conversation${grown ? ' visible' : ''}`}>
-          {visibleTurns.length === 0 && !grown && null}
           {visibleTurns.map((turn) => (
             <div key={turn.id} className="message-turn" data-turn-id={turn.id}>
               <Turn
