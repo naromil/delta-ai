@@ -1,27 +1,41 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
-import type {
-  ConversationState,
-  Turn,
-  ExpandableSegment,
-  ConversationRecord
-} from '../../../shared/conversation'
+import type { ConversationState, Turn, ConversationRecord } from '../../../shared/conversation'
 import {
   tokenize,
-  flattenMarkdown,
   insertExpansionNested,
   updateExpansionInTurns,
   toggleExpansionFoldedInTurns,
-  serializeForChat
+  serializeForChat,
+  buildConversationTitle,
+  maxExpansionId
 } from '../../../shared/conversation'
 import { getSystemPrompt } from '../../../shared/prompts'
 import { buildExpandMessages } from '../../../shared/expand-prompt'
 
-function generateId(): number {
-  return Date.now() + Math.floor(Math.random() * 10000)
-}
+let nextTurnId = Date.now()
 
 function generateRequestId(): string {
   return `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+}
+
+function saveConversationState(
+  state: ConversationState,
+  role: 'chat' | 'lookup',
+  meta: { id: string; title: string; createdAt: string }
+): Promise<void> | undefined {
+  if (state.turns.length === 0 || state.turns.every((t) => t.content.trim() === '')) {
+    return undefined
+  }
+  const record: ConversationRecord = {
+    id: meta.id,
+    title: meta.title,
+    createdAt: meta.createdAt,
+    updatedAt: new Date().toISOString(),
+    source: role === 'lookup' ? 'lookup' : 'chat',
+    state,
+    kbFed: false
+  }
+  return window.api.saveConversation(record)
 }
 
 interface PendingRequest {
@@ -86,22 +100,14 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
     stateRef.current = state
   }, [state])
 
-  const saveCurrentState = useCallback((s: ConversationState): void => {
-    const meta = conversationMetaRef.current
-    if (!meta) return
-    if (s.turns.length === 0 || s.turns.every((t) => t.content.trim() === '')) return
-    const record: ConversationRecord = {
-      id: meta.id,
-      title: meta.title,
-      createdAt: meta.createdAt,
-      updatedAt: new Date().toISOString(),
-      source: role === 'lookup' ? 'lookup' : 'chat',
-      state: s,
-      kbFed: false
-    }
-    window.api.saveConversation(record)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  const saveCurrentState = useCallback(
+    (s: ConversationState): void => {
+      const meta = conversationMetaRef.current
+      if (!meta) return
+      void saveConversationState(s, role, meta)
+    },
+    [role]
+  )
 
   useEffect(() => {
     const unsubs: Array<() => void> = []
@@ -135,12 +141,11 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
             content: data.text,
             segments: tokenize(data.text)
           }
-          const newState = { ...prev, turns }
-          saveCurrentState(newState)
-          return newState
+          return { ...prev, turns }
         })
         pendingRef.current.delete(data.requestId)
         setLoading(false)
+        setTimeout(() => saveCurrentState(stateRef.current), 0)
       })
     )
 
@@ -219,20 +224,7 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
         setConversationId(imported.conversationId)
         setConversationTitle(imported.conversationTitle)
         conversationMetaRef.current = null
-        let maxId = 0
-        function scanSegments(segments: ExpandableSegment[] | undefined): void {
-          if (!segments) return
-          for (const seg of segments) {
-            if ('expansionId' in seg && typeof seg.expansionId === 'number') {
-              if (seg.expansionId > maxId) maxId = seg.expansionId
-            }
-            if ('segments' in seg && Array.isArray(seg.segments)) {
-              scanSegments(seg.segments)
-            }
-          }
-        }
-        scanSegments(imported.state.turns.flatMap((t) => t.segments ?? []))
-        expansionIdCounterRef.current = maxId + 1
+        expansionIdCounterRef.current = maxExpansionId(imported.state.turns) + 1
         options?.onReplaceConversation?.()
       })
     )
@@ -251,36 +243,36 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
 
       if (!conversationMetaRef.current) {
         const id = crypto.randomUUID()
-        const flat = flattenMarkdown(trimmed).replace(/\s+/g, ' ').trim()
-        const title = flat.length <= 60 ? flat : flat.slice(0, 60).trimEnd()
+        const title = buildConversationTitle(trimmed)
         const createdAt = new Date().toISOString()
         conversationMetaRef.current = { id, title, createdAt }
         setConversationId(id)
         setConversationTitle(title)
       }
 
-      const turnId = generateId()
+      const userTurnId = nextTurnId++
+      const assistantTurnId = nextTurnId++
       const requestId = generateRequestId()
 
-      setState((prev) => {
-        const newTurn: Turn = {
-          id: turnId - 1,
-          role: 'user',
-          content: trimmed,
-          segments: tokenize(trimmed)
-        }
-        const messages = serializeForChat(
-          { ...prev, turns: [...prev.turns, newTurn] },
-          role as 'chat' | 'lookup'
-        )
-        window.api.chatSend({ messages, requestId, role })
-        pendingRef.current.set(requestId, { kind: 'send', turnId })
+      const userTurn: Turn = {
+        id: userTurnId,
+        role: 'user',
+        content: trimmed,
+        segments: tokenize(trimmed)
+      }
+      const snapshot = stateRef.current
+      const messages = serializeForChat(
+        { ...snapshot, turns: [...snapshot.turns, userTurn] },
+        role as 'chat' | 'lookup'
+      )
 
-        return {
-          ...prev,
-          turns: [...prev.turns, newTurn, { id: turnId, role: 'assistant', content: '' }]
-        }
-      })
+      pendingRef.current.set(requestId, { kind: 'send', turnId: assistantTurnId })
+      window.api.chatSend({ messages, requestId, role })
+
+      setState((prev) => ({
+        ...prev,
+        turns: [...prev.turns, userTurn, { id: assistantTurnId, role: 'assistant', content: '' }]
+      }))
       if (role === 'lookup' && !hasSentRef.current) {
         window.api.lookupTriggerGrow()
       }
@@ -307,6 +299,21 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
       const expansionId = expansionIdCounterRef.current++
       const requestId = generateRequestId()
 
+      const targetTurn = stateRef.current.turns.find((t) => t.id === turnId)
+      if (!targetTurn || !targetTurn.segments) return
+
+      const expandMessages = buildExpandMessages({ answer: parentAnswer, selection, prompt })
+      const allMessages = [
+        {
+          role: 'system' as const,
+          content: getSystemPrompt(role as 'chat' | 'lookup')
+        },
+        ...expandMessages
+      ]
+
+      pendingRef.current.set(requestId, { kind: 'expand', turnId, expansionId })
+      window.api.chatExpand({ messages: allMessages, requestId, role })
+
       setState((prev) => {
         const turns = [...prev.turns]
         const turnIdx = turns.findIndex((t) => t.id === turnId)
@@ -328,19 +335,6 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
         )
 
         turns[turnIdx] = { ...turn, segments: newSegments }
-
-        pendingRef.current.set(requestId, { kind: 'expand', turnId, expansionId })
-
-        const expandMessages = buildExpandMessages({ answer: parentAnswer, selection, prompt })
-        const allMessages = [
-          {
-            role: 'system' as const,
-            content: getSystemPrompt(role as 'chat' | 'lookup')
-          },
-          ...expandMessages
-        ]
-        window.api.chatExpand({ messages: allMessages, requestId, role })
-
         return { ...prev, turns }
       })
     },
@@ -390,22 +384,7 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
     async (id: string) => {
       const currentState = stateRef.current
       const meta = conversationMetaRef.current
-      if (
-        meta &&
-        currentState.turns.length > 0 &&
-        currentState.turns.some((t) => t.content.trim() !== '')
-      ) {
-        const record: ConversationRecord = {
-          id: meta.id,
-          title: meta.title,
-          createdAt: meta.createdAt,
-          updatedAt: new Date().toISOString(),
-          source: role === 'lookup' ? 'lookup' : 'chat',
-          state: currentState,
-          kbFed: false
-        }
-        await window.api.saveConversation(record)
-      }
+      if (meta) await saveConversationState(currentState, role, meta)
 
       const loaded = await window.api.loadConversation(id)
       if (!loaded) return
@@ -421,20 +400,7 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
       pendingRef.current.clear()
       setLoading(false)
 
-      let maxId = 0
-      function scanSegments(segments: ExpandableSegment[] | undefined): void {
-        if (!segments) return
-        for (const seg of segments) {
-          if ('expansionId' in seg && typeof seg.expansionId === 'number') {
-            if (seg.expansionId > maxId) maxId = seg.expansionId
-          }
-          if ('segments' in seg && Array.isArray(seg.segments)) {
-            scanSegments(seg.segments)
-          }
-        }
-      }
-      scanSegments(loaded.state.turns.flatMap((t) => t.segments ?? []))
-      expansionIdCounterRef.current = maxId + 1
+      expansionIdCounterRef.current = maxExpansionId(loaded.state.turns) + 1
     },
     [role]
   )
