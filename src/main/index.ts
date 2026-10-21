@@ -12,12 +12,7 @@ import {
   registerConfigIpcHandlers
 } from './config'
 import { handleHotkeyPressed } from './lookup/lookup'
-import {
-  callProviderStream,
-  NoApiKeyError,
-  UnsupportedProviderError,
-  RoleUnassignedError
-} from './provider'
+import { callProviderStream } from './provider'
 import type { ProviderMessage } from './provider'
 import type { RoleId } from '../shared/models'
 import {
@@ -28,8 +23,8 @@ import {
 } from './lookup/window'
 import { sendToSession } from './lookup/state'
 import { setMainWindow, getMainWindow } from './main-window'
-import type { ConversationState } from '../shared/conversation'
-import { flattenMarkdown } from '../shared/conversation'
+import type { ConversationRecord, ConversationState } from '../shared/conversation'
+import { buildConversationTitle } from '../shared/conversation'
 import { buildScreenContextMessage } from '../shared/prompts'
 import {
   saveConversation,
@@ -56,16 +51,8 @@ app.whenReady().then(async () => {
     async (event, payload: { messages: ProviderMessage[]; requestId: string; role?: string }) => {
       const { requestId } = payload
       const role: RoleId = (payload.role as RoleId) ?? 'chat'
-      const messages = [...payload.messages]
-      if (role === 'lookup') {
-        const kbPrompt = loadKbPrompt()
-        if (kbPrompt) {
-          const sysMsg = messages.find((m) => m.role === 'system')
-          if (sysMsg) {
-            sysMsg.content = sysMsg.content + '\n\n' + kbPrompt
-          }
-        }
-      }
+      const messages =
+        role === 'lookup' ? withKbPrompt(payload.messages, loadKbPrompt()) : payload.messages
       try {
         let fullResponse = ''
         for await (const chunk of callProviderStream(messages, role)) {
@@ -74,19 +61,7 @@ app.whenReady().then(async () => {
         }
         event.sender.send('chat-response', { requestId, text: fullResponse })
       } catch (err) {
-        let msg: string
-        if (
-          err instanceof NoApiKeyError ||
-          err instanceof UnsupportedProviderError ||
-          err instanceof RoleUnassignedError
-        ) {
-          msg = err.message
-        } else if (err instanceof Error) {
-          msg = err.message
-        } else {
-          msg = String(err)
-        }
-        event.sender.send('chat-error', { requestId, error: msg })
+        event.sender.send('chat-error', { requestId, error: formatStreamError(err) })
       }
     }
   )
@@ -112,19 +87,7 @@ app.whenReady().then(async () => {
         }
         event.sender.send('chat-expand-chunk', { requestId, text: fullResponse, done: true })
       } catch (err) {
-        let msg: string
-        if (
-          err instanceof NoApiKeyError ||
-          err instanceof UnsupportedProviderError ||
-          err instanceof RoleUnassignedError
-        ) {
-          msg = err.message
-        } else if (err instanceof Error) {
-          msg = err.message
-        } else {
-          msg = String(err)
-        }
-        event.sender.send('chat-expand-chunk', { requestId, error: msg })
+        event.sender.send('chat-expand-chunk', { requestId, error: formatStreamError(err) })
       }
     }
   )
@@ -159,37 +122,21 @@ app.whenReady().then(async () => {
         transferred.context = ''
       }
 
-      let id = conversationId
-      let title = ''
-      if (id) {
-        const existing = await loadConversation(id)
-        if (existing) {
-          existing.source = 'chat'
-          existing.state = transferred
-          existing.updatedAt = new Date().toISOString()
-          await saveConversation(existing)
-          title = existing.title
-        } else {
-          id = crypto.randomUUID()
-        }
-      }
-
-      if (!title) {
-        title = extractTitle(transferred)
-      }
-
-      if (!id) {
-        id = crypto.randomUUID()
-      }
-
-      const record = {
+      const now = new Date().toISOString()
+      const existing = conversationId ? await loadConversation(conversationId) : null
+      const id = existing?.id ?? conversationId ?? crypto.randomUUID()
+      const createdAt = existing?.createdAt ?? now
+      const firstUserTurn = transferred.turns.find((turn) => turn.role === 'user')
+      const title = existing?.title || buildConversationTitle(firstUserTurn?.content ?? '')
+      const record: ConversationRecord = {
+        ...(existing ?? {}),
         id,
         title,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        source: 'chat' as const,
+        createdAt,
+        updatedAt: now,
+        source: 'chat',
         state: transferred,
-        kbFed: false
+        kbFed: existing?.kbFed ?? false
       }
       await saveConversation(record)
 
@@ -256,12 +203,18 @@ app.on('window-all-closed', () => {
 
 /* ---- Helpers ---- */
 
-function extractTitle(state: ConversationState): string {
-  const firstUserTurn = state.turns.find((t) => t.role === 'user')
-  if (!firstUserTurn) return 'New conversation'
-  const flat = flattenMarkdown(firstUserTurn.content).replace(/\s+/g, ' ').trim()
-  if (flat.length <= 60) return flat
-  return flat.slice(0, 60).trimEnd()
+function formatStreamError(err: unknown): string {
+  if (err instanceof Error) return err.message
+  return String(err)
+}
+
+function withKbPrompt(messages: ProviderMessage[], kbPrompt: string): ProviderMessage[] {
+  if (!kbPrompt) return messages
+  const systemIndex = messages.findIndex((msg) => msg.role === 'system')
+  if (systemIndex === -1) return [{ role: 'system', content: kbPrompt }, ...messages]
+  return messages.map((msg, index) =>
+    index === systemIndex ? { ...msg, content: msg.content + '\n\n' + kbPrompt } : msg
+  )
 }
 
 /* ---- Tray ---- */
