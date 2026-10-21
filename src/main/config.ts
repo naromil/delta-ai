@@ -61,11 +61,12 @@ export let currentHotkey = 'Ctrl+Shift+D'
 export async function registerHotkey(accelerator: string, onPressed: () => void): Promise<boolean> {
   // On Wayland, route through the XDG GlobalShortcuts portal.
   if (isWaylandSession()) {
-    currentHotkey = accelerator
-    return await registerGlobalShortcutPortal(accelerator, () => {
+    const registered = await registerGlobalShortcutPortal(accelerator, () => {
       console.log(`Hotkey ${accelerator} pressed`)
       onPressed()
     })
+    if (registered) currentHotkey = accelerator
+    return registered
   }
 
   // X11 / macOS / Windows: use Electron's built-in globalShortcut.

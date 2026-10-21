@@ -1,25 +1,19 @@
-import { resolveRole } from './config'
-import { RoleUnassignedError } from './config'
+import { resolveRole, RoleUnassignedError } from './config'
 import type { ProviderMessage, RoleId } from './models/registries'
 export type { ProviderMessage }
 export { RoleUnassignedError }
 
 const FETCH_TIMEOUT_MS = 40_000
 
-async function fetchWithTimeout(
-  url: string,
-  options: RequestInit & { timeout?: number }
-): Promise<Response> {
-  const timeout = options.timeout ?? FETCH_TIMEOUT_MS
+async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeout)
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
   try {
-    const res = await fetch(url, { ...options, signal: options.signal ?? controller.signal })
-    return res
+    return await fetch(url, { ...init, signal: controller.signal })
   } catch (err) {
-    if ((err as DOMException)?.name == 'AbortError') {
+    if ((err as DOMException)?.name === 'AbortError') {
       throw new Error(
-        `Request timed out after ${timeout / 1000}s. Check your API endpoint and network connection.`
+        `Request timed out after ${FETCH_TIMEOUT_MS / 1000}s. Check your API endpoint and network connection.`
       )
     }
     throw err
