@@ -14,7 +14,24 @@ export const LOOKUP_GROWN_HEIGHT = 640
 const GROW_DURATION_MS = 350
 const GROW_STEPS = 24
 
-let ocrHandlerRefCount = 0
+let lookupIpcHandlersRegistered = false
+
+/* ---- IPC handlers ---- */
+export function registerLookupIpcHandlers(): void {
+  if (lookupIpcHandlersRegistered) return
+  lookupIpcHandlersRegistered = true
+
+  ipcMain.handle('lookup-ocr-image', async (_event, base64: string) => {
+    const buffer = Buffer.from(base64, 'base64')
+    if (buffer.length === 0) return { text: '' }
+    try {
+      const text = await ocrImageBuffer(buffer)
+      return { text }
+    } catch (err) {
+      return { text: '', error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+}
 
 /* ---- Window creation ---- */
 export function createLookupSession(cursorX: number, cursorY: number): LookupSession {
@@ -23,16 +40,6 @@ export function createLookupSession(cursorX: number, cursorY: number): LookupSes
 
   const x = cursorX + LOOKUP_WINDOW_CURSOR_OFFSET
   const y = cursorY + LOOKUP_WINDOW_CURSOR_OFFSET
-
-  const session: LookupSession = {
-    window: null as unknown as BrowserWindow,
-    context: '',
-    grown: false,
-    contextReady: false,
-    ocrToken: 0,
-    hasText: false,
-    pendingState: null
-  }
 
   const window = new BrowserWindow({
     width: LOOKUP_WINDOW_WIDTH,
@@ -53,7 +60,16 @@ export function createLookupSession(cursorX: number, cursorY: number): LookupSes
       contextIsolation: true
     }
   })
-  session.window = window
+
+  const session: LookupSession = {
+    window,
+    context: '',
+    grown: false,
+    contextReady: false,
+    ocrToken: 0,
+    hasText: false,
+    pendingState: null
+  }
 
   let hasBeenFocused = false
   window.once('focus', () => {
@@ -68,10 +84,6 @@ export function createLookupSession(cursorX: number, cursorY: number): LookupSes
   window.on('closed', () => {
     const idx = lookupSessions.indexOf(session)
     if (idx >= 0) lookupSessions.splice(idx, 1)
-    ocrHandlerRefCount--
-    if (ocrHandlerRefCount <= 0) {
-      ipcMain.removeHandler('lookup-ocr-image')
-    }
   })
 
   window.webContents.ipc.on('lookup-paste-text', (_event, text: string) => {
@@ -100,20 +112,6 @@ export function createLookupSession(cursorX: number, cursorY: number): LookupSes
       window.webContents.send('lookup-context', session.pendingState)
     }
   })
-
-  ocrHandlerRefCount++
-  if (ocrHandlerRefCount === 1) {
-    ipcMain.handle('lookup-ocr-image', async (_event, base64: string) => {
-      const buffer = Buffer.from(base64, 'base64')
-      if (buffer.length === 0) return { text: '' }
-      try {
-        const text = await ocrImageBuffer(buffer)
-        return { text }
-      } catch (err) {
-        return { text: '', error: err instanceof Error ? err.message : String(err) }
-      }
-    })
-  }
 
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     window.loadURL(process.env['ELECTRON_RENDERER_URL'] + '?role=lookup')

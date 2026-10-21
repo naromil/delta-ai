@@ -18,6 +18,7 @@ import type { RoleId } from '../shared/models'
 import {
   lookupSessions,
   animateGrowSession,
+  registerLookupIpcHandlers,
   LOOKUP_GROWN_WIDTH,
   LOOKUP_GROWN_HEIGHT
 } from './lookup/window'
@@ -177,6 +178,7 @@ app.whenReady().then(async () => {
   })
 
   registerConfigIpcHandlers()
+  registerLookupIpcHandlers()
   registerKbIpcHandlers()
 
   const settings = loadAppSettings()
