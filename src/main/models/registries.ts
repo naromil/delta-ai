@@ -1,5 +1,6 @@
 export {
   type ProviderType,
+  type ProviderMessage,
   type AuthShape,
   type RoleId,
   type LookupContextMode,

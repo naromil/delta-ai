@@ -1,6 +1,7 @@
 import { resolveRole } from './config'
 import { RoleUnassignedError } from './config'
-import type { RoleId } from './models/registries'
+import type { ProviderMessage, RoleId } from './models/registries'
+export type { ProviderMessage }
 export { RoleUnassignedError }
 
 const FETCH_TIMEOUT_MS = 40_000
@@ -27,11 +28,6 @@ async function fetchWithTimeout(
   }
 }
 
-export interface ProviderMessage {
-  role: string
-  content: string
-}
-
 export class NoApiKeyError extends Error {}
 export class UnsupportedProviderError extends Error {}
 
@@ -46,27 +42,31 @@ async function* sseStream(
 
   const decoder = new TextDecoder()
   let buffer = ''
+  let done = false
 
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-
-    buffer += decoder.decode(value, { stream: true })
+  while (!done) {
+    const result = await reader.read()
+    done = result.done
+    if (done) {
+      buffer += '\n'
+    } else {
+      buffer += decoder.decode(result.value, { stream: true })
+    }
     const lines = buffer.split('\n')
     buffer = lines.pop() || ''
 
     for (const line of lines) {
-      if (line.startsWith('data: ')) {
-        const data = line.slice(6).trim()
-        if (data === '[DONE]') return
+      if (!line.startsWith('data:')) continue
+      const data = line.slice(5).trim()
+      if (!data) continue
+      if (data === '[DONE]') return
 
-        try {
-          const parsed = JSON.parse(data) as Record<string, unknown>
-          const chunk = extract(parsed)
-          if (chunk) yield chunk
-        } catch {
-          // skip malformed JSON
-        }
+      try {
+        const parsed = JSON.parse(data) as Record<string, unknown>
+        const chunk = extract(parsed)
+        if (chunk) yield chunk
+      } catch {
+        // skip malformed JSON
       }
     }
   }
@@ -231,172 +231,19 @@ async function* callGeminiWithSearchStream(
     const candidates = parsed?.candidates as Array<Record<string, unknown>> | undefined
     const candidate = candidates?.[0]
     const content = candidate?.content as Record<string, unknown> | undefined
-    const parts = content?.parts as Array<{ text: string }> | undefined
-    return parts?.[0]?.text
+    const parts = content?.parts as Array<{ text?: string }> | undefined
+    if (!parts) return undefined
+    const text = parts.map((part) => part.text ?? '').join('')
+    return text || undefined
   })
 }
 
-/* ---- Non-streaming (kept for chat window) ---- */
+/* ---- Non-streaming: drain the single streaming dispatch ---- */
 
 export async function callProvider(messages: ProviderMessage[], roleId: RoleId): Promise<string> {
-  const resolved = resolveRole(roleId)
-  if (!resolved) {
-    throw new RoleUnassignedError(roleId)
+  let response = ''
+  for await (const chunk of callProviderStream(messages, roleId)) {
+    response += chunk
   }
-  const { connection, model, webSearchEnabled } = resolved
-  if (!connection.apiKey && connection.providerType !== 'ollama') {
-    throw new NoApiKeyError('No API key configured. Open Settings to add your provider API key.')
-  }
-
-  switch (connection.providerType) {
-    case 'google-ai-studio':
-      if (webSearchEnabled) {
-        return await callGeminiWithSearch(connection.apiKey ?? '', model, messages)
-      }
-      return await callOpenAICompatible(
-        connection.apiKey ?? '',
-        model,
-        messages,
-        'https://generativelanguage.googleapis.com/v1beta'
-      )
-    case 'openai-compatible':
-      if (!connection.baseUrl) {
-        throw new NoApiKeyError('Base URL is required for OpenAI Compatible provider.')
-      }
-      return await callOpenAICompatible(
-        connection.apiKey ?? '',
-        model,
-        messages,
-        connection.baseUrl,
-        webSearchEnabled
-      )
-    case 'openai':
-      return await callOpenAICompatible(
-        connection.apiKey ?? '',
-        model,
-        messages,
-        connection.baseUrl ?? 'https://api.openai.com/v1',
-        webSearchEnabled
-      )
-    case 'openrouter':
-      return await callOpenAICompatible(
-        connection.apiKey ?? '',
-        model,
-        messages,
-        connection.baseUrl ?? 'https://openrouter.ai/api/v1',
-        webSearchEnabled
-      )
-    case 'ollama': {
-      const host = (connection.host ?? 'http://localhost:11434').replace(/\/+$/, '')
-      return await callOpenAICompatible('', model, messages, `${host}/v1`, false)
-    }
-    default:
-      throw new UnsupportedProviderError(
-        `Provider "${connection.providerType}" is not supported yet.`
-      )
-  }
-}
-
-async function callOpenAICompatible(
-  apiKey: string,
-  model: string,
-  messages: ProviderMessage[],
-  baseUrl: string,
-  webSearchEnabled = false
-): Promise<string> {
-  const normalizedBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl
-  const url = `${normalizedBaseUrl}/chat/completions`
-
-  const body: Record<string, unknown> = {
-    model,
-    messages
-  }
-
-  if (webSearchEnabled) {
-    body.tools = [{ type: 'web_search' }]
-  }
-
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json'
-  }
-  if (apiKey) {
-    headers['Authorization'] = `Bearer ${apiKey}`
-  }
-
-  const res = await fetchWithTimeout(url, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body)
-  })
-
-  if (!res.ok) {
-    const errText = await res.text()
-    throw new Error(`API error ${res.status}: ${errText}`)
-  }
-
-  const data = await res.json()
-  const text: string = data?.choices?.[0]?.message?.content ?? '(No response received)'
-  return text
-}
-
-async function callGeminiWithSearch(
-  apiKey: string,
-  model: string,
-  messages: ProviderMessage[]
-): Promise<string> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
-
-  let systemInstruction: string | null = null
-  const contents: Array<{ role: string; parts: Array<{ text: string }> }> = []
-
-  for (const msg of messages) {
-    if (msg.role === 'system' && !systemInstruction) {
-      systemInstruction = msg.content
-    } else if (msg.role === 'system') {
-      contents.push({ role: 'user', parts: [{ text: msg.content }] })
-    } else {
-      contents.push({
-        role: msg.role === 'assistant' ? 'model' : 'user',
-        parts: [{ text: msg.content }]
-      })
-    }
-  }
-
-  const body: Record<string, unknown> = {
-    contents,
-    tools: [{ googleSearch: {} }]
-  }
-
-  if (systemInstruction) {
-    body.system_instruction = { parts: [{ text: systemInstruction }] }
-  }
-
-  const res = await fetchWithTimeout(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  })
-
-  if (!res.ok) {
-    const errText = await res.text()
-    throw new Error(`Gemini API error ${res.status}: ${errText}`)
-  }
-
-  const data = await res.json()
-
-  if (data.promptFeedback?.blockReason) {
-    throw new Error(`Request blocked: ${data.promptFeedback.blockReason}`)
-  }
-
-  const candidate = data?.candidates?.[0]
-  if (!candidate) {
-    throw new Error('No response from Gemini API')
-  }
-
-  if (candidate.finishReason && candidate.finishReason !== 'STOP') {
-    throw new Error(`Gemini request terminated: ${candidate.finishReason}`)
-  }
-
-  const text: string = candidate?.content?.parts?.[0]?.text ?? '(No response received)'
-  return text
+  return response || '(No response received)'
 }
