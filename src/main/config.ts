@@ -59,10 +59,9 @@ export function isKdeWaylandSession(): boolean {
 export let currentHotkey = 'Ctrl+Shift+D'
 
 export async function registerHotkey(accelerator: string, onPressed: () => void): Promise<boolean> {
-  currentHotkey = accelerator
-
   // On Wayland, route through the XDG GlobalShortcuts portal.
   if (isWaylandSession()) {
+    currentHotkey = accelerator
     return await registerGlobalShortcutPortal(accelerator, () => {
       console.log(`Hotkey ${accelerator} pressed`)
       onPressed()
@@ -70,15 +69,18 @@ export async function registerHotkey(accelerator: string, onPressed: () => void)
   }
 
   // X11 / macOS / Windows: use Electron's built-in globalShortcut.
-  if (currentHotkey && globalShortcut.isRegistered(currentHotkey)) {
-    globalShortcut.unregister(currentHotkey)
+  const previousHotkey = currentHotkey
+  if (previousHotkey && globalShortcut.isRegistered(previousHotkey)) {
+    globalShortcut.unregister(previousHotkey)
   }
   const success = globalShortcut.register(accelerator, () => {
     console.log(`Hotkey ${accelerator} pressed`)
     onPressed()
   })
 
-  if (!success) {
+  if (success) {
+    currentHotkey = accelerator
+  } else {
     console.warn(`Failed to register global shortcut: ${accelerator}`)
   }
 
@@ -96,19 +98,20 @@ export function loadAppSettings(): AppSettings {
     closeToTray: true,
     lookupContextMode: 'clipboard'
   }
+  const settingsPath = join(app.getPath('userData'), 'config', 'settings.json')
   try {
-    const settingsPath = join(app.getPath('userData'), 'config', 'settings.json')
-    if (existsSync(settingsPath)) {
-      const loaded = JSON.parse(readFileSync(settingsPath, 'utf-8'))
-      const settings = { ...defaults, ...loaded }
-      currentCloseToTray = settings.closeToTray
-      currentLookupContextMode = settings.lookupContextMode
-      return settings
-    }
-  } catch {
-    // ignore
+    if (!existsSync(settingsPath)) return defaults
+    const loaded = JSON.parse(readFileSync(settingsPath, 'utf-8')) as Partial<AppSettings>
+    return { ...defaults, ...loaded }
+  } catch (err) {
+    console.warn(`Failed to load app settings from ${settingsPath}:`, err)
+    return defaults
   }
-  return defaults
+}
+
+export function applyAppSettings(settings: AppSettings): void {
+  currentCloseToTray = settings.closeToTray
+  currentLookupContextMode = settings.lookupContextMode
 }
 
 function ensureConfigDir(): string {
@@ -130,11 +133,12 @@ export function saveAppSettings(settings: AppSettings): boolean {
 /* ---- App model config ---- */
 
 export function loadModelConfig(): ModelConfig {
+  const configPath = join(app.getPath('userData'), 'config', 'providers.json')
   try {
-    const configPath = join(app.getPath('userData'), 'config', 'providers.json')
     if (!existsSync(configPath)) return createDefaultModelConfig()
     return JSON.parse(readFileSync(configPath, 'utf-8')) as ModelConfig
-  } catch {
+  } catch (err) {
+    console.warn(`Failed to load model config from ${configPath}:`, err)
     return createDefaultModelConfig()
   }
 }
@@ -169,8 +173,7 @@ export function registerConfigIpcHandlers(): void {
     async (_event, settings: AppSettings): Promise<{ success: boolean }> => {
       const ok = saveAppSettings(settings)
       if (ok) {
-        currentCloseToTray = settings.closeToTray
-        currentLookupContextMode = settings.lookupContextMode
+        applyAppSettings(settings)
         // Re-register hotkey
         await registerHotkey(settings.hotkey, handleHotkeyPressed)
       }

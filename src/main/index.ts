@@ -5,6 +5,7 @@ import icon from '../../resources/icon.png?asset'
 import { unregisterGlobalShortcutPortal } from './services/global-shortcut'
 import {
   loadAppSettings,
+  applyAppSettings,
   registerHotkey,
   currentCloseToTray,
   loadKbPrompt,
@@ -232,6 +233,7 @@ app.whenReady().then(async () => {
   registerKbIpcHandlers()
 
   const settings = loadAppSettings()
+  applyAppSettings(settings)
   await registerHotkey(settings.hotkey, handleHotkeyPressed)
 
   createWindow()
