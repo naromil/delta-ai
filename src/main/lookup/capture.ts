@@ -1,6 +1,5 @@
 import { app, screen, desktopCapturer, nativeImage } from 'electron'
 import { join } from 'path/posix'
-import { createWorker } from 'tesseract.js'
 import type { Worker } from 'tesseract.js'
 import type { LookupSession } from './state'
 import { captureScreenViaPortal, isScreenCapturePortalPreferred } from '../services/screen-capture'
@@ -19,9 +18,13 @@ function enqueue<T>(task: () => Promise<T>): Promise<T> {
   return run
 }
 
-/** Lazily create the shared tesseract worker. Only call from inside a queued task. */
+/**
+ * Lazily create the shared tesseract worker. Only call from inside a queued task.
+ * tesseract.js is imported dynamically so its WASM glue is not loaded at startup.
+ */
 async function ensureWorker(): Promise<Worker> {
   if (!tesseractWorker) {
+    const { createWorker } = await import('tesseract.js')
     tesseractWorker = await createWorker('eng', 1, {
       cachePath: join(app.getPath('userData'), 'tesseract-cache'),
       logger: () => {}
