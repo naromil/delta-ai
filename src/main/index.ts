@@ -8,7 +8,6 @@ import {
   applyAppSettings,
   registerHotkey,
   currentCloseToTray,
-  loadKbPrompt,
   registerConfigIpcHandlers
 } from './config'
 import { handleHotkeyPressed } from './lookup/lookup'
@@ -37,6 +36,7 @@ import {
   listUnfedConversations
 } from './conversations'
 import { registerKbIpcHandlers } from './kb/handlers'
+import { loadKbPrompt } from './kb/store'
 
 /* ---- App lifecycle ---- */
 app.whenReady().then(async () => {

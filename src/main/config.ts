@@ -7,7 +7,6 @@ import {
   type RoleId,
   type ModelConfig,
   type Connection,
-  type CategorizedKeyword,
   type LookupContextMode,
   createDefaultModelConfig
 } from './models/registries'
@@ -194,43 +193,4 @@ export function registerConfigIpcHandlers(): void {
   ipcMain.handle('save-model-config', (_event, config: ModelConfig): { success: boolean } => {
     return { success: saveModelConfig(config) }
   })
-}
-
-/* ---- KB prompt persistence ---- */
-
-function kbDir(): string {
-  const dir = join(app.getPath('userData'), 'kb')
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-  return dir
-}
-
-export function loadKbPrompt(): string {
-  try {
-    const promptPath = join(kbDir(), 'prompt.txt')
-    if (!existsSync(promptPath)) return ''
-    return readFileSync(promptPath, 'utf-8')
-  } catch {
-    return ''
-  }
-}
-
-export function saveKbPrompt(content: string): void {
-  const promptPath = join(kbDir(), 'prompt.txt')
-  writeFileSync(promptPath, content, 'utf-8')
-}
-
-export function loadKbKeywords(): CategorizedKeyword[] {
-  try {
-    const keywordsPath = join(kbDir(), 'keywords.json')
-    if (!existsSync(keywordsPath)) return []
-    const raw = readFileSync(keywordsPath, 'utf-8')
-    return JSON.parse(raw)
-  } catch {
-    return []
-  }
-}
-
-export function saveKbKeywords(keywords: CategorizedKeyword[]): void {
-  const keywordsPath = join(kbDir(), 'keywords.json')
-  writeFileSync(keywordsPath, JSON.stringify(keywords), 'utf-8')
 }

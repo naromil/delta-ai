@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron'
-import { loadKbPrompt, saveKbPrompt, loadKbKeywords, saveKbKeywords } from '../config'
+import { loadKbPrompt, saveKbPrompt, loadKbKeywords, saveKbKeywords } from './store'
 import { callProvider } from '../provider'
 import {
   loadConversation,
