@@ -105,16 +105,12 @@ function Settings(): React.JSX.Element {
     }
   }
 
-  const canSave =
-    Object.values(modelConfig.roles).some((r) => r.connectionId !== null) ||
-    Object.keys(modelConfig.connections).length > 0
-
   /* ---- Main render ---- */
   return (
     <div className="settings">
       <div className="settings-header">
         <h2 className="settings-title">Settings</h2>
-        <button className="settings-header-save" onClick={handleSave} disabled={!canSave || saving}>
+        <button className="settings-header-save" onClick={handleSave} disabled={saving}>
           {saving ? 'Saving…' : saved ? '✓ Saved' : 'Save'}
         </button>
       </div>
