@@ -22,8 +22,8 @@ Delta AI lives in two windows: a full **chat** interface and an **always-on-top 
 
 ## Screenshots
 
-| Chat window | Lookup popup |
-|---|---|
+| Chat window                                                                   | Lookup popup                                                                  |
+| ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | Full chat with sidebar navigation, inline expansions, and conversation search | Always-on-top popup after screen capture, showing OCR context and AI response |
 
 ---
@@ -53,46 +53,46 @@ Renderer (React 19)          Preload (contextBridge)        Main process (Node)
 
 ### Key modules
 
-| Module | Role |
-|---|---|
-| `src/shared/models.ts` | Provider/role type registries, connection & config types — pure TS, no runtime deps |
-| `src/shared/conversation.ts` | `ConversationState` model + pure helpers: tokenize, expand/insert/fold/unfold, serialize for API |
-| `src/shared/expand-prompt.ts` | `buildExpandMessages` — constructs API messages for inline expansions with optional custom direction |
-| `src/shared/prompts.ts` | All LLM-facing prompt strings (system prompts, context template, expand instructions, KB analysis) |
-| `src/main/index.ts` | App lifecycle, main window, tray, streaming IPC handlers (chat-send, chat-expand, lookup-transfer) |
-| `src/main/config.ts` | Config persistence (providers.json, settings.json), Wayland detection, hotkey registry, KB prompt I/O |
-| `src/main/provider.ts` | Provider dispatch by role — resolves connection + model, routes to Google AI Studio / OpenAI-compatible / Ollama / OpenAI / OpenRouter |
-| `src/main/conversations.ts` | Conversation CRUD on `{userData}/conversations/{id}.json`, list/search, KB-fed marking |
-| `src/main/lookup/lookup.ts` | Hotkey entry point: capture screen → OCR → create popup session |
-| `src/main/lookup/capture.ts` | Screen capture (portal-first on KDE Wayland) + tesseract.js OCR worker |
-| `src/main/lookup/window.ts` | Lookup popup BrowserWindow, grow animation, ref-counted handlers |
-| `src/main/lookup/state.ts` | `LookupSession` interface, session management, IPC helpers |
-| `src/main/services/global-shortcut.ts` | XDG GlobalShortcuts D-Bus portal for Wayland |
-| `src/main/services/screen-capture.ts` | Freedesktop Screenshot D-Bus portal for KDE Wayland (silent capture) |
-| `src/main/kb/analysis.ts` | KB personalization pipeline: serialize conversations, build analysis messages, extract learning preferences |
-| `src/main/kb/handlers.ts` | KB IPC handlers (kb-load-prompt, kb-analyze, kb-reanalyze) |
-| `src/preload/index.ts` | `contextBridge` API — config, lookup, chat streaming, conversation persistence, KB channels |
-| `src/renderer/src/Root.tsx` | Routes between `App` (main window) and `LookupApp` (popup) via `?role=lookup` |
-| `src/renderer/src/App.tsx` | App shell: sidebar navigation with 5 views (Home, Chat, Knowledge Base, Look-Up Guide, Settings) |
-| `src/renderer/src/LookupApp.tsx` | Lookup popup UI: OCR context panel, ask input, paste handling, transfer-to-chat, grow transitions |
-| `src/renderer/src/hooks/useChatStreaming.ts` | Shared streaming hook — owns `ConversationState`, dispatches `chat-send`/`chat-expand`, auto-saves |
-| `src/renderer/src/components/conversation/` | Conversation UI: message list (`Conversation.tsx`), turns (`Turn.tsx`), expansion frames (`ExpansionFrame.tsx`), context menu, expand prompt, search overlay |
+| Module                                       | Role                                                                                                                                                         |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/shared/models.ts`                       | Provider/role type registries, connection & config types — pure TS, no runtime deps                                                                          |
+| `src/shared/conversation.ts`                 | `ConversationState` model + pure helpers: tokenize, expand/insert/fold/unfold, serialize for API                                                             |
+| `src/shared/expand-prompt.ts`                | `buildExpandMessages` — constructs API messages for inline expansions with optional custom direction                                                         |
+| `src/shared/prompts.ts`                      | All LLM-facing prompt strings (system prompts, context template, expand instructions, KB analysis)                                                           |
+| `src/main/index.ts`                          | App lifecycle, main window, tray, streaming IPC handlers (chat-send, chat-expand, lookup-transfer)                                                           |
+| `src/main/config.ts`                         | Config persistence (providers.json, settings.json), Wayland detection, hotkey registry, KB prompt I/O                                                        |
+| `src/main/provider.ts`                       | Provider dispatch by role — resolves connection + model, routes to Google AI Studio / OpenAI-compatible / Ollama / OpenAI / OpenRouter                       |
+| `src/main/conversations.ts`                  | Conversation CRUD on `{userData}/conversations/{id}.json`, list/search, KB-fed marking                                                                       |
+| `src/main/lookup/lookup.ts`                  | Hotkey entry point: capture screen → OCR → create popup session                                                                                              |
+| `src/main/lookup/capture.ts`                 | Screen capture (portal-first on KDE Wayland) + tesseract.js OCR worker                                                                                       |
+| `src/main/lookup/window.ts`                  | Lookup popup BrowserWindow, grow animation, ref-counted handlers                                                                                             |
+| `src/main/lookup/state.ts`                   | `LookupSession` interface, session management, IPC helpers                                                                                                   |
+| `src/main/services/global-shortcut.ts`       | XDG GlobalShortcuts D-Bus portal for Wayland                                                                                                                 |
+| `src/main/services/screen-capture.ts`        | Freedesktop Screenshot D-Bus portal for KDE Wayland (silent capture)                                                                                         |
+| `src/main/kb/analysis.ts`                    | KB personalization pipeline: serialize conversations, build analysis messages, extract learning preferences                                                  |
+| `src/main/kb/handlers.ts`                    | KB IPC handlers (kb-load-prompt, kb-analyze, kb-reanalyze)                                                                                                   |
+| `src/preload/index.ts`                       | `contextBridge` API — config, lookup, chat streaming, conversation persistence, KB channels                                                                  |
+| `src/renderer/src/Root.tsx`                  | Routes between `App` (main window) and `LookupApp` (popup) via `?role=lookup`                                                                                |
+| `src/renderer/src/App.tsx`                   | App shell: sidebar navigation with 5 views (Home, Chat, Knowledge Base, Look-Up Guide, Settings)                                                             |
+| `src/renderer/src/LookupApp.tsx`             | Lookup popup UI: OCR context panel, ask input, paste handling, transfer-to-chat, grow transitions                                                            |
+| `src/renderer/src/hooks/useChatStreaming.ts` | Shared streaming hook — owns `ConversationState`, dispatches `chat-send`/`chat-expand`, auto-saves                                                           |
+| `src/renderer/src/components/conversation/`  | Conversation UI: message list (`Conversation.tsx`), turns (`Turn.tsx`), expansion frames (`ExpansionFrame.tsx`), context menu, expand prompt, search overlay |
 
 ### IPC channels
 
-| Channel | Direction | Purpose |
-|---|---|---|
-| `chat-send` / `chat-chunk` / `chat-response` / `chat-error` | Renderer ↔ Main | Streaming chat messages (keyed by `requestId`) |
-| `chat-expand` / `chat-expand-chunk` | Renderer ↔ Main | Streaming inline expansions |
-| `chat-replace-conversation` | Main → Renderer | Hydrate transferred conversation (lookup → chat) |
-| `lookup-trigger-grow` / `lookup-grow` | Lookup ↔ Main | Window grow animation on first ask |
-| `lookup-transfer` | Lookup → Main | Send lookup conversation to chat window |
-| `lookup-context` / `lookup-paste-text` / `lookup-paste-image` / `lookup-ocr-image` | Lookup ↔ Main | OCR context and paste handling |
-| `lookup-input-changed` / `lookup-close` | Lookup → Main | Blur guard and close |
-| `conversation-*` | Renderer ↔ Main | Conversation CRUD (save/load/delete/list/search) |
-| `load-model-config` / `save-model-config` | Renderer ↔ Main | Provider config |
-| `load-settings` / `save-settings` | Renderer ↔ Main | App settings (hotkey, tray behavior) |
-| `kb-*` | Renderer ↔ Main | Knowledge Base analysis |
+| Channel                                                                            | Direction       | Purpose                                          |
+| ---------------------------------------------------------------------------------- | --------------- | ------------------------------------------------ |
+| `chat-send` / `chat-chunk` / `chat-response` / `chat-error`                        | Renderer ↔ Main | Streaming chat messages (keyed by `requestId`)   |
+| `chat-expand` / `chat-expand-chunk`                                                | Renderer ↔ Main | Streaming inline expansions                      |
+| `chat-replace-conversation`                                                        | Main → Renderer | Hydrate transferred conversation (lookup → chat) |
+| `lookup-trigger-grow` / `lookup-grow`                                              | Lookup ↔ Main   | Window grow animation on first ask               |
+| `lookup-transfer`                                                                  | Lookup → Main   | Send lookup conversation to chat window          |
+| `lookup-context` / `lookup-paste-text` / `lookup-paste-image` / `lookup-ocr-image` | Lookup ↔ Main   | OCR context and paste handling                   |
+| `lookup-input-changed` / `lookup-close`                                            | Lookup → Main   | Blur guard and close                             |
+| `conversation-*`                                                                   | Renderer ↔ Main | Conversation CRUD (save/load/delete/list/search) |
+| `load-model-config` / `save-model-config`                                          | Renderer ↔ Main | Provider config                                  |
+| `load-settings` / `save-settings`                                                  | Renderer ↔ Main | App settings (hotkey, tray behavior)             |
+| `kb-*`                                                                             | Renderer ↔ Main | Knowledge Base analysis                          |
 
 ---
 
@@ -113,16 +113,16 @@ npm run dev           # Launch with HMR (electron-vite)
 
 ### Commands
 
-| Command | Description |
-|---|---|
-| `npm run dev` | Launch app with HMR |
-| `npm run typecheck` | TypeScript check (`tsc --noEmit` for node + web) |
-| `npm run lint` | ESLint + Prettier |
-| `npm run format` | Prettier write across the repo |
-| `npm run build` | Typecheck then `electron-vite build` |
-| `npm run build:linux` | Build Linux AppImage |
-| `npm run build:mac` | Build macOS DMG |
-| `npm run build:win` | Build Windows NSIS installer |
+| Command               | Description                                      |
+| --------------------- | ------------------------------------------------ |
+| `npm run dev`         | Launch app with HMR                              |
+| `npm run typecheck`   | TypeScript check (`tsc --noEmit` for node + web) |
+| `npm run lint`        | ESLint + Prettier                                |
+| `npm run format`      | Prettier write across the repo                   |
+| `npm run build`       | Typecheck then `electron-vite build`             |
+| `npm run build:linux` | Build Linux AppImage                             |
+| `npm run build:mac`   | Build macOS DMG                                  |
+| `npm run build:win`   | Build Windows NSIS installer                     |
 
 ### Configuration
 
@@ -132,6 +132,7 @@ Delta AI requires **your own API keys** to function. Open Settings → Models to
 2. **Assign roles** — map the Chat and Lookup roles to a connection + model. A lightweight model is recommended for the Lookup role since no heavy reasoning is needed.
 
 Configuration files live in `{userData}/config/`:
+
 - `providers.json` — connections and role assignments
 - `settings.json` — hotkey and close-to-tray preference
 
@@ -141,13 +142,13 @@ Conversations are stored in `{userData}/conversations/{id}.json`.
 
 ## Platform Support
 
-| Platform | Hotkey | Screen capture | Clipboard |
-|---|---|---|---|
-| **Linux (KDE Wayland)** | XDG GlobalShortcuts portal | Screenshot portal (silent) | wl-paste |
-| **Linux (GNOME/other Wayland)** | XDG GlobalShortcuts portal | `desktopCapturer.getSources()` | wl-paste |
-| **Linux (X11)** | `globalShortcut.register()` | `desktopCapturer.getSources()` | Electron clipboard |
-| **macOS** | `globalShortcut.register()` | `desktopCapturer.getSources()` | Electron clipboard |
-| **Windows** | `globalShortcut.register()` | `desktopCapturer.getSources()` | Electron clipboard |
+| Platform                        | Hotkey                      | Screen capture                 | Clipboard          |
+| ------------------------------- | --------------------------- | ------------------------------ | ------------------ |
+| **Linux (KDE Wayland)**         | XDG GlobalShortcuts portal  | Screenshot portal (silent)     | wl-paste           |
+| **Linux (GNOME/other Wayland)** | XDG GlobalShortcuts portal  | `desktopCapturer.getSources()` | wl-paste           |
+| **Linux (X11)**                 | `globalShortcut.register()` | `desktopCapturer.getSources()` | Electron clipboard |
+| **macOS**                       | `globalShortcut.register()` | `desktopCapturer.getSources()` | Electron clipboard |
+| **Windows**                     | `globalShortcut.register()` | `desktopCapturer.getSources()` | Electron clipboard |
 
 On Wayland, Electron's `clipboard.readText()` reads from the XWayland clipboard which is frequently out of sync with the native Wayland clipboard. Delta AI uses `wl-paste` to read the correct clipboard and falls back to Electron's API when `wl-paste` is unavailable.
 
@@ -164,15 +165,15 @@ On Wayland, Electron's `clipboard.readText()` reads from the XWayland clipboard 
 
 ## Technology Stack
 
-| Layer | Technology |
-|---|---|
-| Shell | Electron 39 |
-| Build | electron-vite + Vite 7 |
-| UI | React 19, TypeScript, vanilla CSS |
-| OCR | tesseract.js (WASM) |
+| Layer        | Technology                                                      |
+| ------------ | --------------------------------------------------------------- |
+| Shell        | Electron 39                                                     |
+| Build        | electron-vite + Vite 7                                          |
+| UI           | React 19, TypeScript, vanilla CSS                               |
+| OCR          | tesseract.js (WASM)                                             |
 | AI Providers | Google AI Studio, OpenAI, OpenAI Compatible, Ollama, OpenRouter |
-| Packaging | electron-builder (AppImage, DMG, NSIS) |
-| Wayland | dbus-next (XDG Desktop Portals) |
+| Packaging    | electron-builder (AppImage, DMG, NSIS)                          |
+| Wayland      | dbus-next (XDG Desktop Portals)                                 |
 
 ---
 

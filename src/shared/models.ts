@@ -9,6 +9,12 @@ export type RoleId = 'chat' | 'lookup' | 'kb-maintenance'
 
 export type LookupContextMode = 'clipboard' | 'fullscreen-ocr'
 
+/** One message in the provider-agnostic request shape used by every backend. */
+export interface ProviderMessage {
+  role: string
+  content: string
+}
+
 export interface ProviderTypeDef {
   label: string
   authShape: AuthShape

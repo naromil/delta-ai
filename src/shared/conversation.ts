@@ -1,7 +1,7 @@
-export interface ProviderMessage {
-  role: string
-  content: string
-}
+import type { ProviderMessage } from './models'
+import { getSystemPrompt, buildScreenContextMessage } from './prompts'
+
+export type { ProviderMessage }
 
 export type ExpandableSegment =
   | { kind: 'text'; text: string }
@@ -16,6 +16,8 @@ export type ExpandableSegment =
       folded: boolean
       segments: ExpandableSegment[]
     }
+
+export type ExpansionSegment = Extract<ExpandableSegment, { kind: 'expansion' }>
 
 export interface Turn {
   id: number
@@ -375,19 +377,23 @@ export function toggleExpansionFoldedInTurns(
   })
 }
 
-import { getSystemPrompt, buildScreenContextMessage } from './prompts'
-
+/**
+ * Serialize a conversation into provider messages.
+ *
+ * The system prompt is always sent; the screen-context preamble is prepended
+ * only when a context exists (or the caller is the lookup window, which always
+ * introduces itself as screen-aware).
+ */
 export function serializeForChat(
   state: ConversationState,
   role?: 'chat' | 'lookup'
 ): ProviderMessage[] {
-  const messages: ProviderMessage[] = []
+  const messages: ProviderMessage[] = [{ role: 'system', content: getSystemPrompt(role) }]
 
   if (role === 'lookup' || state.context) {
-    messages.push({ role: 'system', content: getSystemPrompt(role) })
     messages.push({
       role: 'user',
-      content: buildScreenContextMessage(state.context!)
+      content: buildScreenContextMessage(state.context ?? '')
     })
   }
 
@@ -397,18 +403,41 @@ export function serializeForChat(
   return messages
 }
 
-export function findExpansionParent(
+export const CONVERSATION_TITLE_MAX_LENGTH = 60
+
+/** Derive a conversation title from its first user message. */
+export function buildConversationTitle(text: string): string {
+  const flat = flattenMarkdown(text).replace(/\s+/g, ' ').trim()
+  if (flat === '') return 'New conversation'
+  if (flat.length <= CONVERSATION_TITLE_MAX_LENGTH) return flat
+  return flat.slice(0, CONVERSATION_TITLE_MAX_LENGTH).trimEnd()
+}
+
+/** Depth-first lookup of an expansion by id, across nested frames. */
+export function findExpansionInSegments(
   segments: ExpandableSegment[],
   expansionId: number
-): { parentText: string; isNested: boolean } | null {
+): ExpansionSegment | null {
   for (const seg of segments) {
-    if (seg.kind === 'expansion') {
-      if (seg.expansionId === expansionId) {
-        return { parentText: seg.cachedText || seg.originalText, isNested: true }
-      }
-      const found = findExpansionParent(seg.segments, expansionId)
-      if (found) return { ...found, isNested: true }
-    }
+    if (seg.kind !== 'expansion') continue
+    if (seg.expansionId === expansionId) return seg
+    const found = findExpansionInSegments(seg.segments, expansionId)
+    if (found) return found
   }
   return null
+}
+
+/** Highest expansion id in the tree, so counter allocation can resume past it. */
+export function maxExpansionId(turns: Turn[]): number {
+  let max = 0
+  const visit = (segments: ExpandableSegment[] | undefined): void => {
+    if (!segments) return
+    for (const seg of segments) {
+      if (seg.kind !== 'expansion') continue
+      if (seg.expansionId > max) max = seg.expansionId
+      visit(seg.segments)
+    }
+  }
+  for (const turn of turns) visit(turn.segments)
+  return max
 }
