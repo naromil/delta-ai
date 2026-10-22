@@ -23,6 +23,10 @@ const GATES = {
   discovery: {
     spec: 'tests/acceptance/connection-discovery.test.ts',
     lock: 'tools/acceptance/connection-discovery.sha256'
+  },
+  picker: {
+    spec: 'tests/acceptance/model-picker.test.ts',
+    lock: 'tools/acceptance/model-picker.sha256'
   }
 }
 
