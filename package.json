@@ -4,7 +4,6 @@
   "version": "0.2.3",
   "description": "A revolutionary AI helper for learning anything.",
   "main": "./out/main/index.js",
-  "type": "module",
   "author": "naromil <nroamli@gmail.com>",
   "homepage": "https://github.com/naromil/delta-ai/",
   "scripts": {
