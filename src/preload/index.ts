@@ -2,11 +2,14 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import type { ConversationState, ConversationRecord } from '../shared/conversation'
 import type { CategorizedKeyword } from '../shared/models'
+import type { ModelCatalogState } from '../shared/model-catalog'
 
 const api = {
   loadModelConfig: (): Promise<unknown> => ipcRenderer.invoke('load-model-config'),
-  saveModelConfig: (config: unknown): Promise<{ success: boolean }> =>
+  saveModelConfig: (config: unknown): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('save-model-config', config),
+  loadModelCatalog: (force = false): Promise<ModelCatalogState> =>
+    ipcRenderer.invoke('load-model-catalog', force),
   loadSettings: (): Promise<{
     hotkey: string
     closeToTray: boolean

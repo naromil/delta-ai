@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { providerRegistry, roleRegistry } from '../../../../../shared/models'
+import { catalogModelsForType, describeCatalogModel } from '../../../../../shared/model-catalog'
+import type { CatalogModel, ModelCatalogState } from '../../../../../shared/model-catalog'
 import type {
   Connection,
   ModelConfig,
@@ -8,11 +10,17 @@ import type {
   RoleId
 } from '../../../../../shared/models'
 
+function formatModelHint(model: CatalogModel): string {
+  const parts = [describeCatalogModel(model), model.toolCall ? '' : 'no tool support']
+  return parts.filter((part) => part.length > 0).join(' · ')
+}
+
 interface RoleRowProps {
   roleDef: RoleDef
   roleId: RoleId
   assignment: RoleAssignment
   modelConfig: ModelConfig
+  catalog: ModelCatalogState
   onConnectionChange: (roleId: RoleId, connectionId: string | null) => void
   onModelChange: (roleId: RoleId, model: string) => void
   onWebSearchChange: (roleId: RoleId, checked: boolean) => void
@@ -23,6 +31,7 @@ function RoleRow({
   roleId,
   assignment,
   modelConfig,
+  catalog,
   onConnectionChange,
   onModelChange,
   onWebSearchChange
@@ -30,19 +39,24 @@ function RoleRow({
   const conn = assignment.connectionId ? modelConfig.connections[assignment.connectionId] : null
   const providerType = conn?.providerType
   const def = providerType ? providerRegistry[providerType] : undefined
-  const knownModels = def?.knownModels
+  const catalogModels = catalogModelsForType(catalog.catalog, providerType)
+  // The live catalog is authoritative; the bundled lists only cover offline use.
+  const modelIds =
+    catalogModels.length > 0 ? catalogModels.map((m) => m.id) : (def?.knownModels ?? [])
+  const selectedModel = catalogModels.find((m) => m.id === assignment.model)
   const isUnimplemented = providerType ? !def?.implemented : false
-  const supportsWebSearch = def?.capabilities?.webSearch ?? false
+  const supportsWebSearch =
+    (def?.capabilities?.webSearch ?? false) && (selectedModel?.toolCall ?? true)
 
   // Role-local tracking of whether the custom-model input is being shown.
   // Re-initialized from the assignment when the parent remounts the row on
-  // connection change (see key in ModelsTab).
+  // connection or catalog change (see key in ModelsTab).
   const [isCustom, setIsCustom] = useState<boolean>(() => {
-    if (!knownModels || !assignment.model) return false
-    return !knownModels.includes(assignment.model)
+    if (modelIds.length === 0 || !assignment.model) return false
+    return !modelIds.includes(assignment.model)
   })
   const [customModel, setCustomModel] = useState<string>(
-    knownModels?.includes(assignment.model) ? '' : assignment.model
+    modelIds.includes(assignment.model) ? '' : assignment.model
   )
 
   const handleModelSelect = (value: string): void => {
@@ -67,7 +81,7 @@ function RoleRow({
         />
       )
     }
-    if (!knownModels || knownModels.length === 0) {
+    if (modelIds.length === 0) {
       return (
         <input
           type="text"
@@ -86,7 +100,7 @@ function RoleRow({
           value={isCustom ? 'Custom...' : assignment.model}
           onChange={(e) => handleModelSelect(e.target.value)}
         >
-          {knownModels.map((m) => (
+          {modelIds.map((m) => (
             <option key={m} value={m}>
               {m}
             </option>
@@ -105,6 +119,11 @@ function RoleRow({
             }}
             placeholder="Enter custom model name…"
           />
+        )}
+        {!isCustom && selectedModel && (
+          <p style={{ margin: '4px 0 0', fontSize: '12px', color: 'var(--text-muted)' }}>
+            {formatModelHint(selectedModel)}
+          </p>
         )}
       </>
     )

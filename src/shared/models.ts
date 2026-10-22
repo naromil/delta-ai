@@ -139,7 +139,11 @@ export function createDefaultModelConfig(): ModelConfig {
   return {
     schemaVersion: MODEL_CONFIG_VERSION,
     connections: {},
-    roles: { ...DEFAULT_ROLES }
+    roles: {
+      chat: { ...DEFAULT_ROLES.chat },
+      lookup: { ...DEFAULT_ROLES.lookup },
+      'kb-maintenance': { ...DEFAULT_ROLES['kb-maintenance'] }
+    }
   }
 }
 

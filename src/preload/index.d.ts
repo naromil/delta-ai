@@ -5,13 +5,15 @@ import type {
   ConversationMeta
 } from '../shared/conversation'
 import type { CategorizedKeyword } from '../shared/models'
+import type { ModelCatalogState } from '../shared/model-catalog'
 
 declare global {
   interface Window {
     electron: ElectronAPI
     api: {
       loadModelConfig: () => Promise<unknown>
-      saveModelConfig: (config: unknown) => Promise<{ success: boolean }>
+      saveModelConfig: (config: unknown) => Promise<{ success: boolean; error?: string }>
+      loadModelCatalog: (force?: boolean) => Promise<ModelCatalogState>
       loadSettings: () => Promise<{
         hotkey: string
         closeToTray: boolean

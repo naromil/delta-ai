@@ -36,6 +36,7 @@ import {
   listUnfedConversations
 } from './conversations'
 import { registerKbIpcHandlers } from './kb/handlers'
+import { registerModelCatalogIpcHandlers } from './services/model-catalog'
 import { loadKbPrompt } from './kb/store'
 
 /* ---- App lifecycle ---- */
@@ -180,6 +181,7 @@ app.whenReady().then(async () => {
   registerConfigIpcHandlers()
   registerLookupIpcHandlers()
   registerKbIpcHandlers()
+  registerModelCatalogIpcHandlers()
 
   const settings = loadAppSettings()
   applyAppSettings(settings)

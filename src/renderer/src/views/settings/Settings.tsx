@@ -1,14 +1,28 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Connection, ModelConfig, RoleAssignment, RoleId } from '../../../../shared/models'
 import { createDefaultModelConfig } from '../../../../shared/models'
+import type { ModelCatalogState } from '../../../../shared/model-catalog'
 import GeneralTab from './GeneralTab'
 import ModelsTab from '../../components/settings/models/ModelsTab'
+
+function catalogErrorState(err: unknown): ModelCatalogState {
+  return {
+    catalog: null,
+    source: 'unavailable',
+    error: err instanceof Error ? err.message : String(err)
+  }
+}
 
 /* ---- Component ---- */
 
 function Settings(): React.JSX.Element {
   const [activeTab, setActiveTab] = useState<'general' | 'models' | 'about'>('general')
   const [modelConfig, setModelConfig] = useState<ModelConfig>(createDefaultModelConfig)
+  const [catalog, setCatalog] = useState<ModelCatalogState>({
+    catalog: null,
+    source: 'unavailable'
+  })
+  const [catalogLoading, setCatalogLoading] = useState(false)
   const [hotkey, setHotkey] = useState('Ctrl+Shift+D')
   const [closeToTray, setCloseToTray] = useState(true)
   const [lookupContextMode, setLookupContextMode] = useState('clipboard')
@@ -17,6 +31,15 @@ function Settings(): React.JSX.Element {
   const hotkeyRef = useRef(hotkey)
   const lookupContextModeRef = useRef(lookupContextMode)
 
+  const refreshCatalog = useCallback((): void => {
+    setCatalogLoading(true)
+    window.api
+      .loadModelCatalog(true)
+      .then(setCatalog)
+      .catch((err: unknown) => setCatalog(catalogErrorState(err)))
+      .finally(() => setCatalogLoading(false))
+  }, [])
+
   /* Load existing config on mount */
   useEffect(() => {
     window.api.loadModelConfig().then((cfg) => {
@@ -24,6 +47,11 @@ function Settings(): React.JSX.Element {
         setModelConfig(cfg as ModelConfig)
       }
     })
+
+    window.api
+      .loadModelCatalog(false)
+      .then(setCatalog)
+      .catch((err: unknown) => setCatalog(catalogErrorState(err)))
 
     window.api.loadSettings().then((s) => {
       const settings = s as {
@@ -101,7 +129,7 @@ function Settings(): React.JSX.Element {
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } else {
-      alert('Failed to save configuration.')
+      alert(cfgRes.error ?? 'Failed to save configuration.')
     }
   }
 
@@ -153,6 +181,9 @@ function Settings(): React.JSX.Element {
         {activeTab === 'models' && (
           <ModelsTab
             modelConfig={modelConfig}
+            catalog={catalog}
+            catalogLoading={catalogLoading}
+            onRefreshCatalog={refreshCatalog}
             onUpdateRole={updateRole}
             onUpdateConnection={updateConnection}
             onAddConnection={addConnection}

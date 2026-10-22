@@ -61,7 +61,8 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | `lookup-ocr-image`                        | Lookup → Main   | Invoke OCR on an image (returns `{text, error?}`)                             |
 | `lookup-input-changed`                    | Lookup → Main   | Whether Ask field has text (guards blur-to-close)                             |
 | `lookup-close`                            | Lookup → Main   | Close the lookup window                                                       |
-| `load-model-config` / `save-model-config` | Renderer ↔ Main | Model config CRUD                                                             |
+| `load-model-config` / `save-model-config` | Renderer ↔ Main | Model config CRUD (migrated + validated in main)                              |
+| `load-model-catalog`                      | Renderer ↔ Main | models.dev catalog (`force` arg refreshes; cached 24h, offline fallback)      |
 | `load-settings` / `save-settings`         | Renderer ↔ Main | App settings CRUD                                                             |
 | `conversation-save` / `-load` / `-delete` | Renderer → Main | Conversation CRUD to `{userData}/conversations/`                              |
 | `conversation-list`                       | Renderer → Main | List chat-source conversations (metadata sorted by updatedAt desc)            |
@@ -89,6 +90,8 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | Config              | `config.ts`                   | Persistence, hotkey registry, Wayland detection                                                          |
 | Provider dispatch   | `provider.ts`                 | `callProvider` + `callProviderStream` (resolves role → connection → backend)                             |
 | Model re-exports    | `models/registries.ts`        | Re-exports shared types/registries so main imports stay stable without crossing renderer boundary        |
+| Config schema       | `models/config-schema.ts`     | Zod schema, v1→v2 migration, repair of dangling roles/unknown providers                                  |
+| Model catalog       | `services/model-catalog.ts`   | models.dev fetch + 24h disk cache (`{userData}/cache/models-dev.json`) + `load-model-catalog` IPC        |
 | Lookup orchestrator | `lookup/lookup.ts`            | Hotkey entry point (capture + OCR + create popup)                                                        |
 | Lookup popup window | `lookup/window.ts`            | BrowserWindow + grow animation + ref-counted ocr-image handler                                           |
 | Capture + OCR       | `lookup/capture.ts`           | Screen capture + tesseract.js worker                                                                     |
@@ -136,6 +139,8 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | Persist or load conversations         | `conversations.ts` (main) + `useChatStreaming.ts` (renderer)                         |
 | Renderer chat UI                      | `App.tsx`, `Conversation.tsx`, `Turn.tsx`, `ConversationSearch.tsx`                  |
 | Provider config form                  | `components/settings/models/ModelsTab.tsx` (+ `RoleRow.tsx`, `ConnectionCard.tsx`)   |
+| Model picker / catalog                | `shared/model-catalog.ts` (pure), `services/model-catalog.ts` (fetch+cache)          |
+| Change the model-config schema        | `models/config-schema.ts` — add a vN→vN+1 step, bump `MODEL_CONFIG_VERSION`          |
 
 #### Important conventions
 
@@ -162,6 +167,15 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   X11/macOS/Windows and non-KDE Wayland.
 - **Config files** live under `{userData}/config/` (`providers.json`, `settings.json`).
   Always go through `config.ts` helpers; call `ensureConfigDir()` before writing.
+- **`providers.json` is never trusted as-is.** `loadModelConfig` runs it through
+  `migrateModelConfig` (zod + migrations + repairs) and writes the repaired file back;
+  `saveModelConfig` validates before writing and returns `{ ok, error }`. Any new schema
+  version needs a step in `MIGRATIONS` in `models/config-schema.ts`.
+- **Model lists come from models.dev, not `knownModels`.** `services/model-catalog.ts`
+  fetches `https://models.dev/api.json`, keeps only the provider types in
+  `CATALOG_PROVIDER_IDS`, caches it for 24h and falls back to the cached copy when offline.
+  `knownModels` in `shared/models.ts` is only the offline fallback for the picker;
+  `ollama` / `openai-compatible` have no catalog entries and stay free-text.
 - **Conversation files** live under `{userData}/conversations/` (`{id}.json`).
   Always go through `conversations.ts` helpers; `ensureConversationsDir()` is called
   automatically by save/list operations.

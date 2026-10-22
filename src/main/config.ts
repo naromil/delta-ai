@@ -10,6 +10,7 @@ import {
   type LookupContextMode,
   createDefaultModelConfig
 } from './models/registries'
+import { migrateModelConfig } from './models/config-schema'
 
 /* ---- Errors ---- */
 
@@ -132,24 +133,40 @@ export function saveAppSettings(settings: AppSettings): boolean {
 
 /* ---- App model config ---- */
 
-export function loadModelConfig(): ModelConfig {
-  const configPath = join(app.getPath('userData'), 'config', 'providers.json')
+function modelConfigPath(): string {
+  return join(app.getPath('userData'), 'config', 'providers.json')
+}
+
+export function saveModelConfig(config: ModelConfig): { ok: boolean; error?: string } {
+  const { config: normalized, ok, notes } = migrateModelConfig(config)
+  if (!ok) {
+    return { ok: false, error: notes.join('; ') || 'invalid model config' }
+  }
   try {
-    if (!existsSync(configPath)) return createDefaultModelConfig()
-    return JSON.parse(readFileSync(configPath, 'utf-8')) as ModelConfig
+    const configDir = ensureConfigDir()
+    writeFileSync(join(configDir, 'providers.json'), JSON.stringify(normalized, null, 2), 'utf-8')
+    return { ok: true }
   } catch (err) {
-    console.warn(`Failed to load model config from ${configPath}:`, err)
-    return createDefaultModelConfig()
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
   }
 }
 
-export function saveModelConfig(config: ModelConfig): boolean {
+/**
+ * Loads `providers.json`, migrating older schema versions and repairing dangling
+ * role references. A repaired file is written back immediately so the fix sticks.
+ */
+export function loadModelConfig(): ModelConfig {
+  const configPath = modelConfigPath()
   try {
-    const configDir = ensureConfigDir()
-    writeFileSync(join(configDir, 'providers.json'), JSON.stringify(config, null, 2), 'utf-8')
-    return true
-  } catch {
-    return false
+    if (!existsSync(configPath)) return createDefaultModelConfig()
+    const parsed = JSON.parse(readFileSync(configPath, 'utf-8')) as unknown
+    const { config, changed, notes } = migrateModelConfig(parsed)
+    if (notes.length > 0) console.log(`Model config: ${notes.join('; ')}`)
+    if (changed) saveModelConfig(config)
+    return config
+  } catch (err) {
+    console.warn(`Failed to load model config from ${configPath}:`, err)
+    return createDefaultModelConfig()
   }
 }
 
@@ -190,7 +207,12 @@ export function registerConfigIpcHandlers(): void {
     return loadModelConfig()
   })
 
-  ipcMain.handle('save-model-config', (_event, config: ModelConfig): { success: boolean } => {
-    return { success: saveModelConfig(config) }
-  })
+  ipcMain.handle(
+    'save-model-config',
+    (_event, config: ModelConfig): { success: boolean; error?: string } => {
+      const result = saveModelConfig(config)
+      if (!result.ok) console.warn(`Failed to save model config: ${result.error}`)
+      return result.ok ? { success: true } : { success: false, error: result.error }
+    }
+  )
 }
