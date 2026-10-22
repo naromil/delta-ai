@@ -160,6 +160,154 @@
   color: var(--text-1);
 }
 
+/* Searchable model picker */
+.model-picker {
+  position: relative;
+}
+
+.model-picker-input {
+  cursor: text;
+}
+
+.model-picker-dropdown {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-2);
+  overflow: hidden;
+}
+
+.model-picker-list {
+  max-height: 260px;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  list-style: none;
+}
+
+/* Opens above the field when there is no room below it. */
+.model-picker-dropdown--up {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
+.model-picker-option {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  color: var(--text-1);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.model-picker-option--active {
+  background: var(--accent-soft);
+}
+
+.model-picker-id {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-picker-hint {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-picker-footer {
+  padding: 6px 10px;
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.model-picker-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.model-picker-list::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 4px;
+}
+
+.model-picker-list::-webkit-scrollbar-thumb:hover {
+  background: var(--text-3);
+}
+
+/* Connection menu (replaces the native select in RoleRow) */
+.settings-select-wrap {
+  position: relative;
+}
+
+.settings-select--button {
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-select--button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.settings-select-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 220px;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-2);
+}
+
+.settings-select-option {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-1);
+  font-family: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-select-option:hover,
+.settings-select-option--active {
+  background: var(--accent-soft);
+}
+
+.settings-select-menu::-webkit-scrollbar {
+  width: 8px;
+}
+
+.settings-select-menu::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 4px;
+}
+
+.settings-select-menu::-webkit-scrollbar-thumb:hover {
+  background: var(--text-3);
+}
+
 /* Text & password inputs */
 .settings-input {
   width: 100%;
@@ -183,10 +331,6 @@
 .settings-input:focus {
   border-color: var(--accent-ring);
   box-shadow: 0 0 0 3px var(--accent-ring);
-}
-
-.settings-input--custom {
-  margin-top: 10px;
 }
 
 /* Hotkey input (readOnly, key-capture mode) */
