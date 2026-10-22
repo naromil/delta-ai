@@ -6,12 +6,14 @@ type TestOutcome = { ok: boolean; detail: string }
 
 interface ConnectionCardProps {
   connection: Connection
+  probeModel?: string
   onUpdate: (connId: string, updates: Partial<Connection>) => void
   onDelete: (connId: string) => void
 }
 
 function ConnectionCard({
   connection,
+  probeModel,
   onUpdate,
   onDelete
 }: ConnectionCardProps): React.JSX.Element {
@@ -28,7 +30,7 @@ function ConnectionCard({
   const handleTest = async (): Promise<void> => {
     setTesting(true)
     try {
-      const result = await window.api.testProviderConnection(connection, def.knownModels?.[0])
+      const result = await window.api.testProviderConnection(connection, probeModel)
       setTestOutcome(result)
     } catch (err) {
       setTestOutcome({ ok: false, detail: err instanceof Error ? err.message : String(err) })

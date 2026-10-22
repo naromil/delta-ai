@@ -36,6 +36,25 @@ function describeCatalogStatus(catalog: ModelCatalogState): string {
   return `${total} models from models.dev · updated ${updated}${offline}`
 }
 
+/**
+ * Model to probe with: an assigned role model for this connection, then the catalog,
+ * then the bundled list.
+ */
+function probeModelFor(
+  conn: Connection,
+  modelConfig: ModelConfig,
+  catalog: ModelCatalogState
+): string | undefined {
+  for (const { id } of ROLE_DEFS_ORDERED) {
+    const assignment = modelConfig.roles[id]
+    if (assignment.connectionId === conn.id && assignment.model) return assignment.model
+  }
+  return (
+    catalogModelsForType(catalog.catalog, conn.providerType)[0]?.id ??
+    providerRegistry[conn.providerType].knownModels?.[0]
+  )
+}
+
 function ModelsTab({
   modelConfig,
   catalog,
@@ -121,6 +140,7 @@ function ModelsTab({
           <ConnectionCard
             key={conn.id}
             connection={conn}
+            probeModel={probeModelFor(conn, modelConfig, catalog)}
             onUpdate={onUpdateConnection}
             onDelete={onDeleteConnection}
           />
