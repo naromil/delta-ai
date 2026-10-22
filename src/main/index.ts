@@ -178,7 +178,7 @@ app.whenReady().then(async () => {
     await markConversationKbFed(id)
   })
 
-  registerConfigIpcHandlers()
+  registerConfigIpcHandlers() // includes provider-models and provider-test
   registerLookupIpcHandlers()
   registerKbIpcHandlers()
   registerModelCatalogIpcHandlers()

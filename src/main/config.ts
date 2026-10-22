@@ -11,6 +11,12 @@ import {
   createDefaultModelConfig
 } from './models/registries'
 import { migrateModelConfig } from './models/config-schema'
+import {
+  discoverConnectionModels,
+  testConnection,
+  type ConnectionTestResult,
+  type DiscoveredModels
+} from './services/model-discovery'
 
 /* ---- Errors ---- */
 
@@ -214,5 +220,16 @@ export function registerConfigIpcHandlers(): void {
       if (!result.ok) console.warn(`Failed to save model config: ${result.error}`)
       return result.ok ? { success: true } : { success: false, error: result.error }
     }
+  )
+
+  /* Provider discovery + connection test (accept the renderer's current, unsaved connection) */
+  ipcMain.handle('provider-models', (_event, connection: Connection): Promise<DiscoveredModels> =>
+    discoverConnectionModels(connection)
+  )
+
+  ipcMain.handle(
+    'provider-test',
+    (_event, connection: Connection, probeModel?: string): Promise<ConnectionTestResult> =>
+      testConnection(connection, probeModel)
   )
 }
