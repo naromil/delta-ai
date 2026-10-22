@@ -20,6 +20,11 @@ The build will fail on typecheck errors, so fix them before committing.
 - Don't import Electron main APIs into the renderer; use the preload bridge.
 - Don't bypass `registerHotkey` for global shortcuts — the portal path won't fire on Wayland.
 - Don't commit secrets. API keys live only in `{userData}/config/providers.json`.
+- No native (node-gyp) addons in the main process. Electron 39 runs a V8 sandbox, so any addon built
+  against the host Node ABI aborts the process on first use (`v8_ArrayBuffer_NewBackingStore` →
+  SIGSEGV → a multi-GB systemd-coredump that fills the disk). `dbus-next`'s optional `usocket` is
+  pruned by `scripts/strip-usocket.mjs` in `postinstall` for exactly this reason; if a dependency
+  needs native code, rebuild it for Electron or pick a pure-JS alternative.
 - Use custom scrollbars everywhere — never the native OS scrollbar. Style `::-webkit-scrollbar` on scrollable elements.
 - Store all AI-facing prompt strings as exported constants in `src/shared/prompts.ts`. Never inline a prompt in a handler or component.
 - When architecture changes, update this file.
@@ -61,7 +66,8 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | `lookup-ocr-image`                        | Lookup → Main   | Invoke OCR on an image (returns `{text, error?}`)                             |
 | `lookup-input-changed`                    | Lookup → Main   | Whether Ask field has text (guards blur-to-close)                             |
 | `lookup-close`                            | Lookup → Main   | Close the lookup window                                                       |
-| `load-model-config` / `save-model-config` | Renderer ↔ Main | Model config CRUD                                                             |
+| `load-model-config` / `save-model-config` | Renderer ↔ Main | Model config CRUD (migrated + validated in main)                              |
+| `load-model-catalog`                      | Renderer ↔ Main | models.dev catalog (`force` arg refreshes; cached 24h, offline fallback)      |
 | `load-settings` / `save-settings`         | Renderer ↔ Main | App settings CRUD                                                             |
 | `conversation-save` / `-load` / `-delete` | Renderer → Main | Conversation CRUD to `{userData}/conversations/`                              |
 | `conversation-list`                       | Renderer → Main | List chat-source conversations (metadata sorted by updatedAt desc)            |
@@ -89,6 +95,8 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | Config              | `config.ts`                   | Persistence, hotkey registry, Wayland detection                                                          |
 | Provider dispatch   | `provider.ts`                 | `callProvider` + `callProviderStream` (resolves role → connection → backend)                             |
 | Model re-exports    | `models/registries.ts`        | Re-exports shared types/registries so main imports stay stable without crossing renderer boundary        |
+| Config schema       | `models/config-schema.ts`     | Zod schema, v1→v2 migration, repair of dangling roles/unknown providers                                  |
+| Model catalog       | `services/model-catalog.ts`   | models.dev fetch + 24h disk cache (`{userData}/cache/models-dev.json`) + `load-model-catalog` IPC        |
 | Lookup orchestrator | `lookup/lookup.ts`            | Hotkey entry point (capture + OCR + create popup)                                                        |
 | Lookup popup window | `lookup/window.ts`            | BrowserWindow + grow animation + ref-counted ocr-image handler                                           |
 | Capture + OCR       | `lookup/capture.ts`           | Screen capture + tesseract.js worker                                                                     |
@@ -119,7 +127,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 
 | Task                                  | File(s)                                                                              |
 | ------------------------------------- | ------------------------------------------------------------------------------------ |
-| Add an AI provider                    | `provider.ts` (`callProvider` switch)                                                |
+| Add an AI provider                    | `provider.ts` (`ROUTES` row: name + base URL, nothing else)                          |
 | Change the OCR/capture pipeline       | `lookup/capture.ts`                                                                  |
 | Change the hotkey response flow       | `lookup/lookup.ts` (`handleHotkeyPressed`)                                           |
 | Reposition / restyle the lookup popup | `lookup/window.ts` + CSS in `lookup.css`, `LookupApp.tsx`                            |
@@ -136,12 +144,18 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | Persist or load conversations         | `conversations.ts` (main) + `useChatStreaming.ts` (renderer)                         |
 | Renderer chat UI                      | `App.tsx`, `Conversation.tsx`, `Turn.tsx`, `ConversationSearch.tsx`                  |
 | Provider config form                  | `components/settings/models/ModelsTab.tsx` (+ `RoleRow.tsx`, `ConnectionCard.tsx`)   |
+| Model picker / catalog                | `shared/model-catalog.ts` (pure), `services/model-catalog.ts` (fetch+cache)          |
+| Change the model-config schema        | `models/config-schema.ts` — add a vN→vN+1 step, bump `MODEL_CONFIG_VERSION`          |
 
 #### Important conventions
 
 - **Provider dispatch lives in `provider.ts`.** `callProviderStream(messages, roleId)` reads the
   config and selects the backend; everyone else (streaming IPC handlers, lookup) calls it via
   the roleId. Don't duplicate `resolveRole()` + provider branching elsewhere.
+- **Every provider is one OpenAI-compatible route.** A provider is a `ROUTES` entry (name +
+  default base URL); there is no per-provider transport, SDK or tool wiring, and adding one means
+  adding a row. Google uses `…/v1beta/openai`. Web-search grounding is deliberately absent: the AI
+  SDK only exposes search as provider-specific tools, which would reintroduce the special case.
 - **The lookup popup is a 420×320 always-on-top frameless `BrowserWindow`** created in
   `lookup/window.ts` via `createLookupSession`. It loads the **same renderer bundle** as the
   main window, with `?role=lookup` query param (see `Root.tsx`). Position is best-effort near
@@ -162,6 +176,15 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   X11/macOS/Windows and non-KDE Wayland.
 - **Config files** live under `{userData}/config/` (`providers.json`, `settings.json`).
   Always go through `config.ts` helpers; call `ensureConfigDir()` before writing.
+- **`providers.json` is never trusted as-is.** `loadModelConfig` runs it through
+  `migrateModelConfig` (zod + migrations + repairs) and writes the repaired file back;
+  `saveModelConfig` validates before writing and returns `{ ok, error }`. Any new schema
+  version needs a step in `MIGRATIONS` in `models/config-schema.ts`.
+- **Model lists come from models.dev, not `knownModels`.** `services/model-catalog.ts`
+  fetches `https://models.dev/api.json`, keeps only the provider types in
+  `CATALOG_PROVIDER_IDS`, caches it for 24h and falls back to the cached copy when offline.
+  `knownModels` in `shared/models.ts` is only the offline fallback for the picker;
+  `ollama` / `openai-compatible` have no catalog entries and stay free-text.
 - **Conversation files** live under `{userData}/conversations/` (`{id}.json`).
   Always go through `conversations.ts` helpers; `ensureConversationsDir()` is called
   automatically by save/list operations.

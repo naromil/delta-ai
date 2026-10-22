@@ -4,14 +4,22 @@ import type {
   ConversationRecord,
   ConversationMeta
 } from '../shared/conversation'
-import type { CategorizedKeyword } from '../shared/models'
+import type { CategorizedKeyword, Connection } from '../shared/models'
+import type { ModelCatalogState } from '../shared/model-catalog'
+import type { ConnectionTestResult, DiscoveredModels } from '../main/services/model-discovery'
 
 declare global {
   interface Window {
     electron: ElectronAPI
     api: {
       loadModelConfig: () => Promise<unknown>
-      saveModelConfig: (config: unknown) => Promise<{ success: boolean }>
+      saveModelConfig: (config: unknown) => Promise<{ success: boolean; error?: string }>
+      loadModelCatalog: (force?: boolean) => Promise<ModelCatalogState>
+      listProviderModels: (connection: Connection) => Promise<DiscoveredModels>
+      testProviderConnection: (
+        connection: Connection,
+        probeModel?: string
+      ) => Promise<ConnectionTestResult>
       loadSettings: () => Promise<{
         hotkey: string
         closeToTray: boolean

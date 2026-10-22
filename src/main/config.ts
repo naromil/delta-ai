@@ -10,6 +10,13 @@ import {
   type LookupContextMode,
   createDefaultModelConfig
 } from './models/registries'
+import { migrateModelConfig } from './models/config-schema'
+import {
+  discoverConnectionModels,
+  testConnection,
+  type ConnectionTestResult,
+  type DiscoveredModels
+} from './services/model-discovery'
 
 /* ---- Errors ---- */
 
@@ -132,36 +139,50 @@ export function saveAppSettings(settings: AppSettings): boolean {
 
 /* ---- App model config ---- */
 
+function modelConfigPath(): string {
+  return join(app.getPath('userData'), 'config', 'providers.json')
+}
+
+export function saveModelConfig(config: ModelConfig): { ok: boolean; error?: string } {
+  const { config: normalized, ok, notes } = migrateModelConfig(config)
+  if (!ok) {
+    return { ok: false, error: notes.join('; ') || 'invalid model config' }
+  }
+  try {
+    const configDir = ensureConfigDir()
+    writeFileSync(join(configDir, 'providers.json'), JSON.stringify(normalized, null, 2), 'utf-8')
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+/**
+ * Loads `providers.json`, migrating older schema versions and repairing dangling
+ * role references. A repaired file is written back immediately so the fix sticks.
+ */
 export function loadModelConfig(): ModelConfig {
-  const configPath = join(app.getPath('userData'), 'config', 'providers.json')
+  const configPath = modelConfigPath()
   try {
     if (!existsSync(configPath)) return createDefaultModelConfig()
-    return JSON.parse(readFileSync(configPath, 'utf-8')) as ModelConfig
+    const parsed = JSON.parse(readFileSync(configPath, 'utf-8')) as unknown
+    const { config, changed, notes } = migrateModelConfig(parsed)
+    if (notes.length > 0) console.log(`Model config: ${notes.join('; ')}`)
+    if (changed) saveModelConfig(config)
+    return config
   } catch (err) {
     console.warn(`Failed to load model config from ${configPath}:`, err)
     return createDefaultModelConfig()
   }
 }
 
-export function saveModelConfig(config: ModelConfig): boolean {
-  try {
-    const configDir = ensureConfigDir()
-    writeFileSync(join(configDir, 'providers.json'), JSON.stringify(config, null, 2), 'utf-8')
-    return true
-  } catch {
-    return false
-  }
-}
-
-export function resolveRole(
-  roleId: RoleId
-): { connection: Connection; model: string; webSearchEnabled: boolean } | null {
+export function resolveRole(roleId: RoleId): { connection: Connection; model: string } | null {
   const config = loadModelConfig()
   const assignment = config.roles[roleId]
   if (!assignment || !assignment.connectionId) return null
   const connection = config.connections[assignment.connectionId]
   if (!connection) return null
-  return { connection, model: assignment.model, webSearchEnabled: assignment.webSearchEnabled }
+  return { connection, model: assignment.model }
 }
 
 /* ---- IPC handlers ---- */
@@ -190,7 +211,23 @@ export function registerConfigIpcHandlers(): void {
     return loadModelConfig()
   })
 
-  ipcMain.handle('save-model-config', (_event, config: ModelConfig): { success: boolean } => {
-    return { success: saveModelConfig(config) }
-  })
+  ipcMain.handle(
+    'save-model-config',
+    (_event, config: ModelConfig): { success: boolean; error?: string } => {
+      const result = saveModelConfig(config)
+      if (!result.ok) console.warn(`Failed to save model config: ${result.error}`)
+      return result.ok ? { success: true } : { success: false, error: result.error }
+    }
+  )
+
+  /* Provider discovery + connection test (accept the renderer's current, unsaved connection) */
+  ipcMain.handle('provider-models', (_event, connection: Connection): Promise<DiscoveredModels> =>
+    discoverConnectionModels(connection)
+  )
+
+  ipcMain.handle(
+    'provider-test',
+    (_event, connection: Connection, probeModel?: string): Promise<ConnectionTestResult> =>
+      testConnection(connection, probeModel)
+  )
 }

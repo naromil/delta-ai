@@ -39,6 +39,9 @@ Both windows talk to the same main process. Everything the app knows about the u
 | `src/main/index.ts`                                 | App lifecycle, main window, tray, streaming IPC (`chat-send`, `chat-expand`), lookup grow, lookup → chat transfer, conversation CRUD channels                                                                                                                     |
 | `src/main/provider.ts`                              | The single dispatch point: role → connection → backend. `callProviderStream` is the only primitive; `callProvider` drains it                                                                                                                                      |
 | `src/main/config.ts`                                | `providers.json` / `settings.json` I/O, hotkey registration (X11 + portal), Wayland detection                                                                                                                                                                     |
+| `src/main/models/config-schema.ts`                  | Zod validation, schema migrations (v1→v2), repair of dangling roles and unknown provider types                                                                                                                                                                    |
+| `src/main/services/model-catalog.ts`                | models.dev catalog fetch, 24h disk cache, offline fallback, `load-model-catalog` IPC                                                                                                                                                                              |
+| `src/shared/model-catalog.ts`                       | `CatalogModel`/`ModelCatalog` types, provider-id mapping, flattening and formatting helpers                                                                                                                                                                       |
 | `src/main/conversations.ts`                         | Conversation record CRUD under `{userData}/conversations/`                                                                                                                                                                                                        |
 | `src/main/lookup/lookup.ts`                         | Hotkey entry point: clipboard → OCR fallback → popup session                                                                                                                                                                                                      |
 | `src/main/lookup/capture.ts`                        | Screen capture (portal-first on KDE Wayland) and the single serialized tesseract.js worker                                                                                                                                                                        |
@@ -111,22 +114,23 @@ preserving the original `createdAt`, and pushes `chat-replace-conversation` to t
 
 ## 3. IPC surface
 
-| Channel                                                     | Direction    | Purpose                                         |
-| ----------------------------------------------------------- | ------------ | ----------------------------------------------- |
-| `chat-send` → `chat-chunk` / `chat-response` / `chat-error` | R → M, M → R | Streaming chat, correlated by `requestId`       |
-| `chat-expand` → `chat-expand-chunk`                         | R → M, M → R | Streaming expansions (`done` / `error` markers) |
-| `chat-replace-conversation`                                 | M → R        | Hydrate a transferred conversation              |
-| `lookup-trigger-grow` / `lookup-grow`                       | L → M, M → L | First-ask window growth                         |
-| `lookup-context` / `ai-error`                               | M → L        | Context status and capture/OCR errors           |
-| `lookup-paste-text` / `lookup-paste-image`                  | L → M        | Paste replaces the context                      |
-| `lookup-ocr-image`                                          | L ↔ M        | OCR a pasted image, returns `{ text, error? }`  |
-| `lookup-input-changed` / `lookup-close` / `lookup-ready`    | L → M        | Blur guard, close, listener-ready handshake     |
-| `lookup-transfer`                                           | L → M        | Send the popup conversation to the chat window  |
-| `conversation-save` / `-load` / `-delete` / `-list`         | R ↔ M        | Conversation CRUD                               |
-| `conversation-load-most-recent` / `-list-unfed` / `-kb-fed` | R ↔ M        | Startup restore and KB integration              |
-| `load-settings` / `save-settings`                           | R ↔ M        | Hotkey, close-to-tray, lookup context mode      |
-| `load-model-config` / `save-model-config`                   | R ↔ M        | Connections and role assignments                |
-| `kb-load-prompt` / `kb-analyze` / `kb-reanalyze`            | R ↔ M        | Knowledge Base                                  |
+| Channel                                                     | Direction    | Purpose                                          |
+| ----------------------------------------------------------- | ------------ | ------------------------------------------------ |
+| `chat-send` → `chat-chunk` / `chat-response` / `chat-error` | R → M, M → R | Streaming chat, correlated by `requestId`        |
+| `chat-expand` → `chat-expand-chunk`                         | R → M, M → R | Streaming expansions (`done` / `error` markers)  |
+| `chat-replace-conversation`                                 | M → R        | Hydrate a transferred conversation               |
+| `lookup-trigger-grow` / `lookup-grow`                       | L → M, M → L | First-ask window growth                          |
+| `lookup-context` / `ai-error`                               | M → L        | Context status and capture/OCR errors            |
+| `lookup-paste-text` / `lookup-paste-image`                  | L → M        | Paste replaces the context                       |
+| `lookup-ocr-image`                                          | L ↔ M        | OCR a pasted image, returns `{ text, error? }`   |
+| `lookup-input-changed` / `lookup-close` / `lookup-ready`    | L → M        | Blur guard, close, listener-ready handshake      |
+| `lookup-transfer`                                           | L → M        | Send the popup conversation to the chat window   |
+| `conversation-save` / `-load` / `-delete` / `-list`         | R ↔ M        | Conversation CRUD                                |
+| `conversation-load-most-recent` / `-list-unfed` / `-kb-fed` | R ↔ M        | Startup restore and KB integration               |
+| `load-settings` / `save-settings`                           | R ↔ M        | Hotkey, close-to-tray, lookup context mode       |
+| `load-model-config` / `save-model-config`                   | R ↔ M        | Connections and role assignments                 |
+| `load-model-catalog`                                        | R ↔ M        | models.dev model catalog (cached, force-refresh) |
+| `kb-load-prompt` / `kb-analyze` / `kb-reanalyze`            | R ↔ M        | Knowledge Base                                   |
 
 ---
 
@@ -136,6 +140,7 @@ preserving the original `createdAt`, and pushes `chat-replace-conversation` to t
 {userData}/
   config/providers.json     ModelConfig (schemaVersion 2)
   config/settings.json      { hotkey, closeToTray, lookupContextMode }
+  cache/models-dev.json     models.dev snapshot (24h TTL, offline fallback)
   conversations/{id}.json   ConversationRecord
   kb/prompt.txt             personalization prompt (plain text)
   kb/keywords.json          CategorizedKeyword[]
@@ -157,16 +162,22 @@ preserving the original `createdAt`, and pushes `chat-replace-conversation` to t
     }
   },
   "roles": {
-    "chat": { "connectionId": "conn_…", "model": "gemini-3.5-flash", "webSearchEnabled": false },
-    "lookup": { "connectionId": "conn_…", "model": "gemini-3.5-flash", "webSearchEnabled": true },
-    "kb-maintenance": { "connectionId": null, "model": "", "webSearchEnabled": false }
+    "chat": { "connectionId": "conn_…", "model": "gemini-3.5-flash" },
+    "lookup": { "connectionId": "conn_…", "model": "gemini-3.5-flash" },
+    "kb-maintenance": { "connectionId": null, "model": "" }
   }
 }
 ```
 
 Provider types: `google-ai-studio`, `openai`, `openai-compatible`, `openrouter`, `ollama`.
-`ollama` is the only provider that works without an API key and the only one that never uses
-web search.
+`ollama` is the only provider that works without an API key.
+
+Every provider is routed through the OpenAI-compatible wire format (`provider.ts: ROUTES`), so a
+provider is a name plus a default base URL and nothing downstream branches on the provider type.
+Google therefore uses `…/v1beta/openai`, not the native `generateContent` API. No provider tool is
+injected: web-search grounding is not available, because the AI SDK only exposes it as
+provider-specific tools (`google.tools.googleSearch`, `openai.tools.webSearch`), which is exactly
+the special-casing this transport avoids.
 
 ---
 

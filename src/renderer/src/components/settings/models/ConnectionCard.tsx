@@ -1,18 +1,43 @@
+import { useState } from 'react'
 import { providerRegistry } from '../../../../../shared/models'
 import type { Connection, ProviderType } from '../../../../../shared/models'
 
+type TestOutcome = { ok: boolean; detail: string }
+
 interface ConnectionCardProps {
   connection: Connection
+  probeModel?: string
   onUpdate: (connId: string, updates: Partial<Connection>) => void
   onDelete: (connId: string) => void
 }
 
 function ConnectionCard({
   connection,
+  probeModel,
   onUpdate,
   onDelete
 }: ConnectionCardProps): React.JSX.Element {
   const def = providerRegistry[connection.providerType]
+  const [testing, setTesting] = useState(false)
+  const [testOutcome, setTestOutcome] = useState<TestOutcome | null>(null)
+
+  // A previous result must not outlive a change to the fields it measured.
+  const updateConnection = (updates: Partial<Connection>): void => {
+    setTestOutcome(null)
+    onUpdate(connection.id, updates)
+  }
+
+  const handleTest = async (): Promise<void> => {
+    setTesting(true)
+    try {
+      const result = await window.api.testProviderConnection(connection, probeModel)
+      setTestOutcome(result)
+    } catch (err) {
+      setTestOutcome({ ok: false, detail: err instanceof Error ? err.message : String(err) })
+    } finally {
+      setTesting(false)
+    }
+  }
 
   const handleProviderTypeChange = (providerType: ProviderType): void => {
     const newDef = providerRegistry[providerType]
@@ -23,7 +48,7 @@ function ConnectionCard({
     }
     if (newDef.authShape !== 'apiKey') updates.apiKey = ''
     if (newDef.authShape !== 'host') updates.host = ''
-    onUpdate(connection.id, updates)
+    updateConnection(updates)
   }
 
   return (
@@ -41,17 +66,40 @@ function ConnectionCard({
           className="settings-input"
           style={{ width: '60%', fontWeight: 600 }}
           value={connection.label}
-          onChange={(e) => onUpdate(connection.id, { label: e.target.value })}
+          onChange={(e) => updateConnection({ label: e.target.value })}
           placeholder="Connection name"
         />
-        <button
-          className="settings-header-save"
-          style={{ background: '#e74c3c22', color: '#e74c3c', padding: '4px 12px' }}
-          onClick={() => onDelete(connection.id)}
-        >
-          Delete
-        </button>
+        <div style={{ display: 'flex', gap: '6px' }}>
+          <button
+            className="settings-header-save"
+            style={{ padding: '4px 12px' }}
+            onClick={handleTest}
+            disabled={testing}
+          >
+            {testing ? 'Testing…' : 'Test'}
+          </button>
+          <button
+            className="settings-header-save"
+            style={{ background: '#e74c3c22', color: '#e74c3c', padding: '4px 12px' }}
+            onClick={() => onDelete(connection.id)}
+          >
+            Delete
+          </button>
+        </div>
       </div>
+
+      {testOutcome && (
+        <p
+          role="status"
+          style={{
+            margin: '0 0 10px',
+            fontSize: '12px',
+            color: testOutcome.ok ? '#2ecc71' : '#e74c3c'
+          }}
+        >
+          {testOutcome.ok ? '✓' : '✗'} {testOutcome.detail}
+        </p>
+      )}
 
       {/* Provider type */}
       <div style={{ marginBottom: '8px' }}>
@@ -81,7 +129,7 @@ function ConnectionCard({
             type="password"
             className="settings-input"
             value={connection.apiKey ?? ''}
-            onChange={(e) => onUpdate(connection.id, { apiKey: e.target.value })}
+            onChange={(e) => updateConnection({ apiKey: e.target.value })}
             placeholder="Enter your API key…"
           />
         </div>
@@ -97,7 +145,7 @@ function ConnectionCard({
             className="settings-input"
             spellCheck="false"
             value={connection.host ?? ''}
-            onChange={(e) => onUpdate(connection.id, { host: e.target.value })}
+            onChange={(e) => updateConnection({ host: e.target.value })}
             placeholder="http://localhost:11434"
           />
         </div>
@@ -114,7 +162,7 @@ function ConnectionCard({
             className="settings-input"
             spellCheck="false"
             value={connection.baseUrl ?? ''}
-            onChange={(e) => onUpdate(connection.id, { baseUrl: e.target.value })}
+            onChange={(e) => updateConnection({ baseUrl: e.target.value })}
             placeholder="https://api.openai.com/v1"
           />
         </div>
