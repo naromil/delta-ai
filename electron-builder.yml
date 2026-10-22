@@ -27,7 +27,6 @@ dmg:
 linux:
   target:
     - AppImage
-    - snap
     - deb
   maintainer: naromil <nroamli@gmail.com>
   category: Utility
