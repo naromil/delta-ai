@@ -1,18 +1,71 @@
 import { APICallError, JSONParseError, TypeValidationError, streamText } from 'ai'
-import type { LanguageModel, ModelMessage, ToolSet } from 'ai'
-import { createGoogleGenerativeAI } from '@ai-sdk/google'
+import type { LanguageModel, ModelMessage } from 'ai'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import { resolveRole, RoleUnassignedError } from './config'
-import type { ProviderMessage, RoleId } from './models/registries'
+import type { Connection } from './models/registries'
+import type { ProviderMessage, ProviderType, RoleId } from './models/registries'
 export type { ProviderMessage }
 export { RoleUnassignedError }
 
 const FETCH_TIMEOUT_MS = 40_000
 const TIMEOUT_MESSAGE = `Request timed out after ${FETCH_TIMEOUT_MS / 1000}s. Check your API endpoint and network connection.`
-const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta'
 
 export class NoApiKeyError extends Error {}
 export class UnsupportedProviderError extends Error {}
+
+/* ---- Routes ---- */
+
+/**
+ * Every provider speaks the OpenAI-compatible wire format, so a provider is a name
+ * plus a default base URL. Nothing downstream branches on the provider type; adding
+ * one means adding a row here. Google uses its OpenAI-compatible endpoint rather
+ * than a dedicated SDK, so it gets no special treatment.
+ */
+interface ProviderRoute {
+  name: string
+  /** Used when the connection does not carry its own base URL. */
+  baseUrl?: string
+  requiresApiKey: boolean
+}
+
+const ROUTES: Record<ProviderType, ProviderRoute> = {
+  'google-ai-studio': {
+    name: 'google',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    requiresApiKey: true
+  },
+  openai: {
+    name: 'openai',
+    baseUrl: 'https://api.openai.com/v1',
+    requiresApiKey: true
+  },
+  openrouter: {
+    name: 'openrouter',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    requiresApiKey: true
+  },
+  'openai-compatible': {
+    name: 'openai-compatible',
+    requiresApiKey: true
+  },
+  ollama: {
+    name: 'ollama',
+    baseUrl: 'http://localhost:11434/v1',
+    requiresApiKey: false
+  }
+}
+
+function baseUrlFor(connection: Connection, route: ProviderRoute): string {
+  if (connection.providerType === 'ollama') {
+    const host = (connection.host ?? 'http://localhost:11434').replace(/\/+$/, '')
+    return connection.baseUrl || `${host}/v1`
+  }
+  const baseUrl = connection.baseUrl ?? route.baseUrl
+  if (!baseUrl) {
+    throw new NoApiKeyError('Base URL is required for OpenAI Compatible provider.')
+  }
+  return baseUrl
+}
 
 /* ---- AI SDK transport ---- */
 
@@ -30,10 +83,10 @@ function splitPrompt(messages: ProviderMessage[]): {
   }
 }
 
-function translateError(error: unknown, prefix: string): Error {
+function translateError(error: unknown): Error {
   if (APICallError.isInstance(error)) {
     if (error.statusCode === undefined) return new Error(error.message)
-    return new Error(`${prefix} ${error.statusCode}: ${error.responseBody ?? ''}`)
+    return new Error(`API error ${error.statusCode}: ${error.responseBody ?? ''}`)
   }
   if (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')) {
     return new Error(TIMEOUT_MESSAGE)
@@ -43,8 +96,7 @@ function translateError(error: unknown, prefix: string): Error {
 
 async function* streamModel(
   model: LanguageModel,
-  messages: ProviderMessage[],
-  { tools, errorPrefix }: { tools?: ToolSet; errorPrefix: string }
+  messages: ProviderMessage[]
 ): AsyncGenerator<string> {
   const prompt = splitPrompt(messages)
   const controller = new AbortController()
@@ -55,7 +107,6 @@ async function* streamModel(
       model,
       instructions: prompt.instructions,
       messages: prompt.messages,
-      tools,
       maxRetries: 0,
       abortSignal: controller.signal
     })
@@ -72,42 +123,10 @@ async function* streamModel(
       }
     }
   } catch (error) {
-    throw translateError(error, errorPrefix)
+    throw translateError(error)
   } finally {
     clearTimeout(timer)
   }
-}
-
-async function* streamOpenAIWire(
-  apiKey: string,
-  modelId: string,
-  messages: ProviderMessage[],
-  baseUrl: string,
-  webSearchEnabled: boolean
-): AsyncGenerator<string> {
-  const provider = createOpenAICompatible({
-    name: 'openai-compatible',
-    baseURL: baseUrl,
-    apiKey: apiKey || undefined,
-    transformRequestBody: webSearchEnabled
-      ? (body) => ({ ...body, tools: [{ type: 'web_search' }] })
-      : undefined
-  })
-
-  yield* streamModel(provider(modelId), messages, { errorPrefix: 'API error' })
-}
-
-async function* streamGeminiWithSearch(
-  apiKey: string,
-  modelId: string,
-  messages: ProviderMessage[]
-): AsyncGenerator<string> {
-  const google = createGoogleGenerativeAI({ apiKey, baseURL: GEMINI_BASE_URL })
-
-  yield* streamModel(google(modelId), messages, {
-    tools: { google_search: google.tools.googleSearch({}) },
-    errorPrefix: 'Gemini API error'
-  })
 }
 
 /* ---- Public dispatch ---- */
@@ -120,59 +139,24 @@ export async function* callProviderStream(
   if (!resolved) {
     throw new RoleUnassignedError(roleId)
   }
-  const { connection, model, webSearchEnabled } = resolved
-  if (!connection.apiKey && connection.providerType !== 'ollama') {
+  const { connection, model } = resolved
+  const route = ROUTES[connection.providerType]
+  if (!route) {
+    throw new UnsupportedProviderError(
+      `Provider "${connection.providerType}" is not supported yet.`
+    )
+  }
+  if (route.requiresApiKey && !connection.apiKey) {
     throw new NoApiKeyError('No API key configured. Open Settings to add your provider API key.')
   }
 
-  switch (connection.providerType) {
-    case 'google-ai-studio':
-      if (webSearchEnabled) {
-        yield* streamGeminiWithSearch(connection.apiKey ?? '', model, messages)
-      } else {
-        yield* streamOpenAIWire(connection.apiKey ?? '', model, messages, GEMINI_BASE_URL, false)
-      }
-      break
-    case 'openai-compatible':
-      if (!connection.baseUrl) {
-        throw new NoApiKeyError('Base URL is required for OpenAI Compatible provider.')
-      }
-      yield* streamOpenAIWire(
-        connection.apiKey ?? '',
-        model,
-        messages,
-        connection.baseUrl,
-        webSearchEnabled
-      )
-      break
-    case 'openai':
-      yield* streamOpenAIWire(
-        connection.apiKey ?? '',
-        model,
-        messages,
-        connection.baseUrl ?? 'https://api.openai.com/v1',
-        webSearchEnabled
-      )
-      break
-    case 'openrouter':
-      yield* streamOpenAIWire(
-        connection.apiKey ?? '',
-        model,
-        messages,
-        connection.baseUrl ?? 'https://openrouter.ai/api/v1',
-        webSearchEnabled
-      )
-      break
-    case 'ollama': {
-      const host = (connection.host ?? 'http://localhost:11434').replace(/\/+$/, '')
-      yield* streamOpenAIWire('', model, messages, `${host}/v1`, false)
-      break
-    }
-    default:
-      throw new UnsupportedProviderError(
-        `Provider "${connection.providerType}" is not supported yet.`
-      )
-  }
+  const provider = createOpenAICompatible({
+    name: route.name,
+    baseURL: baseUrlFor(connection, route),
+    apiKey: connection.apiKey || undefined
+  })
+
+  yield* streamModel(provider(model), messages)
 }
 
 /* ---- Non-streaming: drain the single streaming dispatch ---- */

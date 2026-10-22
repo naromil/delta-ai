@@ -176,15 +176,13 @@ export function loadModelConfig(): ModelConfig {
   }
 }
 
-export function resolveRole(
-  roleId: RoleId
-): { connection: Connection; model: string; webSearchEnabled: boolean } | null {
+export function resolveRole(roleId: RoleId): { connection: Connection; model: string } | null {
   const config = loadModelConfig()
   const assignment = config.roles[roleId]
   if (!assignment || !assignment.connectionId) return null
   const connection = config.connections[assignment.connectionId]
   if (!connection) return null
-  return { connection, model: assignment.model, webSearchEnabled: assignment.webSearchEnabled }
+  return { connection, model: assignment.model }
 }
 
 /* ---- IPC handlers ---- */

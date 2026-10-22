@@ -98,8 +98,7 @@ async function collect(generator: AsyncGenerator<string>): Promise<string> {
 
 const openAiRole = {
   connection: { providerType: 'openai', apiKey: 'key' },
-  model: 'm',
-  webSearchEnabled: false
+  model: 'm'
 }
 
 describe('callProviderStream', () => {
@@ -129,27 +128,24 @@ describe('callProviderStream', () => {
     await expect(collect(callProviderStream(MESSAGES, 'chat'))).resolves.toBe('alphabeta')
   })
 
-  it('joins every Gemini candidate part', async () => {
+  it('routes Google through its OpenAI-compatible endpoint', async () => {
     resolveRole.mockReturnValue({
-      connection: { providerType: 'google-ai-studio', apiKey: 'key' },
-      model: 'gemini-2.5-flash',
-      webSearchEnabled: true
+      connection: { providerType: 'google-ai-studio', apiKey: 'test-token-d' },
+      model: 'gemini-2.5-flash'
     })
-    stubFetch([
-      frame({ candidates: [{ content: { parts: [{ text: 'alpha' }, { text: 'beta' }] } }] }),
-      frame({
-        candidates: [{ content: { parts: [{ text: 'gamma' }] }, finishReason: 'STOP' }]
-      })
-    ])
+    const calls = stubFetch(openAiFrames(['alpha', 'beta']))
 
-    await expect(collect(callProviderStream(MESSAGES, 'chat'))).resolves.toBe('alphabetagamma')
+    await expect(collect(callProviderStream(MESSAGES, 'chat'))).resolves.toBe('alphabeta')
+    expect(calls[0].url).toBe(
+      'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions'
+    )
+    expect(calls[0].body).toEqual({ model: 'gemini-2.5-flash', messages: MESSAGES, stream: true })
   })
 
   it('raises NoApiKeyError when the connection has no key', async () => {
     resolveRole.mockReturnValue({
       connection: { providerType: 'openai' },
-      model: 'm',
-      webSearchEnabled: false
+      model: 'm'
     })
 
     await expect(collect(callProviderStream(MESSAGES, 'chat'))).rejects.toBeInstanceOf(

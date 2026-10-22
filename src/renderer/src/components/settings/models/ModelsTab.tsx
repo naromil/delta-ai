@@ -119,9 +119,6 @@ function ModelsTab({
               onUpdateRole(roleId, { connectionId, model: defaultModel })
             }}
             onModelChange={(roleId, model) => onUpdateRole(roleId, { model })}
-            onWebSearchChange={(roleId, checked) =>
-              onUpdateRole(roleId, { webSearchEnabled: checked })
-            }
           />
         ))}
       </div>

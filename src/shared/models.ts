@@ -19,9 +19,6 @@ export interface ProviderTypeDef {
   label: string
   authShape: AuthShape
   defaultBaseUrl?: string
-  capabilities: {
-    webSearch: boolean
-  }
   implemented: boolean
   knownModels?: string[]
 }
@@ -30,7 +27,6 @@ export interface RoleDef {
   label: string
   description: string
   locked: boolean
-  offersWebSearch: boolean
 }
 
 export interface Connection {
@@ -45,7 +41,6 @@ export interface Connection {
 export interface RoleAssignment {
   connectionId: string | null
   model: string
-  webSearchEnabled: boolean
 }
 
 export interface ModelConfig {
@@ -54,14 +49,17 @@ export interface ModelConfig {
   roles: Record<RoleId, RoleAssignment>
 }
 
-export const MODEL_CONFIG_VERSION = 2
+/**
+ * v3 dropped the per-role web-search flag: search is only reachable through
+ * provider-specific tools, so a common flag could not be honoured uniformly.
+ */
+export const MODEL_CONFIG_VERSION = 3
 
 export const providerRegistry: Record<ProviderType, ProviderTypeDef> = {
   'google-ai-studio': {
     label: 'Google AI Studio',
     authShape: 'apiKey',
     defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta',
-    capabilities: { webSearch: true },
     implemented: true,
     knownModels: [
       'gemini-3.6-flash',
@@ -74,21 +72,18 @@ export const providerRegistry: Record<ProviderType, ProviderTypeDef> = {
   'openai-compatible': {
     label: 'OpenAI Compatible',
     authShape: 'apiKey',
-    capabilities: { webSearch: true },
     implemented: true
   },
   openai: {
     label: 'OpenAI',
     authShape: 'apiKey',
     defaultBaseUrl: 'https://api.openai.com/v1',
-    capabilities: { webSearch: true },
     implemented: true,
     knownModels: ['gpt-4o-mini', 'gpt-4.1-mini', 'gpt-5-nano', 'gpt-4o', 'gpt-5.6-luna']
   },
   ollama: {
     label: 'Ollama',
     authShape: 'host',
-    capabilities: { webSearch: false },
     implemented: true,
     knownModels: ['qwen3:4b', 'gemma4:e4b', 'gpt-oss:20b', 'llama3.2:1b', 'llama3.2:3b']
   },
@@ -96,7 +91,6 @@ export const providerRegistry: Record<ProviderType, ProviderTypeDef> = {
     label: 'OpenRouter',
     authShape: 'apiKey',
     defaultBaseUrl: 'https://openrouter.ai/api/v1',
-    capabilities: { webSearch: true },
     implemented: true,
     knownModels: [
       'google/gemini-3.5-flash',
@@ -112,27 +106,24 @@ export const roleRegistry: Record<RoleId, RoleDef> = {
   chat: {
     label: 'Chat',
     description: 'Model used for the main chat conversation window',
-    locked: false,
-    offersWebSearch: true
+    locked: false
   },
   lookup: {
     label: 'Lookup',
     description: 'Model used for on-screen OCR lookups and expansions',
-    locked: false,
-    offersWebSearch: true
+    locked: false
   },
   'kb-maintenance': {
     label: 'Knowledge Base Maintenance',
     description: 'Model used to process and maintain the local knowledge base',
-    locked: false,
-    offersWebSearch: false
+    locked: false
   }
 }
 
 export const DEFAULT_ROLES: Record<RoleId, RoleAssignment> = {
-  chat: { connectionId: null, model: '', webSearchEnabled: false },
-  lookup: { connectionId: null, model: '', webSearchEnabled: false },
-  'kb-maintenance': { connectionId: null, model: '', webSearchEnabled: false }
+  chat: { connectionId: null, model: '' },
+  lookup: { connectionId: null, model: '' },
+  'kb-maintenance': { connectionId: null, model: '' }
 }
 
 export function createDefaultModelConfig(): ModelConfig {

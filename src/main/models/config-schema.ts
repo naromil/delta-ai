@@ -17,8 +17,7 @@ const connectionFileSchema = z.object({
 
 const roleAssignmentFileSchema = z.object({
   connectionId: z.string().min(1).nullable().default(null),
-  model: z.string().default(''),
-  webSearchEnabled: z.boolean().default(false)
+  model: z.string().default('')
 })
 
 const modelConfigFileSchema = z.object({
@@ -108,8 +107,7 @@ function migrateV1ToV2(raw: Record<string, unknown>, notes: string[]): Record<st
     const legacy = legacyById[activeId] ?? {}
     const assignment: RoleAssignment = {
       connectionId: activeId,
-      model: readString(legacy.model) ?? '',
-      webSearchEnabled: legacy.webSearchEnabled === true
+      model: readString(legacy.model) ?? ''
     }
     config.roles.chat = { ...assignment }
     config.roles.lookup = { ...assignment }
@@ -119,10 +117,27 @@ function migrateV1ToV2(raw: Record<string, unknown>, notes: string[]): Record<st
   return config as unknown as Record<string, unknown>
 }
 
+/** v2 -> v3: the per-role web-search flag is gone; strip it from stored roles. */
+function migrateV2ToV3(raw: Record<string, unknown>, notes: string[]): Record<string, unknown> {
+  const roles = asRecord(raw.roles) ?? {}
+  let stripped = 0
+  for (const entry of Object.values(roles)) {
+    const role = asRecord(entry)
+    if (role && 'webSearchEnabled' in role) {
+      delete role.webSearchEnabled
+      stripped += 1
+    }
+  }
+  if (stripped > 0) notes.push(`dropped the web-search flag from ${stripped} role(s)`)
+  notes.push('migrated model config to schema v3')
+  return { ...raw, schemaVersion: 3, roles }
+}
+
 type MigrationStep = (raw: Record<string, unknown>, notes: string[]) => Record<string, unknown>
 
 const MIGRATIONS: Record<number, MigrationStep> = {
-  1: migrateV1ToV2
+  1: migrateV1ToV2,
+  2: migrateV2ToV3
 }
 
 function applyMigrations(
@@ -192,12 +207,8 @@ function normalizeRoles(
     }
 
     roles[roleId] = connectionId
-      ? {
-          connectionId,
-          model: entry.model,
-          webSearchEnabled: entry.webSearchEnabled
-        }
-      : { connectionId: null, model: '', webSearchEnabled: false }
+      ? { connectionId, model: entry.model }
+      : { connectionId: null, model: '' }
   }
 
   return roles

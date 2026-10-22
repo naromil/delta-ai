@@ -25,7 +25,6 @@ interface RoleRowProps {
   catalog: ModelCatalogState
   onConnectionChange: (roleId: RoleId, connectionId: string | null) => void
   onModelChange: (roleId: RoleId, model: string) => void
-  onWebSearchChange: (roleId: RoleId, checked: boolean) => void
 }
 
 function RoleRow({
@@ -35,8 +34,7 @@ function RoleRow({
   modelConfig,
   catalog,
   onConnectionChange,
-  onModelChange,
-  onWebSearchChange
+  onModelChange
 }: RoleRowProps): React.JSX.Element {
   const [fetchedModels, setFetchedModels] = useState<string[] | null>(null)
   const [fetchError, setFetchError] = useState<string | null>(null)
@@ -70,9 +68,6 @@ function RoleRow({
   const modelIds = fetchedModels ?? baseModelIds
   const selectedModel = catalogModels.find((m) => m.id === assignment.model)
   const isUnimplemented = providerType ? !def?.implemented : false
-  const supportsWebSearch =
-    (def?.capabilities?.webSearch ?? false) && (selectedModel?.toolCall ?? true)
-
   const pickerModels: PickerModel[] = modelIds.map((id) => {
     const catalogModel = catalogModels.find((m) => m.id === id)
     return catalogModel ? { id, hint: formatModelHint(catalogModel) } : { id }
@@ -121,8 +116,6 @@ function RoleRow({
 
   const handleModelChange = (model: string): void => {
     onModelChange(roleId, model)
-    const nextModel = catalogModels.find((m) => m.id === model)
-    if (nextModel && !nextModel.toolCall) onWebSearchChange(roleId, false)
   }
 
   const handleConnectionSelect = (connectionId: string | null): void => {
@@ -256,32 +249,6 @@ function RoleRow({
           </p>
         )}
       </div>
-
-      {/* Web search toggle */}
-      {roleDef.offersWebSearch && (
-        <label
-          className="toggle-row"
-          style={{ marginTop: '8px', opacity: supportsWebSearch ? 1 : 0.5 }}
-        >
-          <input
-            type="checkbox"
-            className="toggle-input"
-            checked={assignment.webSearchEnabled}
-            disabled={roleDef.locked || !assignment.connectionId || !supportsWebSearch}
-            onChange={(e) => onWebSearchChange(roleId, e.target.checked)}
-          />
-          <span className="toggle-track">
-            <span className="toggle-thumb" />
-          </span>
-          <span className="toggle-label">
-            {!supportsWebSearch
-              ? 'Web search (not supported by this provider)'
-              : assignment.webSearchEnabled
-                ? 'Web search enabled'
-                : 'Web search disabled'}
-          </span>
-        </label>
-      )}
     </div>
   )
 }

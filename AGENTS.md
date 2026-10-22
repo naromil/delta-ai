@@ -122,7 +122,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 
 | Task                                  | File(s)                                                                              |
 | ------------------------------------- | ------------------------------------------------------------------------------------ |
-| Add an AI provider                    | `provider.ts` (`callProvider` switch)                                                |
+| Add an AI provider                    | `provider.ts` (`ROUTES` row: name + base URL, nothing else)                          |
 | Change the OCR/capture pipeline       | `lookup/capture.ts`                                                                  |
 | Change the hotkey response flow       | `lookup/lookup.ts` (`handleHotkeyPressed`)                                           |
 | Reposition / restyle the lookup popup | `lookup/window.ts` + CSS in `lookup.css`, `LookupApp.tsx`                            |
@@ -147,6 +147,10 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 - **Provider dispatch lives in `provider.ts`.** `callProviderStream(messages, roleId)` reads the
   config and selects the backend; everyone else (streaming IPC handlers, lookup) calls it via
   the roleId. Don't duplicate `resolveRole()` + provider branching elsewhere.
+- **Every provider is one OpenAI-compatible route.** A provider is a `ROUTES` entry (name +
+  default base URL); there is no per-provider transport, SDK or tool wiring, and adding one means
+  adding a row. Google uses `…/v1beta/openai`. Web-search grounding is deliberately absent: the AI
+  SDK only exposes search as provider-specific tools, which would reintroduce the special case.
 - **The lookup popup is a 420×320 always-on-top frameless `BrowserWindow`** created in
   `lookup/window.ts` via `createLookupSession`. It loads the **same renderer bundle** as the
   main window, with `?role=lookup` query param (see `Root.tsx`). Position is best-effort near

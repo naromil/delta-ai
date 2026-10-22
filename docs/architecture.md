@@ -162,16 +162,22 @@ preserving the original `createdAt`, and pushes `chat-replace-conversation` to t
     }
   },
   "roles": {
-    "chat": { "connectionId": "conn_…", "model": "gemini-3.5-flash", "webSearchEnabled": false },
-    "lookup": { "connectionId": "conn_…", "model": "gemini-3.5-flash", "webSearchEnabled": true },
-    "kb-maintenance": { "connectionId": null, "model": "", "webSearchEnabled": false }
+    "chat": { "connectionId": "conn_…", "model": "gemini-3.5-flash" },
+    "lookup": { "connectionId": "conn_…", "model": "gemini-3.5-flash" },
+    "kb-maintenance": { "connectionId": null, "model": "" }
   }
 }
 ```
 
 Provider types: `google-ai-studio`, `openai`, `openai-compatible`, `openrouter`, `ollama`.
-`ollama` is the only provider that works without an API key and the only one that never uses
-web search.
+`ollama` is the only provider that works without an API key.
+
+Every provider is routed through the OpenAI-compatible wire format (`provider.ts: ROUTES`), so a
+provider is a name plus a default base URL and nothing downstream branches on the provider type.
+Google therefore uses `…/v1beta/openai`, not the native `generateContent` API. No provider tool is
+injected: web-search grounding is not available, because the AI SDK only exposes it as
+provider-specific tools (`google.tools.googleSearch`, `openai.tools.webSearch`), which is exactly
+the special-casing this transport avoids.
 
 ---
 

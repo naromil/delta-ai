@@ -34,12 +34,36 @@ function v2Config(): ModelConfig {
       }
     },
     roles: {
-      chat: { connectionId: 'conn_a', model: 'gpt-5-mini', webSearchEnabled: true },
-      lookup: { connectionId: 'conn_a', model: 'gpt-5-nano', webSearchEnabled: false },
-      'kb-maintenance': { connectionId: 'conn_b', model: 'qwen3:4b', webSearchEnabled: false }
+      chat: { connectionId: 'conn_a', model: 'gpt-5-mini' },
+      lookup: { connectionId: 'conn_a', model: 'gpt-5-nano' },
+      'kb-maintenance': { connectionId: 'conn_b', model: 'qwen3:4b' }
     }
   }
 }
+
+describe('v2 -> v3 migration', () => {
+  it('drops the retired per-role web-search flag and keeps the assignments', () => {
+    const legacy = {
+      schemaVersion: 2,
+      connections: { conn_a: { id: 'conn_a', providerType: 'openai', apiKey: 'test-token-a' } },
+      roles: {
+        chat: { connectionId: 'conn_a', model: 'gpt-5-mini', webSearchEnabled: true },
+        lookup: { connectionId: 'conn_a', model: 'gpt-5-nano', webSearchEnabled: false },
+        'kb-maintenance': { connectionId: null, model: '', webSearchEnabled: true }
+      }
+    }
+
+    const { config, ok, changed, notes } = migrateModelConfig(legacy)
+
+    expect(ok).toBe(true)
+    expect(changed).toBe(true)
+    expect(config.schemaVersion).toBe(3)
+    expect(config.roles.chat).toEqual({ connectionId: 'conn_a', model: 'gpt-5-mini' })
+    expect(config.roles['kb-maintenance']).toEqual({ connectionId: null, model: '' })
+    expect(JSON.stringify(config)).not.toContain('webSearch')
+    expect(notes.join(' ')).toContain('dropped the web-search flag from 3 role(s)')
+  })
+})
 
 describe('v1 -> v2 migration', () => {
   it('turns each provider entry into a connection and assigns the active one', () => {
@@ -47,7 +71,7 @@ describe('v1 -> v2 migration', () => {
 
     expect(ok).toBe(true)
     expect(changed).toBe(true)
-    expect(config.schemaVersion).toBe(2)
+    expect(config.schemaVersion).toBe(MODEL_CONFIG_VERSION)
     expect(Object.keys(config.connections).sort()).toEqual([
       'v1_google-ai-studio',
       'v1_openai-compatible'
@@ -65,15 +89,10 @@ describe('v1 -> v2 migration', () => {
     expect(config.connections['v1_openai-compatible'].baseUrl).toBe('https://example.invalid/v1')
     expect(config.roles.chat).toEqual({
       connectionId: 'v1_google-ai-studio',
-      model: 'gemini-3.6-flash',
-      webSearchEnabled: true
+      model: 'gemini-3.6-flash'
     })
     expect(config.roles.lookup).toEqual(config.roles.chat)
-    expect(config.roles['kb-maintenance']).toEqual({
-      connectionId: null,
-      model: '',
-      webSearchEnabled: false
-    })
+    expect(config.roles['kb-maintenance']).toEqual({ connectionId: null, model: '' })
   })
 
   it('falls back to the only provider when currentProvider does not match', () => {
@@ -110,11 +129,7 @@ describe('current schema', () => {
 
     const { config, changed, notes } = migrateModelConfig(broken)
     expect(changed).toBe(true)
-    expect(config.roles['kb-maintenance']).toEqual({
-      connectionId: null,
-      model: '',
-      webSearchEnabled: false
-    })
+    expect(config.roles['kb-maintenance']).toEqual({ connectionId: null, model: '' })
     expect(notes.join(' ')).toContain('referenced missing connection "conn_b"')
     // Sibling roles survive untouched.
     expect(config.roles.chat.connectionId).toBe('conn_a')

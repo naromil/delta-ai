@@ -106,7 +106,7 @@ function Settings(): React.JSX.Element {
       const roles = { ...next.roles } as Record<RoleId, RoleAssignment>
       for (const key of Object.keys(roles) as RoleId[]) {
         if (roles[key].connectionId === connId) {
-          roles[key] = { connectionId: null, model: '', webSearchEnabled: false }
+          roles[key] = { connectionId: null, model: '' }
         }
       }
       next.roles = roles
