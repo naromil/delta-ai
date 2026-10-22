@@ -163,6 +163,22 @@ describe('callProviderStream', () => {
     await expect(collect(callProviderStream(MESSAGES, 'chat'))).rejects.toThrow('unassigned:chat')
   })
 
+  it('surfaces network failures without inventing a status code', async () => {
+    resolveRole.mockReturnValue(openAiRole)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw Object.assign(new TypeError('fetch failed'), {
+          cause: new Error('connect ECONNREFUSED')
+        })
+      })
+    )
+
+    await expect(collect(callProviderStream(MESSAGES, 'chat'))).rejects.toThrow(
+      /Cannot connect to API: connect ECONNREFUSED/
+    )
+  })
+
   it('surfaces non-2xx responses with the status and body', async () => {
     resolveRole.mockReturnValue(openAiRole)
     stubFetch([], { status: 401, errorBody: 'bad key' })

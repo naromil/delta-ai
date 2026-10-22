@@ -32,6 +32,7 @@ function splitPrompt(messages: ProviderMessage[]): {
 
 function translateError(error: unknown, prefix: string): Error {
   if (APICallError.isInstance(error)) {
+    if (error.statusCode === undefined) return new Error(error.message)
     return new Error(`${prefix} ${error.statusCode}: ${error.responseBody ?? ''}`)
   }
   if (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')) {
