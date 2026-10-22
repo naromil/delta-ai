@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { providerRegistry, roleRegistry } from '../../../../../shared/models'
 import { catalogModelsForType, describeCatalogModel } from '../../../../../shared/model-catalog'
 import type { CatalogModel, ModelCatalogState } from '../../../../../shared/model-catalog'
@@ -36,13 +36,25 @@ function RoleRow({
   onModelChange,
   onWebSearchChange
 }: RoleRowProps): React.JSX.Element {
+  const [fetchedModels, setFetchedModels] = useState<string[] | null>(null)
+  const [fetchError, setFetchError] = useState<string | null>(null)
+  const [fetching, setFetching] = useState(false)
+  const autoFetchedRef = useRef(false)
+  const currentModelRef = useRef(assignment.model)
+
+  useEffect(() => {
+    currentModelRef.current = assignment.model
+  }, [assignment.model])
+
   const conn = assignment.connectionId ? modelConfig.connections[assignment.connectionId] : null
   const providerType = conn?.providerType
   const def = providerType ? providerRegistry[providerType] : undefined
   const catalogModels = catalogModelsForType(catalog.catalog, providerType)
   // The live catalog is authoritative; the bundled lists only cover offline use.
-  const modelIds =
+  const baseModelIds =
     catalogModels.length > 0 ? catalogModels.map((m) => m.id) : (def?.knownModels ?? [])
+  // A successful discovery replaces the catalog for this row.
+  const modelIds = fetchedModels ?? baseModelIds
   const selectedModel = catalogModels.find((m) => m.id === assignment.model)
   const isUnimplemented = providerType ? !def?.implemented : false
   const supportsWebSearch =
@@ -58,6 +70,44 @@ function RoleRow({
   const [customModel, setCustomModel] = useState<string>(
     modelIds.includes(assignment.model) ? '' : assignment.model
   )
+
+  const applyFetchedModels = useCallback(
+    (models: string[]): void => {
+      setFetchedModels(models)
+      setFetchError(null)
+      if (models.length === 0) return
+      const current = currentModelRef.current
+      setIsCustom(false)
+      setCustomModel('')
+      if (!models.includes(current)) onModelChange(roleId, models[0])
+    },
+    [onModelChange, roleId]
+  )
+
+  const handleFetch = useCallback(async (): Promise<void> => {
+    if (!conn) return
+    setFetching(true)
+    try {
+      const result = await window.api.listProviderModels(conn)
+      if (result.error) {
+        setFetchError(result.error)
+        return
+      }
+      applyFetchedModels(result.models)
+    } catch (err) {
+      setFetchError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setFetching(false)
+    }
+  }, [conn, applyFetchedModels])
+
+  // Ollama's installed models are local and cheap to list; fetch them once so
+  // the user does not have to type a tag from memory.
+  useEffect(() => {
+    if (autoFetchedRef.current || providerType !== 'ollama' || !conn || roleDef.locked) return
+    autoFetchedRef.current = true
+    void handleFetch()
+  }, [providerType, conn, roleDef.locked, handleFetch])
 
   const handleModelSelect = (value: string): void => {
     if (value === 'Custom...') {
@@ -174,7 +224,23 @@ function RoleRow({
         <label className="settings-label" style={{ marginBottom: '4px', fontSize: '13px' }}>
           Model
         </label>
-        {renderModelField()}
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
+          <div style={{ flex: 1, minWidth: 0 }}>{renderModelField()}</div>
+          <button
+            type="button"
+            className="settings-header-save"
+            style={{ padding: '8px 12px', whiteSpace: 'nowrap' }}
+            onClick={handleFetch}
+            disabled={!conn || roleDef.locked || fetching}
+          >
+            {fetching ? 'Fetching…' : 'Fetch'}
+          </button>
+        </div>
+        {fetchError && (
+          <p role="alert" style={{ margin: '4px 0 0', fontSize: '12px', color: '#e74c3c' }}>
+            {fetchError}
+          </p>
+        )}
       </div>
 
       {/* Web search toggle */}
