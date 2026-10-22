@@ -62,6 +62,12 @@ function ModelPicker({
     if (!state.open) dispatch({ type: 'open' })
   }
 
+  // A closed picker keeps focus after Escape, so `focus` never fires again; open on the
+  // click itself or the field looks dead until the user starts typing into a stale value.
+  const handleMouseDown = (): void => {
+    if (!state.open) dispatch({ type: 'open' })
+  }
+
   const handleChange = (event: React.ChangeEvent<HTMLInputElement>): void => {
     dispatch({ type: 'query', value: event.target.value })
   }
@@ -117,6 +123,7 @@ function ModelPicker({
         placeholder={placeholder}
         value={state.open ? state.query : value}
         onFocus={handleFocus}
+        onMouseDown={handleMouseDown}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
       />
