@@ -20,6 +20,11 @@ The build will fail on typecheck errors, so fix them before committing.
 - Don't import Electron main APIs into the renderer; use the preload bridge.
 - Don't bypass `registerHotkey` for global shortcuts — the portal path won't fire on Wayland.
 - Don't commit secrets. API keys live only in `{userData}/config/providers.json`.
+- No native (node-gyp) addons in the main process. Electron 39 runs a V8 sandbox, so any addon built
+  against the host Node ABI aborts the process on first use (`v8_ArrayBuffer_NewBackingStore` →
+  SIGSEGV → a multi-GB systemd-coredump that fills the disk). `dbus-next`'s optional `usocket` is
+  pruned by `scripts/strip-usocket.mjs` in `postinstall` for exactly this reason; if a dependency
+  needs native code, rebuild it for Electron or pick a pure-JS alternative.
 - Use custom scrollbars everywhere — never the native OS scrollbar. Style `::-webkit-scrollbar` on scrollable elements.
 - Store all AI-facing prompt strings as exported constants in `src/shared/prompts.ts`. Never inline a prompt in a handler or component.
 - When architecture changes, update this file.
