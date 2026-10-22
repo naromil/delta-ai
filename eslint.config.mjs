@@ -28,5 +28,12 @@ export default defineConfig(
       ...eslintPluginReactRefresh.configs.vite.rules
     }
   },
+  {
+    files: ['tools/**/*.mjs'],
+    rules: {
+      // Plain-JS tooling: no TypeScript return annotations available.
+      '@typescript-eslint/explicit-function-return-type': 'off'
+    }
+  },
   eslintConfigPrettier
 )
