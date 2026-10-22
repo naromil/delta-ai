@@ -190,6 +190,12 @@
   list-style: none;
 }
 
+/* Opens above the field when there is no room below it. */
+.model-picker-dropdown--up {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
 .model-picker-option {
   display: flex;
   flex-direction: column;

@@ -16,6 +16,15 @@ interface ModelPickerProps {
   placeholder?: string
 }
 
+/** Height of the list when there is room for it; the footer sits below this. */
+const LIST_MAX_HEIGHT = 260
+
+/** Space the dropdown needs for its footer and borders. */
+const DROPDOWN_CHROME = 44
+
+/** Below this much room the dropdown is better off opening upwards. */
+const MIN_ROOM_BELOW = 180
+
 function ModelPicker({
   models,
   value,
@@ -24,7 +33,12 @@ function ModelPicker({
   placeholder = 'Search or enter a model ID…'
 }: ModelPickerProps): React.JSX.Element {
   const [state, setState] = useState<PickerState>(initialPickerState)
+  const [placement, setPlacement] = useState<{ up: boolean; listHeight: number }>({
+    up: false,
+    listHeight: LIST_MAX_HEIGHT
+  })
   const containerRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
   const listboxId = useId()
 
   const filtered = filterPickerModels(models, state.query)
@@ -57,6 +71,29 @@ function ModelPicker({
     document.addEventListener('mousedown', handleMouseDown)
     return () => document.removeEventListener('mousedown', handleMouseDown)
   }, [state.open, dispatch])
+
+  // Keep the list inside the window: a 260px dropdown under a field near the bottom of a
+  // 640px-tall window would otherwise be clipped and hide its own footer count.
+  useEffect(() => {
+    if (!state.open) return
+    const measure = (): void => {
+      const input = inputRef.current
+      if (!input) return
+      const rect = input.getBoundingClientRect()
+      const below = window.innerHeight - rect.bottom - 12
+      const above = rect.top - 12
+      const up = below < MIN_ROOM_BELOW && above > below
+      const room = Math.max((up ? above : below) - DROPDOWN_CHROME, 120)
+      setPlacement({ up, listHeight: Math.min(LIST_MAX_HEIGHT, room) })
+    }
+    measure()
+    window.addEventListener('resize', measure)
+    window.addEventListener('scroll', measure, true)
+    return () => {
+      window.removeEventListener('resize', measure)
+      window.removeEventListener('scroll', measure, true)
+    }
+  }, [state.open])
 
   const handleFocus = (): void => {
     if (!state.open) dispatch({ type: 'open' })
@@ -109,6 +146,7 @@ function ModelPicker({
   return (
     <div className="model-picker" ref={containerRef}>
       <input
+        ref={inputRef}
         type="text"
         className="settings-input model-picker-input"
         role="combobox"
@@ -128,10 +166,11 @@ function ModelPicker({
         onKeyDown={handleKeyDown}
       />
       {state.open && (
-        <div className="model-picker-dropdown">
+        <div className={`model-picker-dropdown${placement.up ? ' model-picker-dropdown--up' : ''}`}>
           <ul
             id={`${listboxId}-listbox`}
             className="model-picker-list"
+            style={{ maxHeight: placement.listHeight }}
             role="listbox"
             aria-label="Models"
           >
