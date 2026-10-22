@@ -175,8 +175,12 @@ async function probeConnection(
     const baseUrl = resolveBaseUrl(connection)
     if (!baseUrl) return { ok: false, detail: missingBaseUrlError(connection) }
 
+    const chatUrl =
+      connection.providerType === 'ollama'
+        ? `${baseUrl}/v1/chat/completions`
+        : `${baseUrl}/chat/completions`
     const response = await fetchWithTimeout(
-      `${baseUrl}/chat/completions`,
+      chatUrl,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders(connection) },
