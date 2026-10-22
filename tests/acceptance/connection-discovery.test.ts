@@ -274,6 +274,38 @@ describe('testConnection', () => {
     expect(result.detail).toMatch(/2 models/)
   })
 
+  it('probes Ollama on its OpenAI-compatible path under /v1', async () => {
+    const { calls } = fetchRouter([
+      ['/api/tags', { status: 404, body: { error: 'not found' } }],
+      ['/v1/chat/completions', { status: 200, body: chatCompletion }]
+    ])
+
+    const result = await testConnection(
+      connection({ providerType: 'ollama', host: 'http://localhost:11434' }),
+      'qwen3:4b'
+    )
+
+    expect(result.ok).toBe(true)
+    expect(calls).toHaveLength(2)
+    expect(calls[1].url).toBe('http://localhost:11434/v1/chat/completions')
+    expect(calls[1].body).toMatchObject({ model: 'qwen3:4b', stream: false })
+  })
+
+  it('does not claim success when there is no model list and no model to probe', async () => {
+    fetchRouter([['/models', { status: 403, body: { error: 'forbidden' } }]])
+
+    const result = await testConnection(
+      connection({
+        providerType: 'openai-compatible',
+        apiKey: 'test-token-a',
+        baseUrl: 'https://gw.test/v1'
+      })
+    )
+
+    expect(result.ok).toBe(false)
+    expect(result.detail).toMatch(/pick a model to probe/i)
+  })
+
   it('fails with a message, never a throw, when the endpoint is unreachable', async () => {
     fetchRouter([
       ['/models', { networkError: 'ECONNREFUSED' }],
@@ -312,6 +344,13 @@ describe('task completion', () => {
     const main = read('src/main/index.ts')
     expect(main).toMatch(/provider-models/)
     expect(main).toMatch(/provider-test/)
+  })
+
+  it('lets the connection card probe with a model that belongs to the connection', () => {
+    const modelsTab = read('src/renderer/src/components/settings/models/ModelsTab.tsx')
+    const connectionCard = read('src/renderer/src/components/settings/models/ConnectionCard.tsx')
+    expect(modelsTab).toContain('probeModel')
+    expect(connectionCard).toContain('probeModel')
   })
 
   it('wires discovery into the settings UI', () => {
