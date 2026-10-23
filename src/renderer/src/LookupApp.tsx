@@ -67,22 +67,24 @@ function LookupApp(): React.JSX.Element {
   useEffect(() => {
     window.api.lookupOnContext((status) => {
       if (status.status === 'ready') {
+        setState((prev) => ({ ...prev, context: status.text }))
         if (status.text) {
           setContextText(status.text)
           setContextHint(false)
-          setState((prev) => ({ ...prev, context: status.text }))
           flashHint()
         } else {
           setContextText(status.hint || '(No context)')
           setContextHint(true)
         }
       } else {
+        setState((prev) => (prev.context ? { ...prev, context: '' } : prev))
         setContextText(status.hint || 'Processing…')
         setContextHint(true)
       }
     })
 
     window.api.lookupOnError((err) => {
+      setState((prev) => (prev.context ? { ...prev, context: '' } : prev))
       setContextText(err)
       setContextHint(false)
     })
@@ -125,13 +127,18 @@ function LookupApp(): React.JSX.Element {
           closeExpandPrompt()
           return
         }
+        if (input.length > 0) {
+          e.preventDefault()
+          setInput('')
+          return
+        }
         e.preventDefault()
         window.api.lookupClose()
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [ctxMenu, expandPrompt, closeContextMenu, closeExpandPrompt])
+  }, [ctxMenu, expandPrompt, closeContextMenu, closeExpandPrompt, input])
 
   /* ---- Paste ---- */
   useEffect(() => {
@@ -277,6 +284,7 @@ function LookupApp(): React.JSX.Element {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
+                if (e.nativeEvent.isComposing) return
                 e.preventDefault()
                 handleSend()
               }

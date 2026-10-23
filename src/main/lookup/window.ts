@@ -36,7 +36,7 @@ export function registerLookupIpcHandlers(): void {
 /* ---- Window creation ---- */
 export function createLookupSession(cursorX: number, cursorY: number): LookupSession {
   const display = screen.getDisplayNearestPoint({ x: cursorX, y: cursorY })
-  const { x: bx, y: by, width: bw, height: bh } = display.bounds
+  const { x: bx, y: by, width: bw, height: bh } = display.workArea
 
   const x = cursorX + LOOKUP_WINDOW_CURSOR_OFFSET
   const y = cursorY + LOOKUP_WINDOW_CURSOR_OFFSET
@@ -144,8 +144,20 @@ export function animateGrowSession(
   if (startWidth === targetWidth && startHeight === targetHeight) return
 
   const [startX, startY] = win.getPosition()
-  const endX = targetX !== undefined ? targetX : startX - (targetWidth - startWidth) / 2
-  const endY = targetY !== undefined ? targetY : startY - (targetHeight - startHeight) / 2
+  const display = screen.getDisplayNearestPoint({ x: startX, y: startY })
+  const workArea = display.workArea
+  const desiredX = targetX !== undefined ? targetX : startX - (targetWidth - startWidth) / 2
+  const desiredY = targetY !== undefined ? targetY : startY - (targetHeight - startHeight) / 2
+  const endX = clamp(
+    Math.round(desiredX),
+    workArea.x,
+    workArea.x + Math.max(0, workArea.width - targetWidth)
+  )
+  const endY = clamp(
+    Math.round(desiredY),
+    workArea.y,
+    workArea.y + Math.max(0, workArea.height - targetHeight)
+  )
   const xDelta = endX - startX
   const yDelta = endY - startY
   const wDelta = targetWidth - startWidth
@@ -159,14 +171,8 @@ export function animateGrowSession(
     const eased = 1 - Math.pow(1 - t, 3)
     const w = Math.round(startWidth + wDelta * eased)
     const h = Math.round(startHeight + hDelta * eased)
-    const x =
-      targetX !== undefined
-        ? Math.round(startX + xDelta * eased)
-        : startX - Math.round((w - startWidth) / 2)
-    const y =
-      targetY !== undefined
-        ? Math.round(startY + yDelta * eased)
-        : startY - Math.round((h - startHeight) / 2)
+    const x = Math.round(startX + xDelta * eased)
+    const y = Math.round(startY + yDelta * eased)
     if (!win.isDestroyed()) {
       win.setBounds({ x, y, width: w, height: h })
     }

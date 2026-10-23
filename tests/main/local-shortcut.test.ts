@@ -99,6 +99,16 @@ describe('local shortcut fallback', () => {
     expect(handler).toHaveBeenCalledTimes(4)
   })
 
+  it('matches shifted number-row and punctuation keys', () => {
+    configureLocalShortcut('Ctrl+Shift+1', true)
+    expect(press({ key: '!', code: 'Digit1' })).toBe(true)
+
+    configureLocalShortcut('Ctrl+Shift+Equal', true)
+    expect(press({ key: '+', code: 'Equal' })).toBe(true)
+
+    expect(handler).toHaveBeenCalledTimes(2)
+  })
+
   it('ignores key-up and auto-repeat', () => {
     expect(press({ type: 'keyUp' })).toBe(false)
     expect(press({ isAutoRepeat: true })).toBe(false)

@@ -1,6 +1,10 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
-import type { ConversationState, ConversationRecord } from '../shared/conversation'
+import type {
+  ConversationState,
+  ConversationRecord,
+  ConversationSearchResult
+} from '../shared/conversation'
 import type { CategorizedKeyword, Connection } from '../shared/models'
 import type { ModelCatalogState } from '../shared/model-catalog'
 import type { ConnectionTestResult, DiscoveredModels } from '../main/services/model-discovery'
@@ -26,7 +30,8 @@ const api = {
     hotkey: string
     closeToTray: boolean
     lookupContextMode: string
-  }): Promise<{ success: boolean }> => ipcRenderer.invoke('save-settings', settings),
+  }): Promise<{ success: boolean; hotkeyMode: 'global' | 'local'; error?: string }> =>
+    ipcRenderer.invoke('save-settings', settings),
   getHotkeyStatus: (): Promise<{ accelerator: string; mode: 'global' | 'local' }> =>
     ipcRenderer.invoke('hotkey-status'),
   setHotkeyCaptureActive: (active: boolean) => ipcRenderer.send('hotkey-capture-active', active),
@@ -59,6 +64,7 @@ const api = {
     requestId: string
     role?: string
   }) => ipcRenderer.send('chat-expand', payload),
+  chatCancel: (requestId: string) => ipcRenderer.send('chat-cancel', requestId),
   chatOnChunk: (cb: (data: { requestId: string; text: string }) => void) => {
     const handler = (
       _e: Electron.IpcRendererEvent,
@@ -67,10 +73,12 @@ const api = {
     ipcRenderer.on('chat-chunk', handler)
     return () => ipcRenderer.removeListener('chat-chunk', handler)
   },
-  chatOnResponse: (cb: (data: { requestId: string; text: string }) => void) => {
+  chatOnResponse: (
+    cb: (data: { requestId: string; text: string; cancelled?: boolean }) => void
+  ) => {
     const handler = (
       _e: Electron.IpcRendererEvent,
-      data: { requestId: string; text: string }
+      data: { requestId: string; text: string; cancelled?: boolean }
     ): void => cb(data)
     ipcRenderer.on('chat-response', handler)
     return () => ipcRenderer.removeListener('chat-response', handler)
@@ -84,11 +92,23 @@ const api = {
     return () => ipcRenderer.removeListener('chat-error', handler)
   },
   chatOnExpandChunk: (
-    cb: (data: { requestId: string; text?: string; error?: string; done?: boolean }) => void
+    cb: (data: {
+      requestId: string
+      text?: string
+      error?: string
+      done?: boolean
+      cancelled?: boolean
+    }) => void
   ) => {
     const handler = (
       _e: Electron.IpcRendererEvent,
-      data: { requestId: string; text?: string; error?: string; done?: boolean }
+      data: {
+        requestId: string
+        text?: string
+        error?: string
+        done?: boolean
+        cancelled?: boolean
+      }
     ): void => cb(data)
     ipcRenderer.on('chat-expand-chunk', handler)
     return () => ipcRenderer.removeListener('chat-expand-chunk', handler)
@@ -98,11 +118,17 @@ const api = {
       state: ConversationState
       conversationId: string
       conversationTitle: string
+      conversationCreatedAt: string
     }) => void
   ) => {
     const handler = (
       _e: Electron.IpcRendererEvent,
-      data: { state: ConversationState; conversationId: string; conversationTitle: string }
+      data: {
+        state: ConversationState
+        conversationId: string
+        conversationTitle: string
+        conversationCreatedAt: string
+      }
     ): void => cb(data)
     ipcRenderer.on('chat-replace-conversation', handler)
     return () => ipcRenderer.removeListener('chat-replace-conversation', handler)
@@ -114,6 +140,8 @@ const api = {
     ipcRenderer.invoke('conversation-load', id),
   deleteConversation: (id: string): Promise<void> => ipcRenderer.invoke('conversation-delete', id),
   listConversations: () => ipcRenderer.invoke('conversation-list'),
+  searchConversations: (query: string): Promise<ConversationSearchResult[]> =>
+    ipcRenderer.invoke('conversation-search', query),
   loadMostRecentChat: (): Promise<ConversationRecord | null> =>
     ipcRenderer.invoke('conversation-load-most-recent'),
   listUnfedConversations: () => ipcRenderer.invoke('conversation-list-unfed'),
@@ -122,6 +150,10 @@ const api = {
 
   kbLoadPrompt: (): Promise<{ prompt: string; keywords: CategorizedKeyword[] }> =>
     ipcRenderer.invoke('kb-load-prompt'),
+  kbSavePrompt: (content: string): Promise<{ prompt: string; keywords: CategorizedKeyword[] }> =>
+    ipcRenderer.invoke('kb-save-prompt', content),
+  kbReset: (): Promise<{ prompt: string; keywords: CategorizedKeyword[] }> =>
+    ipcRenderer.invoke('kb-reset'),
   kbAnalyze: (): Promise<{
     newPrompt: string
     keywords: CategorizedKeyword[]

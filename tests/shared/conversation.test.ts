@@ -8,6 +8,7 @@ import {
   insertExpansion,
   insertExpansionNested,
   maxExpansionId,
+  persistableTurns,
   serializeForChat,
   toggleExpansionFoldedInTurns,
   tokenize,
@@ -91,15 +92,29 @@ describe('insertExpansion', () => {
     expect(result.segments).toEqual([text('Hello '), freshExpansion(1, { originalText: 'world' })])
   })
 
-  it('splits the first and last segment of a multi-segment range', () => {
-    const result = insertExpansion([text('aa'), text('bb'), text('cc')], 0, 3, 'ab bc', 2, 1, 1)
+  it('splits the first and last segment and consumes the middle of a multi-segment range', () => {
+    const result = insertExpansion([text('aa'), text('bb'), text('cc')], 0, 3, 'abbc', 2, 1, 1)
     expect(result.startIndex).toBe(1)
     expect(result.segments).toEqual([
       text('a'),
-      freshExpansion(2, { originalText: 'ab bc' }),
-      text('bb'),
+      freshExpansion(2, { originalText: 'abbc' }),
       text('c')
     ])
+  })
+
+  it('refuses an empty or out-of-bounds range', () => {
+    expect(insertExpansion([text('abc')], 0, 0, 'a', 2)).toEqual({
+      segments: [text('abc')],
+      startIndex: -1
+    })
+    expect(insertExpansion([text('abc')], 0, 2, 'a', 2)).toEqual({
+      segments: [text('abc')],
+      startIndex: -1
+    })
+    expect(insertExpansion([text('abc')], 0, 1, 'a', 2, 2, 2)).toEqual({
+      segments: [text('abc')],
+      startIndex: -1
+    })
   })
 
   it('refuses a range that crosses an expansion boundary', () => {
@@ -114,13 +129,22 @@ describe('insertExpansionNested', () => {
   it('inserts into a nested expansion when a parent id is given', () => {
     const input = [expansion(1, { segments: [text('inner text')] })]
     const result = insertExpansionNested(input, 1, 0, 1, 'inner', 9)
-    const parent = result[0] as Extract<ExpandableSegment, { kind: 'expansion' }>
+    expect(result.inserted).toBe(true)
+    const parent = result.segments[0] as Extract<ExpandableSegment, { kind: 'expansion' }>
     expect(parent.segments?.[0].kind).toBe('expansion')
   })
 
   it('falls back to the top level without a parent id', () => {
     const result = insertExpansionNested([text('a'), text('b')], undefined, 0, 1, 'a', 3)
-    expect(result[0].kind).toBe('expansion')
+    expect(result.inserted).toBe(true)
+    expect(result.segments[0].kind).toBe('expansion')
+  })
+
+  it('reports no insertion when the parent id is missing', () => {
+    const input = [text('a'), text('b')]
+    const result = insertExpansionNested(input, 42, 0, 1, 'a', 3)
+    expect(result.inserted).toBe(false)
+    expect(result.segments).toBe(input)
   })
 })
 
@@ -257,5 +281,59 @@ describe('serializeForChat', () => {
   it('always uses the lookup prompt for the lookup role', () => {
     const messages = serializeForChat({ turns }, 'lookup')
     expect(messages[0]).toEqual({ role: 'system', content: LOOKUP_SYSTEM_PROMPT })
+  })
+
+  it('omits failed assistant turns so an error string is never replayed as an answer', () => {
+    const messages = serializeForChat({
+      turns: [
+        { id: 1, role: 'user', content: 'hello' },
+        { id: 2, role: 'assistant', content: 'API error 401: bad key', error: true },
+        { id: 3, role: 'user', content: 'try again' }
+      ]
+    })
+
+    expect(messages).toEqual([
+      { role: 'system', content: CHAT_SYSTEM_PROMPT },
+      { role: 'user', content: 'hello' },
+      { role: 'user', content: 'try again' }
+    ])
+  })
+
+  it('omits empty assistant placeholders from legacy records', () => {
+    const messages = serializeForChat({
+      turns: [
+        { id: 1, role: 'user', content: 'hello' },
+        { id: 2, role: 'assistant', content: '   ' },
+        { id: 3, role: 'user', content: 'try again' }
+      ]
+    })
+
+    expect(messages).toEqual([
+      { role: 'system', content: CHAT_SYSTEM_PROMPT },
+      { role: 'user', content: 'hello' },
+      { role: 'user', content: 'try again' }
+    ])
+  })
+})
+
+describe('persistableTurns', () => {
+  it('drops empty assistant placeholders but keeps user and failed turns', () => {
+    const turns = [
+      { id: 1, role: 'user' as const, content: 'hello' },
+      { id: 2, role: 'assistant' as const, content: '   ' },
+      { id: 3, role: 'user' as const, content: 'again' },
+      { id: 4, role: 'assistant' as const, content: 'API error 401', error: true }
+    ]
+
+    expect(persistableTurns(turns).map((turn) => turn.id)).toEqual([1, 3, 4])
+  })
+
+  it('keeps a completed assistant turn', () => {
+    const turns = [
+      { id: 1, role: 'user' as const, content: 'hello' },
+      { id: 2, role: 'assistant' as const, content: 'hi there' }
+    ]
+
+    expect(persistableTurns(turns)).toEqual(turns)
   })
 })

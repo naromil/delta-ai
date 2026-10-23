@@ -2,7 +2,13 @@ import { screen, clipboard } from 'electron'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { createLookupSession } from './window'
-import { isSessionAlive, notifyProcessing, applyOcrResult, type LookupSession } from './state'
+import {
+  isSessionAlive,
+  notifyProcessing,
+  notifySessionState,
+  applyOcrResult,
+  type LookupSession
+} from './state'
 import { captureScreen, runOCR } from './capture'
 import { installLocalShortcut } from '../services/local-shortcut'
 import { currentLookupContextMode, isWaylandSession } from '../config'
@@ -62,7 +68,9 @@ async function doFullscreenOCR(cursorX: number, cursorY: number): Promise<void> 
   const imageBuffer = await captureScreen()
   if (!imageBuffer) {
     const session = createSession(cursorX, cursorY)
-    session.window.webContents.send('ai-error', 'Failed to capture the screen.')
+    if (isSessionAlive(session)) {
+      notifySessionState(session, 'ready', '', 'Failed to capture the screen.')
+    }
     return
   }
 

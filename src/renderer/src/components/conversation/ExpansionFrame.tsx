@@ -18,6 +18,13 @@ function selectNodeContents(node: Node): void {
   sel.addRange(range)
 }
 
+function handleActivationKey(e: React.KeyboardEvent, action: () => void): void {
+  if (e.key !== 'Enter' && e.key !== ' ') return
+  e.preventDefault()
+  e.stopPropagation()
+  action()
+}
+
 function ExpansionFrame({
   segment,
   onFold,
@@ -48,8 +55,12 @@ function ExpansionFrame({
       <span
         className="queried"
         data-expansion-id={expansionId}
+        role="button"
+        tabIndex={0}
+        aria-label={`Expand ${originalText}`}
         title="Click to re-expand"
         onClick={() => onUnfold(expansionId)}
+        onKeyDown={(e) => handleActivationKey(e, () => onUnfold(expansionId))}
         onContextMenu={(e) => {
           e.stopPropagation()
           onContextMenu(e, -1)
@@ -89,10 +100,15 @@ function ExpansionFrame({
       {!error && (
         <span
           className="fold-toggle"
+          role="button"
+          tabIndex={0}
+          aria-label="Fold expansion"
+          aria-expanded={true}
           onClick={(e) => {
             e.stopPropagation()
             onFold(expansionId)
           }}
+          onKeyDown={(e) => handleActivationKey(e, () => onFold(expansionId))}
           title="Fold"
         >
           ▾

@@ -7,9 +7,17 @@ interface TurnProps {
   onFold: (id: number) => void
   onUnfold: (id: number) => void
   onContextMenu: (e: React.MouseEvent, segmentIndex: number) => void
+  onRetry?: (turnId: number) => void
 }
 
-function Turn({ turn, loading, onFold, onUnfold, onContextMenu }: TurnProps): React.JSX.Element {
+function Turn({
+  turn,
+  loading,
+  onFold,
+  onUnfold,
+  onContextMenu,
+  onRetry
+}: TurnProps): React.JSX.Element {
   const isUser = turn.role === 'user'
 
   return (
@@ -61,6 +69,11 @@ function Turn({ turn, loading, onFold, onUnfold, onContextMenu }: TurnProps): Re
             />
           ) : (
             turn.content
+          )}
+          {turn.error && onRetry && (
+            <button className="message-retry" onClick={() => onRetry(turn.id)}>
+              Retry
+            </button>
           )}
         </div>
       )}

@@ -164,6 +164,17 @@ describe('current schema', () => {
     expect(notes.join(' ')).toContain('had no label')
   })
 
+  it('treats an empty role connection id as unassigned without discarding the config', () => {
+    const config = v2Config()
+    config.roles.lookup = { connectionId: '' as unknown as null, model: 'leftover' }
+
+    const result = migrateModelConfig(config)
+
+    expect(result.ok).toBe(true)
+    expect(result.config.roles.lookup).toEqual({ connectionId: null, model: '' })
+    expect(result.config.roles.chat.connectionId).toBe('conn_a')
+  })
+
   it('keeps a config written by a newer version readable', () => {
     const future = { ...v2Config(), schemaVersion: 99 }
     const { config, ok, notes } = migrateModelConfig(future)

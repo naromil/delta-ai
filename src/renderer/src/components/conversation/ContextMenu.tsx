@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 interface ContextMenuState {
   x: number
@@ -17,6 +17,20 @@ interface ContextMenuProps {
 
 function ContextMenu({ state, onClose }: ContextMenuProps): React.JSX.Element | null {
   const menuRef = useRef<HTMLDivElement>(null)
+  const [position, setPosition] = useState<{ x: number; y: number } | null>(null)
+
+  useLayoutEffect(() => {
+    const menu = menuRef.current
+    if (!state || !menu) {
+      setPosition(null)
+      return
+    }
+    const rect = menu.getBoundingClientRect()
+    setPosition({
+      x: Math.max(8, Math.min(state.x, window.innerWidth - rect.width - 8)),
+      y: Math.max(8, Math.min(state.y, window.innerHeight - rect.height - 8))
+    })
+  }, [state])
 
   useEffect(() => {
     if (!state) return
@@ -50,7 +64,12 @@ function ContextMenu({ state, onClose }: ContextMenuProps): React.JSX.Element | 
   }
 
   return (
-    <div ref={menuRef} id="ctxMenu" className="visible" style={{ left: state.x, top: state.y }}>
+    <div
+      ref={menuRef}
+      id="ctxMenu"
+      className="visible"
+      style={{ left: (position ?? state).x, top: (position ?? state).y }}
+    >
       <div
         className={`item${state.canExpand ? '' : ' disabled'}`}
         onClick={() => state.canExpand && handleItemClick('expand')}

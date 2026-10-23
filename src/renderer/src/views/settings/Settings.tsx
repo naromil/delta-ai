@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { Connection, ModelConfig, RoleAssignment, RoleId } from '../../../../shared/models'
+import type {
+  Connection,
+  LookupContextMode,
+  ModelConfig,
+  RoleAssignment,
+  RoleId
+} from '../../../../shared/models'
 import { createDefaultModelConfig } from '../../../../shared/models'
 import type { ModelCatalogState } from '../../../../shared/model-catalog'
 import GeneralTab from './GeneralTab'
@@ -26,7 +32,7 @@ function Settings(): React.JSX.Element {
   const [hotkey, setHotkey] = useState('Ctrl+Shift+D')
   const [hotkeyMode, setHotkeyMode] = useState<'global' | 'local'>('global')
   const [closeToTray, setCloseToTray] = useState(true)
-  const [lookupContextMode, setLookupContextMode] = useState('clipboard')
+  const [lookupContextMode, setLookupContextMode] = useState<LookupContextMode>('clipboard')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const hotkeyRef = useRef(hotkey)
@@ -69,7 +75,10 @@ function Settings(): React.JSX.Element {
       if (settings?.closeToTray !== undefined) {
         setCloseToTray(settings.closeToTray)
       }
-      if (settings?.lookupContextMode) {
+      if (
+        settings?.lookupContextMode === 'clipboard' ||
+        settings?.lookupContextMode === 'fullscreen-ocr'
+      ) {
         setLookupContextMode(settings.lookupContextMode)
         lookupContextModeRef.current = settings.lookupContextMode
       }
@@ -121,19 +130,24 @@ function Settings(): React.JSX.Element {
 
   const handleSave = async (): Promise<void> => {
     setSaving(true)
-    const cfgRes = await window.api.saveModelConfig(modelConfig)
-    const settingsRes = await window.api.saveSettings({
-      hotkey: hotkeyRef.current,
-      closeToTray,
-      lookupContextMode: lookupContextModeRef.current
-    })
-    setSaving(false)
-    if (cfgRes.success && settingsRes.success) {
-      setSaved(true)
-      setTimeout(() => setSaved(false), 2000)
-      window.api.getHotkeyStatus().then((status) => setHotkeyMode(status.mode))
-    } else {
-      alert(cfgRes.error ?? 'Failed to save configuration.')
+    try {
+      const cfgRes = await window.api.saveModelConfig(modelConfig)
+      const settingsRes = await window.api.saveSettings({
+        hotkey: hotkeyRef.current,
+        closeToTray,
+        lookupContextMode: lookupContextModeRef.current
+      })
+      if (cfgRes.success && settingsRes.success) {
+        setSaved(true)
+        setTimeout(() => setSaved(false), 2000)
+        setHotkeyMode(settingsRes.hotkeyMode)
+      } else {
+        alert(cfgRes.error ?? settingsRes.error ?? 'Failed to save configuration.')
+      }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to save configuration.')
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -181,6 +195,11 @@ function Settings(): React.JSX.Element {
             hotkeyMode={hotkeyMode}
             closeToTray={closeToTray}
             onCloseToTrayChange={setCloseToTray}
+            lookupContextMode={lookupContextMode}
+            onLookupContextModeChange={(mode) => {
+              setLookupContextMode(mode)
+              lookupContextModeRef.current = mode
+            }}
           />
         )}
         {activeTab === 'models' && (

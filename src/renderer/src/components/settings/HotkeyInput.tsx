@@ -1,15 +1,65 @@
 import { useEffect, useState } from 'react'
 
+const SHIFTED_SYMBOLS: Record<string, string> = {
+  '!': '1',
+  '@': '2',
+  '#': '3',
+  $: '4',
+  '%': '5',
+  '^': '6',
+  '&': '7',
+  '*': '8',
+  '(': '9',
+  ')': '0',
+  _: '-',
+  '+': '=',
+  '{': '[',
+  '}': ']',
+  '|': '\\',
+  ':': ';',
+  '"': "'",
+  '<': ',',
+  '>': '.',
+  '?': '/',
+  '~': '`'
+}
+
+const DISPLAY_KEYS: Record<string, string> = {
+  ' ': 'Space',
+  Escape: 'Esc',
+  ArrowUp: 'Up',
+  ArrowDown: 'Down',
+  ArrowLeft: 'Left',
+  ArrowRight: 'Right',
+  PageUp: 'PageUp',
+  PageDown: 'PageDown',
+  Backspace: 'Backspace',
+  Delete: 'Delete',
+  Insert: 'Insert',
+  '+': 'Plus',
+  '-': 'Minus',
+  '=': 'Equal',
+  '`': 'Backquote'
+}
+
 function renderCombo(e: React.KeyboardEvent<HTMLInputElement>): string {
+  const key = e.key
+  if (['Control', 'Alt', 'Shift', 'Meta'].includes(key)) return ''
+
   const parts: string[] = []
   if (e.ctrlKey) parts.push('Ctrl')
   if (e.altKey) parts.push('Alt')
   if (e.shiftKey) parts.push('Shift')
   if (e.metaKey) parts.push('Meta')
-  const key = e.key
-  if (!['Control', 'Alt', 'Shift', 'Meta'].includes(key)) {
-    parts.push(key.length === 1 ? key.toUpperCase() : key)
-  }
+
+  // A bare letter would swallow that key system-wide; require a real modifier
+  // (Shift alone is not enough) or a function key.
+  const isFunctionKey = /^F\d{1,2}$/.test(key)
+  if (!e.ctrlKey && !e.altKey && !e.metaKey && !isFunctionKey) return ''
+
+  // `Shift+1` arrives as `!`; store the physical key instead of an invalid accelerator.
+  const baseKey = e.shiftKey ? (SHIFTED_SYMBOLS[key] ?? key) : key
+  parts.push(DISPLAY_KEYS[baseKey] ?? (baseKey.length === 1 ? baseKey.toUpperCase() : baseKey))
   return parts.join('+')
 }
 
@@ -37,6 +87,11 @@ function HotkeyInput({ value, onChange, mode = 'global' }: HotkeyInputProps): Re
     if (!capturing) return
     e.preventDefault()
     e.stopPropagation()
+    if (e.key === 'Escape') {
+      setCapturing(false)
+      e.currentTarget.blur()
+      return
+    }
     const combo = renderCombo(e)
     if (combo) onChange(combo)
   }
@@ -60,8 +115,9 @@ function HotkeyInput({ value, onChange, mode = 'global' }: HotkeyInputProps): Re
         />
       </div>
       <p className="settings-hint">
-        Click the field, then press a key combination (e.g. Ctrl+Shift+D). Saved via the Save button
-        below.
+        {capturing
+          ? 'Press a key combination (e.g. Ctrl+Shift+D), or Esc to cancel.'
+          : 'Click the field to capture a key combination. A modifier (Ctrl, Alt or Meta) or an F-key is required; saved via the Save button below.'}
       </p>
       {mode === 'local' && (
         <p className="settings-hint settings-hint--notice">

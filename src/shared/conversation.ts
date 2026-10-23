@@ -53,6 +53,22 @@ export interface ConversationMeta {
   turnCount: number
 }
 
+export interface ConversationSearchResult extends ConversationMeta {
+  /** Where the query matched; title matches rank first. */
+  matchedIn: 'title' | 'content'
+  /** Nearby flattened text around a content match. */
+  snippet?: string
+}
+
+/**
+ * Turns that are safe to persist. An assistant turn with no content is an
+ * in-flight placeholder; saving it would leave a phantom trailing turn that
+ * later gets replayed to the model.
+ */
+export function persistableTurns(turns: Turn[]): Turn[] {
+  return turns.filter((turn) => turn.role !== 'assistant' || turn.content.trim() !== '')
+}
+
 export function toConversationMeta(record: ConversationRecord): ConversationMeta {
   return {
     id: record.id,
@@ -96,6 +112,11 @@ export function tokenize(text: string): ExpandableSegment[] {
   return segments
 }
 
+function clampOffset(offset: number, length: number): number {
+  if (!Number.isFinite(offset)) return 0
+  return Math.max(0, Math.min(length, Math.trunc(offset)))
+}
+
 export function insertExpansion(
   segments: ExpandableSegment[],
   startIndex: number,
@@ -106,6 +127,10 @@ export function insertExpansion(
   endOffset?: number,
   prompt?: string
 ): { segments: ExpandableSegment[]; startIndex: number } {
+  if (startIndex < 0 || endIndex <= startIndex || endIndex > segments.length) {
+    return { segments, startIndex: -1 }
+  }
+
   // Refuse if any segment in [startIndex, endIndex) is an expansion boundary
   for (let i = startIndex; i < endIndex; i++) {
     if (segments[i]?.kind === 'expansion') {
@@ -129,13 +154,15 @@ export function insertExpansion(
 
   if (startOffset !== undefined || endOffset !== undefined) {
     const firstSeg = segments[startIndex] as { kind: 'text'; text: string }
-    const actualStartOffset = startOffset ?? 0
+    const lastSeg = segments[endIndex - 1] as { kind: 'text'; text: string }
+    const actualStartOffset = clampOffset(startOffset ?? 0, firstSeg.text.length)
     const actualEndOffset =
       endIndex - startIndex === 1
-        ? (endOffset ?? firstSeg.text.length)
-        : (endOffset ?? (segments[endIndex - 1] as { kind: 'text'; text: string }).text.length)
+        ? clampOffset(endOffset ?? firstSeg.text.length, firstSeg.text.length)
+        : clampOffset(endOffset ?? lastSeg.text.length, lastSeg.text.length)
 
     if (endIndex - startIndex === 1) {
+      if (actualStartOffset >= actualEndOffset) return { segments, startIndex: -1 }
       const before = firstSeg.text.slice(0, actualStartOffset)
       const after = firstSeg.text.slice(actualEndOffset)
       const parts: ExpandableSegment[] = []
@@ -146,15 +173,19 @@ export function insertExpansion(
       return { segments: [...head, ...parts, ...tail], startIndex: newStartIndex }
     }
 
-    // Multi-segment: split first and last, consume middle
-    const lastSeg = segments[endIndex - 1] as { kind: 'text'; text: string }
-    const middle = segments.slice(startIndex + 1, endIndex - 1)
+    // Multi-segment: split the first and last segments; every middle segment is
+    // part of the selection and is replaced by the expansion, not kept beside it.
+    const middleLength = segments
+      .slice(startIndex + 1, endIndex - 1)
+      .reduce((total, seg) => total + (seg.kind === 'text' ? seg.text.length : 0), 0)
+    const selectedLength = firstSeg.text.length - actualStartOffset + middleLength + actualEndOffset
+    if (selectedLength <= 0) return { segments, startIndex: -1 }
+
     const before = firstSeg.text.slice(0, actualStartOffset)
     const after = lastSeg.text.slice(actualEndOffset)
     const parts: ExpandableSegment[] = []
     if (before !== '') parts.push({ kind: 'text', text: before })
     parts.push(expansion)
-    for (const m of middle) parts.push(m)
     if (after !== '') parts.push({ kind: 'text', text: after })
     const newStartIndex = head.length + (before !== '' ? 1 : 0)
     return { segments: [...head, ...parts, ...tail], startIndex: newStartIndex }
@@ -167,6 +198,9 @@ export function insertExpansion(
  * Insert an expansion into a nested segments tree.
  * When parentExpansionId is provided, recursively finds that expansion
  * and inserts into its child segments; otherwise works at the top level.
+ *
+ * `inserted` is false when the range was refused or the parent id was not
+ * found, so callers can avoid starting a request that has no frame to fill.
  */
 export function insertExpansionNested(
   segments: ExpandableSegment[],
@@ -178,9 +212,9 @@ export function insertExpansionNested(
   startOffset?: number,
   endOffset?: number,
   prompt?: string
-): ExpandableSegment[] {
+): { segments: ExpandableSegment[]; inserted: boolean } {
   if (parentExpansionId === undefined) {
-    return insertExpansion(
+    const result = insertExpansion(
       segments,
       startIndex,
       endIndex,
@@ -189,10 +223,14 @@ export function insertExpansionNested(
       startOffset,
       endOffset,
       prompt
-    ).segments
+    )
+    return { segments: result.segments, inserted: result.startIndex >= 0 }
   }
-  return segments.map((seg) => {
-    if (seg.kind === 'expansion' && seg.expansionId === parentExpansionId) {
+
+  let inserted = false
+  const next = segments.map((seg) => {
+    if (seg.kind !== 'expansion' || inserted) return seg
+    if (seg.expansionId === parentExpansionId) {
       const result = insertExpansion(
         seg.segments,
         startIndex,
@@ -203,26 +241,27 @@ export function insertExpansionNested(
         endOffset,
         prompt
       )
+      if (result.startIndex < 0) return seg
+      inserted = true
       return { ...seg, segments: result.segments }
     }
-    if (seg.kind === 'expansion') {
-      return {
-        ...seg,
-        segments: insertExpansionNested(
-          seg.segments,
-          parentExpansionId,
-          startIndex,
-          endIndex,
-          selection,
-          newExpansionId,
-          startOffset,
-          endOffset,
-          prompt
-        )
-      }
-    }
-    return seg
+    const nested = insertExpansionNested(
+      seg.segments,
+      parentExpansionId,
+      startIndex,
+      endIndex,
+      selection,
+      newExpansionId,
+      startOffset,
+      endOffset,
+      prompt
+    )
+    if (!nested.inserted) return seg
+    inserted = true
+    return { ...seg, segments: nested.segments }
   })
+
+  return { segments: inserted ? next : segments, inserted }
 }
 
 /**
@@ -398,6 +437,9 @@ export function serializeForChat(
   }
 
   for (const turn of state.turns) {
+    // Failed turns store the error text for the UI, and empty assistant turns are
+    // in-flight/legacy placeholders; neither may be replayed to the model.
+    if (turn.role === 'assistant' && (turn.error || turn.content.trim() === '')) continue
     messages.push({ role: turn.role, content: turn.content })
   }
   return messages

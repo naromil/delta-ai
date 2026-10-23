@@ -220,6 +220,58 @@ describe('callProviderStream', () => {
       vi.useRealTimers()
     }
   })
+
+  it('times out a stream that stalls after partial output', async () => {
+    resolveRole.mockReturnValue(openAiRole)
+    const encoder = new TextEncoder()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: unknown, init?: RequestInit): Promise<Response> => {
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(
+              encoder.encode(
+                frame({
+                  choices: [{ delta: { content: 'partial' }, finish_reason: null }]
+                })
+              )
+            )
+            init?.signal?.addEventListener('abort', () => {
+              controller.error(new DOMException('Aborted', 'AbortError'))
+            })
+          }
+        })
+        return new Response(body, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' }
+        })
+      })
+    )
+
+    vi.useFakeTimers()
+    try {
+      let output = ''
+      const assertion = (async (): Promise<void> => {
+        for await (const chunk of callProviderStream(MESSAGES, 'chat')) output += chunk
+      })()
+      const rejected = expect(assertion).rejects.toThrow('Request timed out after 40s.')
+      await vi.advanceTimersByTimeAsync(40_000)
+      await rejected
+      expect(output).toBe('partial')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reports cancellation instead of a timeout when the caller aborts', async () => {
+    resolveRole.mockReturnValue(openAiRole)
+    const controller = new AbortController()
+    controller.abort()
+
+    await expect(collect(callProviderStream(MESSAGES, 'chat', controller.signal))).rejects.toThrow(
+      'Generation stopped.'
+    )
+  })
 })
 
 describe('callProvider', () => {

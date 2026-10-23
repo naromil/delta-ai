@@ -2,7 +2,8 @@ import { ElectronAPI } from '@electron-toolkit/preload'
 import type {
   ConversationState,
   ConversationRecord,
-  ConversationMeta
+  ConversationMeta,
+  ConversationSearchResult
 } from '../shared/conversation'
 import type { CategorizedKeyword, Connection } from '../shared/models'
 import type { ModelCatalogState } from '../shared/model-catalog'
@@ -29,7 +30,7 @@ declare global {
         hotkey: string
         closeToTray: boolean
         lookupContextMode: string
-      }) => Promise<{ success: boolean }>
+      }) => Promise<{ success: boolean; hotkeyMode: 'global' | 'local'; error?: string }>
       getHotkeyStatus: () => Promise<{ accelerator: string; mode: 'global' | 'local' }>
       setHotkeyCaptureActive: (active: boolean) => void
 
@@ -57,17 +58,27 @@ declare global {
         requestId: string
         role?: string
       }) => void
+      chatCancel: (requestId: string) => void
       chatOnChunk: (cb: (data: { requestId: string; text: string }) => void) => () => void
-      chatOnResponse: (cb: (data: { requestId: string; text: string }) => void) => () => void
+      chatOnResponse: (
+        cb: (data: { requestId: string; text: string; cancelled?: boolean }) => void
+      ) => () => void
       chatOnError: (cb: (data: { requestId: string; error: string }) => void) => () => void
       chatOnExpandChunk: (
-        cb: (data: { requestId: string; text?: string; error?: string; done?: boolean }) => void
+        cb: (data: {
+          requestId: string
+          text?: string
+          error?: string
+          done?: boolean
+          cancelled?: boolean
+        }) => void
       ) => () => void
       chatOnReplaceConversation: (
         cb: (data: {
           state: ConversationState
           conversationId: string
           conversationTitle: string
+          conversationCreatedAt: string
         }) => void
       ) => () => void
 
@@ -76,11 +87,17 @@ declare global {
       loadConversation: (id: string) => Promise<ConversationRecord | null>
       deleteConversation: (id: string) => Promise<void>
       listConversations: () => Promise<ConversationMeta[]>
+      searchConversations: (query: string) => Promise<ConversationSearchResult[]>
       loadMostRecentChat: () => Promise<ConversationRecord | null>
       listUnfedConversations: () => Promise<ConversationMeta[]>
       markConversationKbFed: (id: string) => Promise<void>
 
       kbLoadPrompt: () => Promise<{ prompt: string; keywords: CategorizedKeyword[] }>
+      kbSavePrompt: (content: string) => Promise<{
+        prompt: string
+        keywords: CategorizedKeyword[]
+      }>
+      kbReset: () => Promise<{ prompt: string; keywords: CategorizedKeyword[] }>
       kbAnalyze: () => Promise<{
         newPrompt: string
         keywords: CategorizedKeyword[]

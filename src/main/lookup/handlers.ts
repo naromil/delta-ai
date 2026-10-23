@@ -7,6 +7,7 @@ export async function handlePasteText(session: LookupSession, text: string): Pro
 
   await cancelOCR()
 
+  // Invalidate any OCR job still in flight so its result cannot overwrite this.
   session.ocrToken++
   session.context = text
   session.contextReady = true
@@ -20,12 +21,22 @@ export async function handlePasteImage(session: LookupSession, base64: string): 
 
   await cancelOCR()
 
-  session.ocrToken++
+  const token = ++session.ocrToken
   session.contextReady = false
   notifyProcessing(session, 'OCR running on pasted image\u2026')
 
-  const text = await runOCRTokenedFor(session, buffer)
-  if (text === null) return
-
-  applyOcrResult(session, session.ocrToken, text, 'No text detected in pasted image')
+  try {
+    const text = await runOCRTokenedFor(session, buffer, token)
+    if (text === null) return
+    applyOcrResult(session, token, text, 'No text detected in pasted image')
+  } catch (err) {
+    // Mark the context resolved even on failure, otherwise Ask stays disabled
+    // forever behind the "context is still being prepared" guard.
+    applyOcrResult(
+      session,
+      token,
+      err instanceof Error ? err : new Error(String(err)),
+      'No text detected in pasted image'
+    )
+  }
 }

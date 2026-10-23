@@ -1,9 +1,10 @@
 import { join } from 'path'
-import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'fs'
+import { readFileSync, existsSync, mkdirSync } from 'fs'
 import { app, ipcMain, globalShortcut } from 'electron'
 import { registerGlobalShortcutPortal } from './services/global-shortcut'
 import { configureLocalShortcut, setHotkeyCaptureActive } from './services/local-shortcut'
 import { handleHotkeyPressed } from './lookup/lookup'
+import { writeFileAtomicSync } from './services/atomic-file'
 import {
   type RoleId,
   type ModelConfig,
@@ -83,39 +84,79 @@ let globalHotkeyRegistered = false
  */
 export async function registerHotkey(accelerator: string, onPressed: () => void): Promise<boolean> {
   const previousHotkey = currentHotkey
-  currentHotkey = accelerator
+  const wasRegistered = globalHotkeyRegistered
+  const wayland = isWaylandSession()
+
+  // Re-registering the already-active shortcut would either churn the portal or
+  // (if the desktop reports failure) arm the in-app fallback on top of a live
+  // global binding, firing twice.
+  if (wasRegistered && previousHotkey === accelerator) {
+    configureLocalShortcut(accelerator, false)
+    return true
+  }
 
   let registered: boolean
 
-  // On Wayland, route through the XDG GlobalShortcuts portal.
-  if (isWaylandSession()) {
-    registered = await registerGlobalShortcutPortal(accelerator, () => {
-      console.log(`Hotkey ${accelerator} pressed`)
-      onPressed()
-    })
-  } else {
-    // X11 / macOS / Windows: use Electron's built-in globalShortcut.
-    if (previousHotkey && globalShortcut.isRegistered(previousHotkey)) {
-      globalShortcut.unregister(previousHotkey)
+  try {
+    // On Wayland, route through the XDG GlobalShortcuts portal.
+    if (wayland) {
+      registered = await registerGlobalShortcutPortal(accelerator, () => {
+        console.log(`Hotkey ${accelerator} pressed`)
+        onPressed()
+      })
+    } else {
+      // Bind the new accelerator before dropping the old one, so a refused or
+      // invalid combination cannot leave the app without a working hotkey.
+      registered = globalShortcut.register(accelerator, () => {
+        console.log(`Hotkey ${accelerator} pressed`)
+        onPressed()
+      })
+      if (
+        registered &&
+        previousHotkey !== accelerator &&
+        globalShortcut.isRegistered(previousHotkey)
+      ) {
+        globalShortcut.unregister(previousHotkey)
+      }
     }
-    registered = globalShortcut.register(accelerator, () => {
-      console.log(`Hotkey ${accelerator} pressed`)
-      onPressed()
-    })
-    if (!registered) console.warn(`Failed to register global shortcut: ${accelerator}`)
+  } catch (err) {
+    // Restore the previous binding state and let the caller report the failure.
+    currentHotkey = previousHotkey
+    globalHotkeyRegistered = wasRegistered
+    configureLocalShortcut(previousHotkey, !wasRegistered && previousHotkey !== '')
+    throw err
   }
 
-  globalHotkeyRegistered = registered
+  if (registered) {
+    currentHotkey = accelerator
+    globalHotkeyRegistered = true
+    configureLocalShortcut(accelerator, false)
+    return true
+  }
+
+  // The desktop refused the new key. On X11 / macOS / Windows the old binding
+  // is still live: keep it rather than silently switching to a local-only mode.
+  if (
+    !wayland &&
+    wasRegistered &&
+    previousHotkey !== accelerator &&
+    globalShortcut.isRegistered(previousHotkey)
+  ) {
+    currentHotkey = previousHotkey
+    globalHotkeyRegistered = true
+    configureLocalShortcut(previousHotkey, false)
+    return false
+  }
+
+  currentHotkey = accelerator
+  globalHotkeyRegistered = false
   // Armed only as a fallback: a working global key must never fire twice.
-  configureLocalShortcut(accelerator, !registered)
-  if (!registered) {
-    console.warn(
-      `Global shortcut ${accelerator} unavailable — using the in-app shortcut, ` +
-        'which fires while a Delta AI window is focused.'
-    )
-  }
-
-  return registered
+  configureLocalShortcut(accelerator, true)
+  console.warn(
+    `Global shortcut ${accelerator} unavailable — using the in-app shortcut, ` +
+      'which fires while a Delta AI window is focused.'
+  )
+  return false
 }
 
 export function getHotkeyStatus(): HotkeyStatus {
@@ -130,20 +171,39 @@ export let currentLookupContextMode: LookupContextMode = 'clipboard'
 
 /* ---- App general settings management -- */
 
-export function loadAppSettings(): AppSettings {
-  const defaults: AppSettings = {
-    hotkey: DEFAULT_HOTKEY,
-    closeToTray: true,
-    lookupContextMode: 'clipboard'
+const DEFAULT_SETTINGS: AppSettings = {
+  hotkey: DEFAULT_HOTKEY,
+  closeToTray: true,
+  lookupContextMode: 'clipboard'
+}
+
+/** Accept only the shapes the app can honour; a hand-edited file must not poison them. */
+export function normalizeAppSettings(raw: unknown): AppSettings {
+  const record =
+    typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : ({} as const)
+  const hotkey =
+    typeof record.hotkey === 'string' && record.hotkey.trim() !== ''
+      ? record.hotkey.trim()
+      : DEFAULT_SETTINGS.hotkey
+  return {
+    hotkey,
+    closeToTray:
+      typeof record.closeToTray === 'boolean' ? record.closeToTray : DEFAULT_SETTINGS.closeToTray,
+    lookupContextMode:
+      record.lookupContextMode === 'fullscreen-ocr'
+        ? 'fullscreen-ocr'
+        : DEFAULT_SETTINGS.lookupContextMode
   }
+}
+
+export function loadAppSettings(): AppSettings {
   const settingsPath = join(app.getPath('userData'), 'config', 'settings.json')
   try {
-    if (!existsSync(settingsPath)) return defaults
-    const loaded = JSON.parse(readFileSync(settingsPath, 'utf-8')) as Partial<AppSettings>
-    return { ...defaults, ...loaded }
+    if (!existsSync(settingsPath)) return { ...DEFAULT_SETTINGS }
+    return normalizeAppSettings(JSON.parse(readFileSync(settingsPath, 'utf-8')))
   } catch (err) {
     console.warn(`Failed to load app settings from ${settingsPath}:`, err)
-    return defaults
+    return { ...DEFAULT_SETTINGS }
   }
 }
 
@@ -161,7 +221,10 @@ function ensureConfigDir(): string {
 export function saveAppSettings(settings: AppSettings): boolean {
   try {
     const configDir = ensureConfigDir()
-    writeFileSync(join(configDir, 'settings.json'), JSON.stringify(settings, null, 2), 'utf-8')
+    writeFileAtomicSync(
+      join(configDir, 'settings.json'),
+      JSON.stringify(normalizeAppSettings(settings), null, 2)
+    )
     return true
   } catch {
     return false
@@ -181,7 +244,7 @@ export function saveModelConfig(config: ModelConfig): { ok: boolean; error?: str
   }
   try {
     const configDir = ensureConfigDir()
-    writeFileSync(join(configDir, 'providers.json'), JSON.stringify(normalized, null, 2), 'utf-8')
+    writeFileAtomicSync(join(configDir, 'providers.json'), JSON.stringify(normalized, null, 2))
     return { ok: true }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) }
@@ -222,14 +285,46 @@ export function registerConfigIpcHandlers(): void {
   // Settings (hotkey)
   ipcMain.handle(
     'save-settings',
-    async (_event, settings: AppSettings): Promise<{ success: boolean }> => {
-      const ok = saveAppSettings(settings)
-      if (ok) {
-        applyAppSettings(settings)
-        // Re-register hotkey
-        await registerHotkey(settings.hotkey, handleHotkeyPressed)
+    async (
+      _event,
+      settings: AppSettings
+    ): Promise<{ success: boolean; hotkeyMode: 'global' | 'local'; error?: string }> => {
+      const normalized = normalizeAppSettings(settings)
+      const previous = loadAppSettings()
+
+      let registered: boolean
+      try {
+        registered = await registerHotkey(normalized.hotkey, handleHotkeyPressed)
+      } catch (err) {
+        // The binding attempt may have thrown (e.g. an invalid accelerator).
+        // Put the previous key back and report instead of rejecting the IPC.
+        await registerHotkey(previous.hotkey, handleHotkeyPressed).catch(() => undefined)
+        return {
+          success: false,
+          hotkeyMode: getHotkeyStatus().mode,
+          error: err instanceof Error ? err.message : 'Failed to register the hotkey.'
+        }
       }
-      return { success: ok }
+
+      // registerHotkey keeps the previous binding when the new key is refused.
+      // Do not persist a shortcut that is not actually active.
+      if (!registered && getHotkeyStatus().accelerator !== normalized.hotkey) {
+        return {
+          success: false,
+          hotkeyMode: getHotkeyStatus().mode,
+          error:
+            `The desktop did not accept "${normalized.hotkey}". ` +
+            `The previous shortcut (${previous.hotkey}) is still active.`
+        }
+      }
+
+      const ok = saveAppSettings(normalized)
+      if (ok) applyAppSettings(normalized)
+      return {
+        success: ok,
+        hotkeyMode: getHotkeyStatus().mode,
+        ...(ok ? {} : { error: 'Failed to save settings.' })
+      }
     }
   )
 

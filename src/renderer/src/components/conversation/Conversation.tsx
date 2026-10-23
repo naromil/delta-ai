@@ -11,6 +11,8 @@ interface ConversationProps {
   state: ConversationState
   loading: boolean
   onSend: (content: string) => void
+  onStop: () => void
+  onRetry: (turnId: number) => void
   onNewChat: () => void
   onLoadConversation?: (id: string) => void
   onExpand: ExpandRequest
@@ -25,6 +27,8 @@ function Conversation({
   state,
   loading,
   onSend,
+  onStop,
+  onRetry,
   onNewChat,
   onExpand,
   onFold,
@@ -36,6 +40,7 @@ function Conversation({
 }: ConversationProps): React.JSX.Element {
   const [input, setInput] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [showSearch, setShowSearch] = useState(false)
   const { ctxMenu, expandPrompt, handleContextMenu, closeContextMenu, closeExpandPrompt } =
     useExpansionContextMenu({ turns: state.turns, onExpand })
@@ -59,8 +64,32 @@ function Conversation({
     el.scrollTop = el.scrollHeight
   }, [conversationId])
 
+  useEffect(() => {
+    const el = textareaRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 200)}px`
+  }, [input])
+
+  useEffect(() => {
+    const handleShortcut = (e: KeyboardEvent): void => {
+      if (!(e.ctrlKey || e.metaKey)) return
+      const key = e.key.toLowerCase()
+      if (key === 'k' && onLoadConversation) {
+        e.preventDefault()
+        setShowSearch(true)
+      } else if (key === 'n') {
+        e.preventDefault()
+        onNewChat()
+      }
+    }
+    window.addEventListener('keydown', handleShortcut)
+    return () => window.removeEventListener('keydown', handleShortcut)
+  }, [onLoadConversation, onNewChat])
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
     if (e.key === 'Enter' && !e.shiftKey) {
+      if (e.nativeEvent.isComposing) return
       e.preventDefault()
       handleSend()
     }
@@ -125,6 +154,7 @@ function Conversation({
                   onFold={onFold}
                   onUnfold={onUnfold}
                   onContextMenu={handleContextMenu}
+                  onRetry={onRetry}
                 />
               </div>
             ))}
@@ -134,6 +164,7 @@ function Conversation({
       <div className="composer">
         <div className="composer-box">
           <textarea
+            ref={textareaRef}
             className="composer-input"
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -141,23 +172,40 @@ function Conversation({
             placeholder="Message Delta AI..."
             rows={1}
           />
-          <button
-            className="composer-send"
-            onClick={handleSend}
-            disabled={input.trim() === '' || loading}
-            aria-label="Send message"
-          >
-            <svg viewBox="0 0 24 24" className="icon" aria-hidden="true">
-              <path d="M4 12l16-8-6 16-2-7-8-1z" fill="currentColor" />
-            </svg>
-          </button>
+          {loading ? (
+            <button
+              className="composer-send composer-stop"
+              onClick={onStop}
+              aria-label="Stop generating"
+              title="Stop generating"
+            >
+              <svg viewBox="0 0 24 24" className="icon" aria-hidden="true">
+                <rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor" />
+              </svg>
+            </button>
+          ) : (
+            <button
+              className="composer-send"
+              onClick={handleSend}
+              disabled={input.trim() === ''}
+              aria-label="Send message"
+            >
+              <svg viewBox="0 0 24 24" className="icon" aria-hidden="true">
+                <path d="M4 12l16-8-6 16-2-7-8-1z" fill="currentColor" />
+              </svg>
+            </button>
+          )}
         </div>
         <p className="composer-hint">Delta AI can make mistakes. Check important info.</p>
       </div>
       <ContextMenu state={ctxMenu} onClose={closeContextMenu} />
       <ExpandPrompt state={expandPrompt} onClose={closeExpandPrompt} />
       {showSearch && onLoadConversation && (
-        <ConversationSearch onSelect={onLoadConversation} onClose={() => setShowSearch(false)} />
+        <ConversationSearch
+          onSelect={onLoadConversation}
+          onClose={() => setShowSearch(false)}
+          currentConversationId={conversationId}
+        />
       )}
     </main>
   )

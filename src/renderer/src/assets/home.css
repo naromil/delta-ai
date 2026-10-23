@@ -320,3 +320,46 @@
   -webkit-appearance: none;
   margin: 0;
 }
+
+.home-empty {
+  max-width: 440px;
+  margin: 48px auto 0;
+  text-align: center;
+}
+
+.home-empty-title {
+  margin: 0 0 10px;
+  font-size: 20px;
+  font-weight: 500;
+  color: var(--text-1);
+}
+
+.home-empty-text {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-2);
+}
+
+.kb-section-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 10px;
+}
+
+.kb-section-header .kb-section-desc {
+  margin-bottom: 0;
+}
+
+.kb-danger {
+  background: rgba(231, 76, 60, 0.12);
+  color: #e74c3c;
+}
+
+.kb-dirty {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--text-3);
+}

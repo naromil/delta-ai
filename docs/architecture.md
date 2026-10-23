@@ -30,32 +30,34 @@ Both windows talk to the same main process. Everything the app knows about the u
                         models.ts · conversation.ts · prompts.ts · expand-prompt.ts
 ```
 
-| Module                                              | Responsibility                                                                                                                                                                                                                                                    |
-| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/shared/models.ts`                              | Provider/role registries, `Connection`, `RoleAssignment`, `ModelConfig`, `ProviderMessage`, keyword types                                                                                                                                                         |
-| `src/shared/conversation.ts`                        | `ConversationState` / `Turn` / `ExpandableSegment` and every pure helper over them: `tokenize`, `flattenMarkdown`, `insertExpansion(Nested)`, `findTextSelectionRange`, `findExpansionInSegments`, `maxExpansionId`, `buildConversationTitle`, `serializeForChat` |
-| `src/shared/prompts.ts`                             | Every LLM-facing string: system prompts, screen-context template, lookup default, expand instructions, KB prompts                                                                                                                                                 |
-| `src/shared/expand-prompt.ts`                       | `buildExpandMessages({ answer, selection, prompt? })`                                                                                                                                                                                                             |
-| `src/main/index.ts`                                 | App lifecycle, main window, tray, streaming IPC (`chat-send`, `chat-expand`), lookup grow, lookup → chat transfer, conversation CRUD channels                                                                                                                     |
-| `src/main/provider.ts`                              | The single dispatch point: role → connection → backend. `callProviderStream` is the only primitive; `callProvider` drains it                                                                                                                                      |
-| `src/main/config.ts`                                | `providers.json` / `settings.json` I/O, hotkey registration (X11 + portal), Wayland detection                                                                                                                                                                     |
-| `src/main/models/config-schema.ts`                  | Zod validation, schema migrations (v1→v2), repair of dangling roles and unknown provider types                                                                                                                                                                    |
-| `src/main/services/model-catalog.ts`                | models.dev catalog fetch, 24h disk cache, offline fallback, `load-model-catalog` IPC                                                                                                                                                                              |
-| `src/shared/model-catalog.ts`                       | `CatalogModel`/`ModelCatalog` types, provider-id mapping, flattening and formatting helpers                                                                                                                                                                       |
-| `src/main/conversations.ts`                         | Conversation record CRUD under `{userData}/conversations/`                                                                                                                                                                                                        |
-| `src/main/lookup/lookup.ts`                         | Hotkey entry point: clipboard → OCR fallback → popup session                                                                                                                                                                                                      |
-| `src/main/lookup/capture.ts`                        | Screen capture (portal-first on KDE Wayland) and the single serialized tesseract.js worker                                                                                                                                                                        |
-| `src/main/lookup/window.ts`                         | Popup `BrowserWindow`, `?role=lookup` load, grow animation, per-window channels, one-time OCR IPC handler                                                                                                                                                         |
-| `src/main/lookup/state.ts`                          | `LookupSession`, `notifySessionState`, `applyOcrResult`, liveness helpers                                                                                                                                                                                         |
-| `src/main/lookup/handlers.ts`                       | Paste-text / paste-image handlers                                                                                                                                                                                                                                 |
-| `src/main/kb/analysis.ts`                           | Structured conversation material + analysis/keyword message construction                                                                                                                                                                                          |
-| `src/main/kb/keywords.ts`                           | Pure keyword parsing, merging, per-category trimming                                                                                                                                                                                                              |
-| `src/main/kb/store.ts`                              | `{userData}/kb/prompt.txt` and `keywords.json` I/O                                                                                                                                                                                                                |
-| `src/main/kb/handlers.ts`                           | `kb-load-prompt`, `kb-analyze`, `kb-reanalyze`                                                                                                                                                                                                                    |
-| `src/main/services/global-shortcut.ts`              | `org.freedesktop.portal.GlobalShortcuts` over D-Bus                                                                                                                                                                                                               |
-| `src/main/services/screen-capture.ts`               | `org.freedesktop.portal.Screenshot` over D-Bus (silent capture)                                                                                                                                                                                                   |
-| `src/renderer/src/hooks/useChatStreaming.ts`        | Owns `ConversationState`, correlates `requestId`s, auto-saves                                                                                                                                                                                                     |
-| `src/renderer/src/hooks/useExpansionContextMenu.ts` | The right-click → selection/word → Expand pipeline, shared by both windows                                                                                                                                                                                        |
+| Module                                                            | Responsibility                                                                                                                                                                                                                                                                        |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/shared/models.ts`                                            | Provider/role registries, `Connection`, `RoleAssignment`, `ModelConfig`, `ProviderMessage`, keyword types                                                                                                                                                                             |
+| `src/shared/conversation.ts`                                      | `ConversationState` / `Turn` / `ExpandableSegment` and every pure helper over them: `tokenize`, `flattenMarkdown`, `insertExpansion(Nested)`, `findTextSelectionRange`, `findExpansionInSegments`, `maxExpansionId`, `buildConversationTitle`, `persistableTurns`, `serializeForChat` |
+| `src/shared/prompts.ts`                                           | Every LLM-facing string: system prompts, screen-context template, lookup default, expand instructions, KB prompts                                                                                                                                                                     |
+| `src/shared/expand-prompt.ts`                                     | `buildExpandMessages({ answer, selection, prompt? })`                                                                                                                                                                                                                                 |
+| `src/main/index.ts`                                               | App lifecycle, main window, tray, streaming IPC (`chat-send`, `chat-expand`, `chat-cancel`), lookup grow/transfer, conversation CRUD + search channels                                                                                                                                |
+| `src/main/provider.ts`                                            | The single dispatch point: role → connection → backend. `callProviderStream(…, signal?)` is the only primitive; `callProvider` drains it; an abort ends the stream                                                                                                                    |
+| `src/main/services/atomic-file.ts`                                | `writeFileAtomic[Sync]`: sibling temp file + rename, so interrupted writes never leave truncated JSON/text                                                                                                                                                                            |
+| `src/main/config.ts`                                              | `providers.json` / `settings.json` I/O, hotkey registration (X11 + portal), register-before-save, startup fallback, Wayland detection                                                                                                                                                 |
+| `src/main/models/config-schema.ts`                                | Zod validation, schema migrations (v1→v2), repair of dangling roles/unknown providers; empty `connectionId` → `null` (unassigned)                                                                                                                                                     |
+| `src/main/services/model-catalog.ts`                              | models.dev catalog fetch, 24h disk cache, offline fallback, `load-model-catalog` IPC                                                                                                                                                                                                  |
+| `src/shared/model-catalog.ts`                                     | `CatalogModel`/`ModelCatalog` types, provider-id mapping, flattening and formatting helpers                                                                                                                                                                                           |
+| `src/main/conversations.ts`                                       | Conversation record CRUD (atomic) under `{userData}/conversations/`; title + content search, KB-fed marking and `resetKbFedFlags`                                                                                                                                                     |
+| `src/main/lookup/lookup.ts`                                       | Hotkey entry point: clipboard → OCR fallback → popup session                                                                                                                                                                                                                          |
+| `src/main/lookup/capture.ts`                                      | Screen capture (portal-first on KDE Wayland) and the single serialized tesseract.js worker                                                                                                                                                                                            |
+| `src/main/lookup/window.ts`                                       | Popup `BrowserWindow`, `?role=lookup` load, grow animation, per-window channels, one-time OCR IPC handler                                                                                                                                                                             |
+| `src/main/lookup/state.ts`                                        | `LookupSession`, `notifySessionState`, `applyOcrResult`, liveness helpers                                                                                                                                                                                                             |
+| `src/main/lookup/handlers.ts`                                     | Paste-text / paste-image handlers                                                                                                                                                                                                                                                     |
+| `src/main/kb/analysis.ts`                                         | Structured conversation material + analysis/keyword message construction                                                                                                                                                                                                              |
+| `src/main/kb/keywords.ts`                                         | Pure keyword parsing, merging, per-category trimming                                                                                                                                                                                                                                  |
+| `src/main/kb/store.ts`                                            | `{userData}/kb/prompt.txt` and `keywords.json` I/O (atomic); `resetKb` deletes both                                                                                                                                                                                                   |
+| `src/main/kb/handlers.ts`                                         | `kb-load-prompt`, `kb-save-prompt`, `kb-reset` (also clears chat `kbFed`), `kb-analyze`, `kb-reanalyze`                                                                                                                                                                               |
+| `src/main/services/global-shortcut.ts`                            | `org.freedesktop.portal.GlobalShortcuts` over D-Bus                                                                                                                                                                                                                                   |
+| `src/main/services/screen-capture.ts`                             | `org.freedesktop.portal.Screenshot` over D-Bus (silent capture)                                                                                                                                                                                                                       |
+| `src/renderer/src/hooks/useChatStreaming.ts`                      | Owns `ConversationState`, correlates `requestId`s, stop/retry, auto-saves                                                                                                                                                                                                             |
+| `src/renderer/src/components/conversation/ConversationSearch.tsx` | Ctrl/Cmd+K search modal: `conversation-search`, snippets, load/delete + delete-error banner                                                                                                                                                                                           |
+| `src/renderer/src/hooks/useExpansionContextMenu.ts`               | The right-click → selection/word → Expand pipeline, shared by both windows                                                                                                                                                                                                            |
 
 ---
 
@@ -65,13 +67,21 @@ Both windows talk to the same main process. Everything the app knows about the u
 
 1. `Conversation` composer → `useChatStreaming.send(text)`.
 2. `serializeForChat(state, role)` builds the provider messages: the system prompt always, the
-   screen-context preamble when a context exists or `role === 'lookup'`, then every turn.
+   screen-context preamble when a context exists or `role === 'lookup'`, then every turn —
+   assistant turns flagged `error: true` or containing only blank/whitespace are omitted, so
+   neither error text nor in-flight placeholders are replayed.
 3. `window.api.chatSend({ messages, requestId, role })` → `chat-send` in `index.ts`.
 4. For `role: 'lookup'` the main process appends the KB personalization prompt to the system
    message (`withKbPrompt`) before dispatch.
-5. `callProviderStream(messages, roleId)` resolves the role assignment and streams deltas.
+5. `callProviderStream(messages, roleId, controller.signal)` resolves the role assignment and
+   streams deltas. Main keeps the `AbortController` in `activeStreams`, keyed by `requestId`.
 6. Each delta is sent back as `chat-chunk` with the **cumulative** text; `chat-response` closes
    the turn. The renderer tokenizes the final text into segments and saves the conversation.
+7. The chat composer's Stop button sends `chat-cancel(requestId)`. Main aborts the provider
+   request and closes with `chat-response { text: partial, cancelled: true }`; the renderer
+   drops an empty assistant turn if no token arrived, otherwise keeps/saves the partial text.
+   Retry (shown on an error turn) drops that failed answer and everything after it, then
+   re-sends the remaining conversation.
 
 ### Inline expand
 
@@ -80,7 +90,8 @@ offsets, parentAnswer, prompt?)` — indices are computed against the segment tr
    against a live DOM `Range`.
 2. `useChatStreaming.expand` inserts a loading expansion into the segment tree, then sends
    `chat-expand` with `buildExpandMessages`.
-3. `chat-expand-chunk` carries `{ text, done? }` or `{ error }`; the tree is updated via
+3. `chat-expand-chunk` carries `{ text, done? }` or `{ error }`; a cancelled expand ends with
+   `{ text: partial, done: true, cancelled: true }`. The tree is updated via
    `updateExpansionInTurns`, and the conversation is saved on completion.
 4. Cross-frame selections are refused (`insertExpansion` returns `startIndex: -1`), which the UI
    surfaces as a disabled menu item.
@@ -92,45 +103,66 @@ offsets, parentAnswer, prompt?)` — indices are computed against the segment tr
    context. An empty clipboard falls back to the fullscreen capture path.
 3. In `fullscreen-ocr` mode: capture the display under the cursor, run OCR, publish the text.
 4. Every result goes through `applyOcrResult`, which drops stale jobs by `ocrToken` and a dead
-   window by `isSessionAlive`.
+   window by `isSessionAlive`. `notifySessionState` also stores `pendingState`, so a popup whose
+   renderer was not listening yet can replay the latest context via the `lookup-ready`
+   handshake.
 
 ### Look-up → chat transfer
 
 `lookup-transfer` marshals the whole `ConversationState`. The main process turns the context
 into a user turn (`buildScreenContextMessage`), writes the record once as `source: 'chat'`
-preserving the original `createdAt`, and pushes `chat-replace-conversation` to the main window.
+preserving the original `createdAt`, and pushes `chat-replace-conversation` with
+`{ state, conversationId, conversationTitle, conversationCreatedAt }` to the main window; the
+hook seeds its conversation metadata from that `createdAt` so later saves update the same record.
 
 ### Persistence and Knowledge Base
 
-- Auto-save runs on response completion, expand completion, fold and unfold; empty conversations
-  are never written.
+- Every config, KB and conversation write goes through `services/atomic-file.ts`, which writes
+  a sibling temp file and renames it over the target.
+- Auto-save runs on response completion (including stopped/partial responses), errors, expand
+  completion, fold and unfold. Turns pass through `persistableTurns()` before writing: blank
+  assistant placeholders are dropped, and conversations with no persistable turns are not
+  written. Error turns stay on disk but are omitted by `serializeForChat`, which also drops
+  blank assistant placeholders.
 - `kb-analyze` walks unfed conversations one at a time through the `kb-maintenance` role,
   persisting the rewritten prompt and marking each conversation fed **per conversation**, so an
   interrupted run keeps its progress.
 - `kb-reanalyze(n)` reprocesses the `n` most recent conversations without marking them fed.
+- `kb-save-prompt` stores a user-edited prompt. `kb-reset` deletes `prompt.txt` and
+  `keywords.json`, then clears `kbFed` on chat records via `resetKbFedFlags()` (lookup records
+  are untouched), so the next Analyze can rebuild from the retained history.
 - The resulting prompt is injected into every lookup request; keywords are stored for future use.
 
 ---
 
 ## 3. IPC surface
 
-| Channel                                                     | Direction    | Purpose                                          |
-| ----------------------------------------------------------- | ------------ | ------------------------------------------------ |
-| `chat-send` → `chat-chunk` / `chat-response` / `chat-error` | R → M, M → R | Streaming chat, correlated by `requestId`        |
-| `chat-expand` → `chat-expand-chunk`                         | R → M, M → R | Streaming expansions (`done` / `error` markers)  |
-| `chat-replace-conversation`                                 | M → R        | Hydrate a transferred conversation               |
-| `lookup-trigger-grow` / `lookup-grow`                       | L → M, M → L | First-ask window growth                          |
-| `lookup-context` / `ai-error`                               | M → L        | Context status and capture/OCR errors            |
-| `lookup-paste-text` / `lookup-paste-image`                  | L → M        | Paste replaces the context                       |
-| `lookup-ocr-image`                                          | L ↔ M        | OCR a pasted image, returns `{ text, error? }`   |
-| `lookup-input-changed` / `lookup-close` / `lookup-ready`    | L → M        | Blur guard, close, listener-ready handshake      |
-| `lookup-transfer`                                           | L → M        | Send the popup conversation to the chat window   |
-| `conversation-save` / `-load` / `-delete` / `-list`         | R ↔ M        | Conversation CRUD                                |
-| `conversation-load-most-recent` / `-list-unfed` / `-kb-fed` | R ↔ M        | Startup restore and KB integration               |
-| `load-settings` / `save-settings`                           | R ↔ M        | Hotkey, close-to-tray, lookup context mode       |
-| `load-model-config` / `save-model-config`                   | R ↔ M        | Connections and role assignments                 |
-| `load-model-catalog`                                        | R ↔ M        | models.dev model catalog (cached, force-refresh) |
-| `kb-load-prompt` / `kb-analyze` / `kb-reanalyze`            | R ↔ M        | Knowledge Base                                   |
+| Channel                                                     | Direction    | Purpose                                                         |
+| ----------------------------------------------------------- | ------------ | --------------------------------------------------------------- |
+| `chat-send` → `chat-chunk` / `chat-response` / `chat-error` | R → M, M → R | Streaming chat, correlated by `requestId`                       |
+| `chat-cancel`                                               | R → M        | Abort a `chat-send`/`chat-expand` stream                        |
+| `chat-expand` → `chat-expand-chunk`                         | R → M, M → R | Expansions (`done` / `error` / `cancelled` marks)               |
+| `chat-replace-conversation`                                 | M → R        | Hydrate transferred state + id/title/createdAt                  |
+| `lookup-trigger-grow` / `lookup-grow`                       | L → M, M → L | First-ask window growth                                         |
+| `lookup-context` / `ai-error`                               | M → L        | Context status and capture/OCR errors                           |
+| `lookup-paste-text` / `lookup-paste-image`                  | L → M        | Paste replaces the context                                      |
+| `lookup-ocr-image`                                          | L ↔ M        | OCR a pasted image, returns `{ text, error? }`                  |
+| `lookup-input-changed` / `lookup-close` / `lookup-ready`    | L → M        | Blur guard, close, replay pending context                       |
+| `lookup-transfer`                                           | L → M        | Send the popup conversation to the chat window                  |
+| `conversation-save` / `-load` / `-delete` / `-list`         | R ↔ M        | Conversation CRUD (atomic writes)                               |
+| `conversation-search`                                       | R → M        | Search titles/content; adds `matchedIn`/`snippet`               |
+| `conversation-load-most-recent` / `-list-unfed` / `-kb-fed` | R ↔ M        | Startup restore and KB integration                              |
+| `load-settings` / `save-settings`                           | R ↔ M        | Save registers hotkey first (`{ success, hotkeyMode, error? }`) |
+| `load-model-config` / `save-model-config`                   | R ↔ M        | Connections and role assignments                                |
+| `load-model-catalog`                                        | R ↔ M        | models.dev model catalog (cached, force-refresh)                |
+| `kb-load-prompt` / `kb-save-prompt` / `kb-reset`            | R ↔ M        | Prompt CRUD; reset also clears chat `kbFed`                     |
+| `kb-analyze` / `kb-reanalyze`                               | R ↔ M        | Knowledge Base maintenance                                      |
+
+`save-settings` registers the requested accelerator before persisting. If registration throws or
+the desktop keeps the previous binding, it returns `{ success: false, error }` and does not
+write the inactive shortcut; a key that only works in-app is saved with `hotkeyMode: 'local'`.
+Startup registration is wrapped the same way — an invalid stored hotkey logs, falls back to
+`DEFAULT_HOTKEY`, and never blocks window creation.
 
 ---
 
@@ -146,6 +178,9 @@ preserving the original `createdAt`, and pushes `chat-replace-conversation` to t
   kb/keywords.json          CategorizedKeyword[]
   tesseract-cache/          tesseract.js traineddata
 ```
+
+Config, KB and conversation files are written atomically (sibling temp file + rename, see
+`services/atomic-file.ts`); a crash mid-write cannot leave a truncated file behind.
 
 `providers.json`:
 
@@ -196,7 +231,8 @@ Wayland caveats worth knowing:
   returns `false` in that case.
 - Electron's clipboard reads the XWayland clipboard, which is often stale; `wl-paste` is tried
   first and Electron is the fallback.
-- The compositor may centre the popup instead of honouring the requested position.
+- The popup position is clamped to the cursor display's work area; the compositor may still
+  centre it instead of honouring the requested position.
 - Capture is **full-screen**, not a cropped region, and OCR runs on the whole image; the cursor
   may report `(0, 0)` on Wayland without breaking the flow.
 
@@ -221,8 +257,15 @@ electron.vite.config.ts
 | `npm run build`                         | typecheck, then `electron-vite build`                                         |
 | `npm run build:linux` / `:mac` / `:win` | typecheck + build + electron-builder packaging                                |
 
-Tests live in `tests/` and only cover pure modules (`shared/conversation`, `main/kb/keywords`,
-`main/provider` with a mocked config). There is no renderer or end-to-end harness yet.
+Tests live in `tests/` and cover main/shared module logic in plain Node, mocking Electron, D-Bus,
+or the config layer where needed: 13 files / 175 tests. Coverage includes `shared/conversation`
+(multi-segment insertion, `insertExpansionNested.inserted`, `serializeForChat` omit rules),
+`shared/model-catalog`, `main/kb/keywords`, `main/provider` (streaming, idle timeout after
+partial output, external abort), `main/models/config-schema` (empty `connectionId` →
+unassigned), `main/config-settings` (settings normalization), `main/conversations` (safe ids,
+search ranking/snippets, `resetKbFedFlags`), `main/services/local-shortcut` (shifted keys), the
+portal and model-catalog services, plus the supervisor-owned gates in `tests/acceptance/`.
+There is no renderer, IPC-handler, or end-to-end harness yet.
 
 CI (`.github/workflows/ci.yml`) runs the same checks plus a build on every push and PR. The
 release workflow packages Linux/macOS/Windows artifacts when a GitHub release is published.
@@ -239,8 +282,14 @@ These are load-bearing; breaking one causes a bug that is hard to trace:
   at right-click time; no `Range` objects survive into React state.
 - Both windows run the same bundle and the same `chat-*` channel family; responses are scoped to
   `event.sender`, so the two windows cannot cross-talk.
+- `chat-cancel` aborts the provider stream via the `AbortSignal` passed into
+  `callProviderStream`; a cancelled send still reports its accumulated partial text.
+- `serializeForChat` never sends `error: true` or blank/whitespace assistant turns;
+  `persistableTurns` drops blank assistant placeholders before any conversation save.
 - OCR results are applied through `applyOcrResult` (token + liveness check), and OCR jobs are
   serialized behind one queue — the tesseract worker is shared.
+- Persisted config, KB and conversation state is replaced via temp file + rename; never write
+  those files directly.
 - The main process never mutates renderer payloads in place.
 - Renderer state updates stay pure: no IPC call or ref write inside a `setState` updater.
 - Scrollbars are custom (`::-webkit-scrollbar`), never the native OS scrollbar.

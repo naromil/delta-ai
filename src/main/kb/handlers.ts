@@ -1,11 +1,12 @@
 import { ipcMain } from 'electron'
-import { loadKbPrompt, saveKbPrompt, loadKbKeywords, saveKbKeywords } from './store'
+import { loadKbPrompt, saveKbPrompt, loadKbKeywords, saveKbKeywords, resetKb } from './store'
 import { callProvider } from '../provider'
 import {
   loadConversation,
   listConversations,
   listUnfedConversations,
-  markConversationKbFed
+  markConversationKbFed,
+  resetKbFedFlags
 } from '../conversations'
 import { buildSingleMaterial, buildKbAnalysisMessages, buildKbKeywordMessages } from './analysis'
 import { parseKeywords, mergeKeywords, trimByCategory } from './keywords'
@@ -58,6 +59,19 @@ async function analyzeConversations(
 
 export function registerKbIpcHandlers(): void {
   ipcMain.handle('kb-load-prompt', () => {
+    return { prompt: loadKbPrompt(), keywords: loadKbKeywords() }
+  })
+
+  ipcMain.handle('kb-save-prompt', (_event, content: string) => {
+    saveKbPrompt(typeof content === 'string' ? content : '')
+    return { prompt: loadKbPrompt(), keywords: loadKbKeywords() }
+  })
+
+  ipcMain.handle('kb-reset', async () => {
+    resetKb()
+    // Without this the next Analyze would see every conversation as already fed
+    // and rebuild nothing from the history that still exists on disk.
+    await resetKbFedFlags()
     return { prompt: loadKbPrompt(), keywords: loadKbKeywords() }
   })
 

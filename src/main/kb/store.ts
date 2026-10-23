@@ -1,7 +1,8 @@
 import { join } from 'path'
-import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'fs'
+import { readFileSync, existsSync, mkdirSync, rmSync } from 'fs'
 import { app } from 'electron'
 import type { CategorizedKeyword } from '../../shared/models'
+import { writeFileAtomicSync } from '../services/atomic-file'
 
 /* ---- KB directory ---- */
 function kbDir(): string {
@@ -24,8 +25,7 @@ export function loadKbPrompt(): string {
 }
 
 export function saveKbPrompt(content: string): void {
-  const promptPath = join(kbDir(), 'prompt.txt')
-  writeFileSync(promptPath, content, 'utf-8')
+  writeFileAtomicSync(join(kbDir(), 'prompt.txt'), content)
 }
 
 /* ---- Keywords ---- */
@@ -43,6 +43,12 @@ export function loadKbKeywords(): CategorizedKeyword[] {
 }
 
 export function saveKbKeywords(keywords: CategorizedKeyword[]): void {
-  const keywordsPath = join(kbDir(), 'keywords.json')
-  writeFileSync(keywordsPath, JSON.stringify(keywords), 'utf-8')
+  writeFileAtomicSync(join(kbDir(), 'keywords.json'), JSON.stringify(keywords))
+}
+
+/** Delete the learned prompt and keywords; the next analysis starts from scratch. */
+export function resetKb(): void {
+  for (const name of ['prompt.txt', 'keywords.json']) {
+    rmSync(join(kbDir(), name), { force: true })
+  }
 }

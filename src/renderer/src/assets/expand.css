@@ -82,6 +82,13 @@
   background: rgba(138, 160, 184, 0.32);
 }
 
+.queried:focus-visible,
+.frame .fold-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+
 /* Custom context menu */
 #ctxMenu {
   position: fixed;

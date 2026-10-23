@@ -81,7 +81,12 @@ function ConnectionCard({
           <button
             className="settings-header-save"
             style={{ background: '#e74c3c22', color: '#e74c3c', padding: '4px 12px' }}
-            onClick={() => onDelete(connection.id)}
+            onClick={() => {
+              const message =
+                `Delete the “${connection.label || def.label}” connection? ` +
+                'Roles using it will be unassigned.'
+              if (window.confirm(message)) onDelete(connection.id)
+            }}
           >
             Delete
           </button>

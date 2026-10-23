@@ -94,14 +94,40 @@ function parseAccelerator(accelerator: string): ParsedAccelerator | null {
   return parsed.key ? parsed : null
 }
 
+/** `KeyboardEvent.key` while Shift is down → the unshifted key from the accelerator. */
+const SHIFTED_KEYS: Record<string, string> = {
+  '!': '1',
+  '@': '2',
+  '#': '3',
+  $: '4',
+  '%': '5',
+  '^': '6',
+  '&': '7',
+  '*': '8',
+  '(': '9',
+  ')': '0',
+  _: '-',
+  '+': '=',
+  '{': '[',
+  '}': ']',
+  '|': '\\',
+  ':': ';',
+  '"': "'",
+  '<': ',',
+  '>': '.',
+  '?': '/',
+  '~': '`'
+}
+
 /** Exact modifier match — a superset press (`Ctrl+Alt+Shift+D`) must not fire. */
 function matchesInput(accel: ParsedAccelerator, input: Electron.Input): boolean {
+  const key = normalizeKey(input.key)
   return (
     input.control === accel.ctrl &&
     input.alt === accel.alt &&
     input.shift === accel.shift &&
     input.meta === accel.meta &&
-    normalizeKey(input.key) === accel.key
+    (key === accel.key || (input.shift && SHIFTED_KEYS[key] === accel.key))
   )
 }
 

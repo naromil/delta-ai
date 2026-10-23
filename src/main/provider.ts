@@ -9,6 +9,7 @@ export { RoleUnassignedError }
 
 const FETCH_TIMEOUT_MS = 40_000
 const TIMEOUT_MESSAGE = `Request timed out after ${FETCH_TIMEOUT_MS / 1000}s. Check your API endpoint and network connection.`
+const CANCEL_MESSAGE = 'Generation stopped.'
 
 export class NoApiKeyError extends Error {}
 export class UnsupportedProviderError extends Error {}
@@ -55,12 +56,16 @@ const ROUTES: Record<ProviderType, ProviderRoute> = {
   }
 }
 
+function stripTrailingSlashes(value: string): string {
+  return value.trim().replace(/\/+$/, '')
+}
+
 function baseUrlFor(connection: Connection, route: ProviderRoute): string {
   if (connection.providerType === 'ollama') {
-    const host = (connection.host ?? 'http://localhost:11434').replace(/\/+$/, '')
-    return connection.baseUrl || `${host}/v1`
+    const host = stripTrailingSlashes(connection.host ?? 'http://localhost:11434')
+    return stripTrailingSlashes(connection.baseUrl || `${host}/v1`)
   }
-  const baseUrl = connection.baseUrl ?? route.baseUrl
+  const baseUrl = stripTrailingSlashes(connection.baseUrl ?? route.baseUrl ?? '')
   if (!baseUrl) {
     throw new NoApiKeyError('Base URL is required for OpenAI Compatible provider.')
   }
@@ -83,10 +88,17 @@ function splitPrompt(messages: ProviderMessage[]): {
   }
 }
 
+const API_ERROR_BODY_LIMIT = 500
+
 function translateError(error: unknown): Error {
   if (APICallError.isInstance(error)) {
     if (error.statusCode === undefined) return new Error(error.message)
-    return new Error(`API error ${error.statusCode}: ${error.responseBody ?? ''}`)
+    const body = (error.responseBody ?? '').trim()
+    const detail =
+      body.length > API_ERROR_BODY_LIMIT ? `${body.slice(0, API_ERROR_BODY_LIMIT)}…` : body
+    return new Error(
+      detail ? `API error ${error.statusCode}: ${detail}` : `API error ${error.statusCode}`
+    )
   }
   if (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')) {
     return new Error(TIMEOUT_MESSAGE)
@@ -96,11 +108,30 @@ function translateError(error: unknown): Error {
 
 async function* streamModel(
   model: LanguageModel,
-  messages: ProviderMessage[]
+  messages: ProviderMessage[],
+  externalSignal?: AbortSignal
 ): AsyncGenerator<string> {
   const prompt = splitPrompt(messages)
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+  let timedOut = false
+  let timer: NodeJS.Timeout | undefined
+
+  // The limit is an *idle* timeout: a long answer that keeps producing tokens
+  // must not be cut off at 40s, but a stalled connection must be.
+  const armTimeout = (): void => {
+    clearTimeout(timer)
+    timer = setTimeout(() => {
+      timedOut = true
+      controller.abort()
+    }, FETCH_TIMEOUT_MS)
+  }
+  armTimeout()
+
+  const onExternalAbort = (): void => controller.abort()
+  if (externalSignal) {
+    if (externalSignal.aborted) controller.abort()
+    else externalSignal.addEventListener('abort', onExternalAbort, { once: true })
+  }
 
   try {
     const result = streamText({
@@ -112,6 +143,7 @@ async function* streamModel(
     })
 
     for await (const part of result.fullStream) {
+      armTimeout()
       if (part.type === 'text-delta') {
         yield part.text
       } else if (part.type === 'error') {
@@ -123,9 +155,12 @@ async function* streamModel(
       }
     }
   } catch (error) {
+    if (externalSignal?.aborted) throw new Error(CANCEL_MESSAGE)
+    if (timedOut) throw new Error(TIMEOUT_MESSAGE)
     throw translateError(error)
   } finally {
     clearTimeout(timer)
+    externalSignal?.removeEventListener('abort', onExternalAbort)
   }
 }
 
@@ -133,7 +168,8 @@ async function* streamModel(
 
 export async function* callProviderStream(
   messages: ProviderMessage[],
-  roleId: RoleId
+  roleId: RoleId,
+  signal?: AbortSignal
 ): AsyncGenerator<string> {
   const resolved = resolveRole(roleId)
   if (!resolved) {
@@ -156,14 +192,18 @@ export async function* callProviderStream(
     apiKey: connection.apiKey || undefined
   })
 
-  yield* streamModel(provider(model), messages)
+  yield* streamModel(provider(model), messages, signal)
 }
 
 /* ---- Non-streaming: drain the single streaming dispatch ---- */
 
-export async function callProvider(messages: ProviderMessage[], roleId: RoleId): Promise<string> {
+export async function callProvider(
+  messages: ProviderMessage[],
+  roleId: RoleId,
+  signal?: AbortSignal
+): Promise<string> {
   let response = ''
-  for await (const chunk of callProviderStream(messages, roleId)) {
+  for await (const chunk of callProviderStream(messages, roleId, signal)) {
     response += chunk
   }
   return response || '(No response received)'

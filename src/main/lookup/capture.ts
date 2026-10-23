@@ -81,9 +81,9 @@ export async function runOCR(imageBuffer: Buffer): Promise<string> {
 
 export async function runOCRTokenedFor(
   session: LookupSession,
-  imageBuffer: Buffer
+  imageBuffer: Buffer,
+  token: number
 ): Promise<string | null> {
-  const token = ++session.ocrToken
   const text = await runOCR(imageBuffer)
   if (token !== session.ocrToken) return null
   return text

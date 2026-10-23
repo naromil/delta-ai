@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 export interface ExpandPromptState {
   x: number
@@ -13,6 +13,21 @@ interface ExpandPromptProps {
 
 function ExpandPrompt({ state, onClose }: ExpandPromptProps): React.JSX.Element | null {
   const inputRef = useRef<HTMLInputElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const [position, setPosition] = useState<{ x: number; y: number } | null>(null)
+
+  useLayoutEffect(() => {
+    const panel = panelRef.current
+    if (!state || !panel) {
+      setPosition(null)
+      return
+    }
+    const rect = panel.getBoundingClientRect()
+    setPosition({
+      x: Math.max(8, Math.min(state.x, window.innerWidth - rect.width - 8)),
+      y: Math.max(8, Math.min(state.y, window.innerHeight - rect.height - 8))
+    })
+  }, [state])
 
   useEffect(() => {
     if (!state) return
@@ -47,7 +62,12 @@ function ExpandPrompt({ state, onClose }: ExpandPromptProps): React.JSX.Element 
   }
 
   return (
-    <div id="expandPrompt" className="visible" style={{ left: state.x, top: state.y }}>
+    <div
+      ref={panelRef}
+      id="expandPrompt"
+      className="visible"
+      style={{ left: (position ?? state).x, top: (position ?? state).y }}
+    >
       <input
         ref={inputRef}
         type="text"

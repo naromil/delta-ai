@@ -231,6 +231,7 @@ body {
   font-size: 16px;
   line-height: 1.5;
   max-height: 200px;
+  overflow-y: auto;
   padding: 8px 0;
   font-family: inherit;
   scrollbar-width: none;
@@ -269,6 +270,28 @@ body {
 
 .composer-send:not(:disabled):hover {
   opacity: 0.85;
+}
+
+.composer-stop {
+  background: var(--text-2);
+  color: var(--bg);
+}
+
+.message-retry {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text-1);
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.message-retry:hover {
+  background: var(--surface-2);
 }
 
 .composer-hint {
@@ -368,6 +391,13 @@ body {
   font-size: 14px;
 }
 
+.conversation-search-error {
+  padding: 8px 16px;
+  color: var(--danger, #e5484d);
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+}
+
 .conversation-search-item {
   display: flex;
   flex-direction: column;
@@ -388,6 +418,58 @@ body {
 .conversation-search-item:hover,
 .conversation-search-item.selected {
   background: var(--surface-2);
+}
+
+.conversation-search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.conversation-search-row .conversation-search-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.conversation-search-delete {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.conversation-search-item:hover .conversation-search-delete,
+.conversation-search-item.selected .conversation-search-delete {
+  opacity: 1;
+}
+
+.conversation-search-delete:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--error);
+}
+
+.conversation-search-delete:disabled {
+  opacity: 0;
+  cursor: default;
+}
+
+.conversation-search-snippet {
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 .conversation-search-title {

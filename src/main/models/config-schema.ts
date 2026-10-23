@@ -16,7 +16,9 @@ const connectionFileSchema = z.object({
 })
 
 const roleAssignmentFileSchema = z.object({
-  connectionId: z.string().min(1).nullable().default(null),
+  // Older builds and hand edits can leave an empty string here; it means
+  // "unassigned" and must not discard the entire config during parsing.
+  connectionId: z.string().nullable().default(null),
   model: z.string().default('')
 })
 
@@ -200,7 +202,7 @@ function normalizeRoles(
       continue
     }
 
-    let connectionId = entry.connectionId
+    let connectionId = entry.connectionId?.trim() || null
     if (connectionId && !connections[connectionId]) {
       notes.push(`role "${roleId}" referenced missing connection "${connectionId}"; unassigned`)
       connectionId = null
