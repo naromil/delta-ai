@@ -27,6 +27,9 @@ const api = {
     closeToTray: boolean
     lookupContextMode: string
   }): Promise<{ success: boolean }> => ipcRenderer.invoke('save-settings', settings),
+  getHotkeyStatus: (): Promise<{ accelerator: string; mode: 'global' | 'local' }> =>
+    ipcRenderer.invoke('hotkey-status'),
+  setHotkeyCaptureActive: (active: boolean) => ipcRenderer.send('hotkey-capture-active', active),
 
   /* Lookup-overlay channels */
   lookupOnContext: (cb: (state: { status: string; text: string; hint: string }) => void) =>

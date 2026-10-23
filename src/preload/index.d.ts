@@ -30,6 +30,8 @@ declare global {
         closeToTray: boolean
         lookupContextMode: string
       }) => Promise<{ success: boolean }>
+      getHotkeyStatus: () => Promise<{ accelerator: string; mode: 'global' | 'local' }>
+      setHotkeyCaptureActive: (active: boolean) => void
 
       /* Lookup channels */
       lookupOnContext: (cb: (state: { status: string; text: string; hint: string }) => void) => void

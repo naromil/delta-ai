@@ -3,6 +3,7 @@ import HotkeyInput from '../../components/settings/HotkeyInput'
 interface GeneralTabProps {
   hotkey: string
   onHotkeyChange: (combo: string) => void
+  hotkeyMode: 'global' | 'local'
   closeToTray: boolean
   onCloseToTrayChange: (value: boolean) => void
 }
@@ -10,12 +11,13 @@ interface GeneralTabProps {
 function GeneralTab({
   hotkey,
   onHotkeyChange,
+  hotkeyMode,
   closeToTray,
   onCloseToTrayChange
 }: GeneralTabProps): React.JSX.Element {
   return (
     <>
-      <HotkeyInput value={hotkey} onChange={onHotkeyChange} />
+      <HotkeyInput value={hotkey} onChange={onHotkeyChange} mode={hotkeyMode} />
       <div className="settings-section">
         <label className="settings-label">Close to system tray</label>
         <label className="toggle-row">

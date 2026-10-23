@@ -2,6 +2,7 @@ import { join } from 'path'
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'fs'
 import { app, ipcMain, globalShortcut } from 'electron'
 import { registerGlobalShortcutPortal } from './services/global-shortcut'
+import { configureLocalShortcut, setHotkeyCaptureActive } from './services/local-shortcut'
 import { handleHotkeyPressed } from './lookup/lookup'
 import {
   type RoleId,
@@ -62,36 +63,66 @@ export function isKdeWaylandSession(): boolean {
 }
 
 /* ---- Global shortcut management ---- */
-export let currentHotkey = 'Ctrl+Shift+D'
 
+export const DEFAULT_HOTKEY = 'Ctrl+Shift+D'
+
+/** How the look-up key is currently reachable. */
+export interface HotkeyStatus {
+  accelerator: string
+  /** `global` = bound system-wide; `local` = in-app fallback only. */
+  mode: 'global' | 'local'
+}
+
+export let currentHotkey = DEFAULT_HOTKEY
+let globalHotkeyRegistered = false
+
+/**
+ * Binds `accelerator` system-wide. When the desktop refuses the binding (a
+ * terminal-launched dev run has no app id for the Wayland portal) the same key
+ * is armed as an in-app shortcut instead — see `services/local-shortcut.ts`.
+ */
 export async function registerHotkey(accelerator: string, onPressed: () => void): Promise<boolean> {
+  const previousHotkey = currentHotkey
+  currentHotkey = accelerator
+
+  let registered: boolean
+
   // On Wayland, route through the XDG GlobalShortcuts portal.
   if (isWaylandSession()) {
-    const registered = await registerGlobalShortcutPortal(accelerator, () => {
+    registered = await registerGlobalShortcutPortal(accelerator, () => {
       console.log(`Hotkey ${accelerator} pressed`)
       onPressed()
     })
-    if (registered) currentHotkey = accelerator
-    return registered
-  }
-
-  // X11 / macOS / Windows: use Electron's built-in globalShortcut.
-  const previousHotkey = currentHotkey
-  if (previousHotkey && globalShortcut.isRegistered(previousHotkey)) {
-    globalShortcut.unregister(previousHotkey)
-  }
-  const success = globalShortcut.register(accelerator, () => {
-    console.log(`Hotkey ${accelerator} pressed`)
-    onPressed()
-  })
-
-  if (success) {
-    currentHotkey = accelerator
   } else {
-    console.warn(`Failed to register global shortcut: ${accelerator}`)
+    // X11 / macOS / Windows: use Electron's built-in globalShortcut.
+    if (previousHotkey && globalShortcut.isRegistered(previousHotkey)) {
+      globalShortcut.unregister(previousHotkey)
+    }
+    registered = globalShortcut.register(accelerator, () => {
+      console.log(`Hotkey ${accelerator} pressed`)
+      onPressed()
+    })
+    if (!registered) console.warn(`Failed to register global shortcut: ${accelerator}`)
   }
 
-  return success
+  globalHotkeyRegistered = registered
+  // Armed only as a fallback: a working global key must never fire twice.
+  configureLocalShortcut(accelerator, !registered)
+  if (!registered) {
+    console.warn(
+      `Global shortcut ${accelerator} unavailable — using the in-app shortcut, ` +
+        'which fires while a Delta AI window is focused.'
+    )
+  }
+
+  return registered
+}
+
+export function getHotkeyStatus(): HotkeyStatus {
+  return {
+    accelerator: currentHotkey,
+    mode: globalHotkeyRegistered ? 'global' : 'local'
+  }
 }
 
 export let currentCloseToTray = true
@@ -101,7 +132,7 @@ export let currentLookupContextMode: LookupContextMode = 'clipboard'
 
 export function loadAppSettings(): AppSettings {
   const defaults: AppSettings = {
-    hotkey: 'Ctrl+Shift+D',
+    hotkey: DEFAULT_HOTKEY,
     closeToTray: true,
     lookupContextMode: 'clipboard'
   }
@@ -204,6 +235,14 @@ export function registerConfigIpcHandlers(): void {
 
   ipcMain.handle('load-settings', (): AppSettings => {
     return loadAppSettings()
+  })
+
+  /* Where the look-up key currently works (system-wide or in-app only) */
+  ipcMain.handle('hotkey-status', (): HotkeyStatus => getHotkeyStatus())
+
+  /* Suspend the in-app fallback while the hotkey field captures a combination */
+  ipcMain.on('hotkey-capture-active', (_event, active: boolean) => {
+    setHotkeyCaptureActive(!!active)
   })
 
   /* v2 model config IPC */

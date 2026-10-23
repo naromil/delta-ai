@@ -24,6 +24,7 @@ function Settings(): React.JSX.Element {
   })
   const [catalogLoading, setCatalogLoading] = useState(false)
   const [hotkey, setHotkey] = useState('Ctrl+Shift+D')
+  const [hotkeyMode, setHotkeyMode] = useState<'global' | 'local'>('global')
   const [closeToTray, setCloseToTray] = useState(true)
   const [lookupContextMode, setLookupContextMode] = useState('clipboard')
   const [saving, setSaving] = useState(false)
@@ -52,6 +53,8 @@ function Settings(): React.JSX.Element {
       .loadModelCatalog(false)
       .then(setCatalog)
       .catch((err: unknown) => setCatalog(catalogErrorState(err)))
+
+    window.api.getHotkeyStatus().then((status) => setHotkeyMode(status.mode))
 
     window.api.loadSettings().then((s) => {
       const settings = s as {
@@ -128,6 +131,7 @@ function Settings(): React.JSX.Element {
     if (cfgRes.success && settingsRes.success) {
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
+      window.api.getHotkeyStatus().then((status) => setHotkeyMode(status.mode))
     } else {
       alert(cfgRes.error ?? 'Failed to save configuration.')
     }
@@ -174,6 +178,7 @@ function Settings(): React.JSX.Element {
               setHotkey(combo)
               hotkeyRef.current = combo
             }}
+            hotkeyMode={hotkeyMode}
             closeToTray={closeToTray}
             onCloseToTrayChange={setCloseToTray}
           />

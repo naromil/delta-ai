@@ -186,14 +186,43 @@ function gtkKeyName(key: string): string {
   return key
 }
 
+const PORTAL_TIMEOUT_MS = 10_000
+
 /**
  * Register the global shortcut through the XDG GlobalShortcuts portal.
  * Returns true if the portal accepted and assigned the trigger.
+ *
+ * The whole handshake is bounded: `xdg-desktop-portal-kde` can leave a request
+ * unanswered (an alternative that is already taken, or a bus that never comes
+ * up), and an unbounded await here blocks `app.whenReady` — the app would then
+ * start with no window at all instead of without the key.
  */
 export async function registerGlobalShortcutPortal(
   accelerator: string,
   onActivated: () => void
 ): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<boolean>((resolve) => {
+    timer = setTimeout(() => {
+      console.warn(
+        `XDG portal did not answer within ${PORTAL_TIMEOUT_MS} ms for "${accelerator}" — ` +
+          'dropping the global binding (the in-app shortcut takes over).'
+      )
+      // A late reply must not start firing a key the app no longer tracks.
+      onActivatedCb = null
+      resolve(false)
+    }, PORTAL_TIMEOUT_MS)
+    timer.unref?.()
+  })
+
+  try {
+    return await Promise.race([bindThroughPortal(accelerator, onActivated), timeout])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+async function bindThroughPortal(accelerator: string, onActivated: () => void): Promise<boolean> {
   try {
     onActivatedCb = onActivated
     await closeSession()

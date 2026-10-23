@@ -3,6 +3,7 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { unregisterGlobalShortcutPortal } from './services/global-shortcut'
+import { installLocalShortcut } from './services/local-shortcut'
 import {
   loadAppSettings,
   applyAppSettings,
@@ -278,6 +279,10 @@ function createWindow(): void {
   })
 
   setMainWindow(mainWindow)
+
+  // In-app fallback for the look-up key: fires while this window has focus,
+  // which is the only thing a terminal-launched dev run can offer.
+  installLocalShortcut(mainWindow, handleHotkeyPressed)
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()

@@ -2,11 +2,22 @@ import { screen, clipboard } from 'electron'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { createLookupSession } from './window'
-import { isSessionAlive, notifyProcessing, applyOcrResult } from './state'
+import { isSessionAlive, notifyProcessing, applyOcrResult, type LookupSession } from './state'
 import { captureScreen, runOCR } from './capture'
+import { installLocalShortcut } from '../services/local-shortcut'
 import { currentLookupContextMode, isWaylandSession } from '../config'
 
 const execFileAsync = promisify(execFile)
+
+/**
+ * Create a lookup window that also carries the in-app shortcut, so the key keeps
+ * working while the popup itself holds focus.
+ */
+function createSession(cursorX: number, cursorY: number): LookupSession {
+  const session = createLookupSession(cursorX, cursorY)
+  installLocalShortcut(session.window, handleHotkeyPressed)
+  return session
+}
 
 /**
  * Read clipboard text. On Wayland, Electron's `clipboard.readText()` reads
@@ -50,12 +61,12 @@ async function readClipboardImage(): Promise<Buffer | null> {
 async function doFullscreenOCR(cursorX: number, cursorY: number): Promise<void> {
   const imageBuffer = await captureScreen()
   if (!imageBuffer) {
-    const session = createLookupSession(cursorX, cursorY)
+    const session = createSession(cursorX, cursorY)
     session.window.webContents.send('ai-error', 'Failed to capture the screen.')
     return
   }
 
-  const session = createLookupSession(cursorX, cursorY)
+  const session = createSession(cursorX, cursorY)
   if (!isSessionAlive(session)) return
 
   const token = ++session.ocrToken
@@ -78,14 +89,14 @@ async function doFullscreenOCR(cursorX: number, cursorY: number): Promise<void> 
 async function tryClipboardContext(cursorX: number, cursorY: number): Promise<boolean> {
   const text = await readClipboardText()
   if (text && text.trim()) {
-    const session = createLookupSession(cursorX, cursorY)
+    const session = createSession(cursorX, cursorY)
     applyOcrResult(session, session.ocrToken, text.trim(), '')
     return true
   }
 
   const pngBuffer = await readClipboardImage()
   if (pngBuffer && pngBuffer.length > 0) {
-    const session = createLookupSession(cursorX, cursorY)
+    const session = createSession(cursorX, cursorY)
     if (!isSessionAlive(session)) return true
 
     const token = ++session.ocrToken

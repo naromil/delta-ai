@@ -380,6 +380,13 @@
   line-height: 1.5;
 }
 
+/* Informational callout under a setting (e.g. hotkey armed in-app only) */
+.settings-hint--notice {
+  color: var(--text-2);
+  border-left: 2px solid var(--accent-ring);
+  padding-left: 8px;
+}
+
 /* ---- Toggle switch ---- */
 .toggle-row {
   display: flex;
