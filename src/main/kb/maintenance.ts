@@ -37,6 +37,8 @@ let queue: Promise<unknown> = Promise.resolve()
 let unsubscribeConversations: (() => void) | null = null
 let unsubscribeConfig: (() => void) | null = null
 let activeRunController: AbortController | null = null
+/** Invalidates startup probes and queue scans that straddle a stop or reset. */
+let lifecycle = 0
 
 /* ---- Queue ---- */
 
@@ -204,7 +206,7 @@ function handleConversationSaved(record: ConversationRecord): void {
 function handleAppConfigChanged(): void {
   void refreshStatus()
     .then((status) => {
-      if (!status.enabled || !status.configured || status.pending === 0) return
+      if (!started || !status.enabled || !status.configured || status.pending === 0) return
       schedule(AUTO_DEBOUNCE_MS)
     })
     .catch((err) => console.warn('Failed to react to a config change:', err))
@@ -215,12 +217,15 @@ function handleAppConfigChanged(): void {
 export function startKbAutoMaintenance(): void {
   if (started) return
   started = true
+  const token = ++lifecycle
   unsubscribeConversations = onConversationSaved(handleConversationSaved)
   unsubscribeConfig = onAppConfigChanged(handleAppConfigChanged)
 
   void (async () => {
     try {
       const status = await refreshStatus()
+      // A stop (or stop/start pair) may have landed while the probe ran.
+      if (token !== lifecycle || !started) return
       if (!status.enabled || !status.configured || status.pending === 0) return
       schedule(startupDelayMs(loadKbState().lastRunAt, Date.now()))
     } catch (err) {
@@ -230,10 +235,13 @@ export function startKbAutoMaintenance(): void {
 }
 
 export function stopKbAutoMaintenance(): void {
+  lifecycle++
   if (timer !== undefined) {
     clearTimeout(timer)
     timer = undefined
   }
+  // A quitting app must not keep a provider request alive.
+  activeRunController?.abort()
   unsubscribeConversations?.()
   unsubscribeConversations = null
   unsubscribeConfig?.()

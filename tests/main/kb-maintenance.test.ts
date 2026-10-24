@@ -53,7 +53,8 @@ vi.mock('../../src/main/kb/store', () => ({
 
 import {
   resetKbMaintenanceForTests,
-  startKbAutoMaintenance
+  startKbAutoMaintenance,
+  stopKbAutoMaintenance
 } from '../../src/main/kb/maintenance'
 import { AUTO_DEBOUNCE_MS } from '../../src/main/kb/schedule'
 
@@ -221,5 +222,37 @@ describe('automatic KB pass scheduling', () => {
 
     expect(state.lastLearnedAt).toBe('2026-10-22T00:00:00.000Z')
     expect(state.lastError).toBeNull()
+  })
+
+  it('does not schedule work when the startup probe finishes after shutdown', async () => {
+    unfed = [chat('chat_a')]
+    const scan = Promise.withResolvers<ConversationMeta[]>()
+    h.listUnfedConversations.mockImplementationOnce(() => scan.promise)
+
+    startKbAutoMaintenance()
+    stopKbAutoMaintenance()
+    scan.resolve(unfed)
+    await settle()
+
+    expect(vi.getTimerCount()).toBe(0)
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(h.runKbAnalysis).not.toHaveBeenCalled()
+  })
+
+  it('ignores a startup probe left over from a previous start', async () => {
+    const staleScan = Promise.withResolvers<ConversationMeta[]>()
+    h.listUnfedConversations.mockImplementationOnce(() => staleScan.promise)
+
+    startKbAutoMaintenance()
+    stopKbAutoMaintenance()
+
+    h.listUnfedConversations.mockResolvedValueOnce([])
+    startKbAutoMaintenance()
+    await settle()
+
+    staleScan.resolve([chat('chat_a')])
+    await settle()
+
+    expect(vi.getTimerCount()).toBe(0)
   })
 })
