@@ -24,7 +24,7 @@ Delta AI lives in two windows: a full **chat** interface and an **always-on-top 
 
 | Chat window                                                                   | Lookup popup                                                                  |
 | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| Full chat with sidebar navigation, inline expansions, and conversation search | Always-on-top popup after screen capture, showing OCR context and AI response |
+| <img width="1090" height="798" alt="image" src="https://github.com/user-attachments/assets/830f8d05-109a-48e2-94a6-f58505f8db45" /> Full chat with sidebar navigation, inline expansions, and conversation search | <img width="840" height="640" alt="image" src="https://github.com/user-attachments/assets/e5cc2347-1f91-4a56-ad19-ffa901c0d359" /> Always-on-top popup after screen capture, showing OCR context and AI response |
 
 ---
 
