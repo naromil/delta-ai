@@ -164,6 +164,12 @@ write the inactive shortcut; a key that only works in-app is saved with `hotkeyM
 Startup registration is wrapped the same way — an invalid stored hotkey logs, falls back to
 `DEFAULT_HOTKEY`, and never blocks window creation.
 
+The Settings view has **no Save button**. It autosaves both files (`save-model-config` +
+`save-settings`) after a 500 ms idle debounce, keeps a JSON snapshot of what is on disk so a
+re-render is not mistaken for an edit, seeds that baseline after the initial load (loading must
+never write back), flushes on unmount so leaving the view mid-typing cannot drop an edit, and
+surfaces a failed save inline (`role="alert"`) instead of a native `alert()`.
+
 ---
 
 ## 4. On-disk format

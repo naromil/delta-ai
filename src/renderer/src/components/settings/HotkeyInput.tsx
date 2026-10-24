@@ -117,7 +117,7 @@ function HotkeyInput({ value, onChange, mode = 'global' }: HotkeyInputProps): Re
       <p className="settings-hint">
         {capturing
           ? 'Press a key combination (e.g. Ctrl+Shift+D), or Esc to cancel.'
-          : 'Click the field to capture a key combination. A modifier (Ctrl, Alt or Meta) or an F-key is required; apply it with Save changes.'}
+          : 'Click the field to capture a key combination. A modifier (Ctrl, Alt or Meta) or an F-key is required; it saves automatically.'}
       </p>
       {mode === 'local' && (
         <p className="settings-hint settings-hint--notice">

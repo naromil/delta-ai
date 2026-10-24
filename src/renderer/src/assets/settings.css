@@ -41,6 +41,28 @@
   font-size: 13px;
 }
 
+/* Autosave indicator (there is no Save button) */
+.settings-save-status {
+  flex-shrink: 0;
+  padding-top: 6px;
+  font-size: 12px;
+  color: var(--text-3);
+  white-space: nowrap;
+  transition: color var(--dur-1) var(--ease-out);
+}
+
+.settings-save-status--saving {
+  color: var(--text-2);
+}
+
+.settings-save-status--saved {
+  color: var(--success);
+}
+
+.settings-save-status--error {
+  color: var(--error);
+}
+
 /* Category tabs */
 .settings-categories {
   display: flex;
