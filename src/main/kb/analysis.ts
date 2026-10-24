@@ -1,31 +1,25 @@
 import { KB_ANALYSIS_SYSTEM_PROMPT, KB_KEYWORD_SYSTEM_PROMPT } from '../../shared/prompts'
-import type { ConversationRecord, ExpandableSegment } from '../../shared/conversation'
+import type { ConversationRecord } from '../../shared/conversation'
+import type { ExpansionNode } from '../../shared/rich-text'
 import type { CategorizedKeyword } from '../../shared/models'
 import type { ProviderMessage } from '../provider'
 
 function collectExpansionContexts(
-  segments: ExpandableSegment[],
-  result: Array<{ term: string; prompt?: string; context: string }>
+  source: string,
+  nodes: ExpansionNode[],
+  result: Array<{ term: string; prompt?: string; context: string; answer: string }>
 ): void {
-  for (let i = 0; i < segments.length; i++) {
-    const seg = segments[i]
-    if (seg.kind === 'expansion') {
-      const beforeSeg = i > 0 ? segments[i - 1] : null
-      const afterSeg = i < segments.length - 1 ? segments[i + 1] : null
-      const before = beforeSeg?.kind === 'text' ? beforeSeg.text : ''
-      const after = afterSeg?.kind === 'text' ? afterSeg.text : ''
-
-      const beforeText = before.length > 80 ? '...' + before.slice(-80) : before
-      const afterText = after.length > 80 ? after.slice(0, 80) + '...' : after
-
-      result.push({
-        term: seg.originalText,
-        prompt: seg.prompt,
-        context: (beforeText + seg.originalText + afterText).trim()
-      })
-
-      collectExpansionContexts(seg.segments, result)
-    }
+  for (const node of nodes) {
+    const before = source.slice(Math.max(0, node.start - 80), node.start)
+    const after = source.slice(node.end, node.end + 80)
+    const answer = node.answer.trim()
+    result.push({
+      term: node.originalText,
+      prompt: node.prompt,
+      context: (before + node.originalText + after).trim(),
+      answer: answer.length > 300 ? answer.slice(0, 300) + '...' : answer
+    })
+    collectExpansionContexts(node.answer, node.children, result)
   }
 }
 
@@ -38,7 +32,12 @@ export function buildSingleMaterial(record: ConversationRecord): string {
   ]
 
   const questionSummaries: Array<{ question: string; previousResponse: string }> = []
-  const expansionSummaries: Array<{ term: string; prompt?: string; context: string }> = []
+  const expansionSummaries: Array<{
+    term: string
+    prompt?: string
+    context: string
+    answer: string
+  }> = []
   let lastAssistant = ''
 
   for (const turn of record.state.turns) {
@@ -53,9 +52,7 @@ export function buildSingleMaterial(record: ConversationRecord): string {
         questionSummaries.push({ question: text, previousResponse: prev })
       }
     }
-    if (turn.segments) {
-      collectExpansionContexts(turn.segments, expansionSummaries)
-    }
+    collectExpansionContexts(turn.content, turn.expansions, expansionSummaries)
   }
 
   if (questionSummaries.length > 0) {
@@ -74,6 +71,9 @@ export function buildSingleMaterial(record: ConversationRecord): string {
     for (const es of expansionSummaries) {
       parts.push('- Context: ' + es.context)
       parts.push('  Term: "' + es.term + '"')
+      if (es.answer) {
+        parts.push('  Answer: ' + es.answer)
+      }
       if (es.prompt) {
         parts.push('  Prompt: "' + es.prompt + '"')
       }

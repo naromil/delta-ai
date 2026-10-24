@@ -99,6 +99,8 @@ function App(): React.JSX.Element {
     stop,
     retry,
     expand,
+    retryExpansion,
+    dismissExpansion,
     fold,
     unfold,
     newChat,
@@ -176,6 +178,8 @@ function App(): React.JSX.Element {
             onExpand={expand}
             onFold={fold}
             onUnfold={unfold}
+            onRetryExpansion={retryExpansion}
+            onDismissExpansion={dismissExpansion}
             transferKey={transferKey}
           />
         )}

@@ -28,8 +28,13 @@ function record(id: string, overrides: Partial<ConversationRecord> = {}): Conver
     source: 'chat',
     state: {
       turns: [
-        { id: 1, role: 'user', content: 'first question' },
-        { id: 2, role: 'assistant', content: 'The answer mentions **needle** deep inside.' }
+        { id: 1, role: 'user', content: 'first question', expansions: [] },
+        {
+          id: 2,
+          role: 'assistant',
+          content: 'The answer mentions **needle** deep inside.',
+          expansions: []
+        }
       ]
     },
     kbFed: false,
@@ -70,6 +75,50 @@ describe('conversation store', () => {
       warn.mockRestore()
     }
     expect(await listConversations()).toEqual([])
+  })
+
+  it('preserves kbFed across renderer autosaves', async () => {
+    await saveConversation(record('chat_kb', { kbFed: true }))
+    await saveConversation(
+      record('chat_kb', { kbFed: false, updatedAt: '2026-02-01T00:00:00.000Z' }),
+      { preserveKbFed: true }
+    )
+
+    const loaded = await loadConversation('chat_kb')
+    expect(loaded?.kbFed).toBe(true)
+    expect(loaded?.updatedAt).toBe('2026-02-01T00:00:00.000Z')
+  })
+
+  it('sanitises interrupted expansions when loading', async () => {
+    await saveConversation(
+      record('chat_load', {
+        state: {
+          turns: [
+            {
+              id: 1,
+              role: 'assistant',
+              content: 'x',
+              expansions: [
+                {
+                  id: 1,
+                  start: 0,
+                  end: 1,
+                  originalText: 'x',
+                  answer: '',
+                  status: 'loading',
+                  folded: false,
+                  children: []
+                }
+              ]
+            }
+          ]
+        }
+      })
+    )
+
+    const loaded = await loadConversation('chat_load')
+    expect(loaded?.state.turns[0].expansions[0].status).toBe('error')
+    expect(loaded?.state.turns[0].expansions[0].error).toBeDefined()
   })
 
   it('deletes a conversation file', async () => {

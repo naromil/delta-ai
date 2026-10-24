@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 interface ContextMenuState {
   x: number
@@ -17,6 +17,8 @@ interface ContextMenuProps {
 
 function ContextMenu({ state, onClose }: ContextMenuProps): React.JSX.Element | null {
   const menuRef = useRef<HTMLDivElement>(null)
+  const itemRefs = useRef<Array<HTMLButtonElement | null>>([])
+  const previousFocusRef = useRef<HTMLElement | null>(null)
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null)
 
   useLayoutEffect(() => {
@@ -32,6 +34,28 @@ function ContextMenu({ state, onClose }: ContextMenuProps): React.JSX.Element | 
     })
   }, [state])
 
+  /* Focus the first enabled item, and give focus back when the menu closes. */
+  useEffect(() => {
+    if (!state) {
+      const previous = previousFocusRef.current
+      previousFocusRef.current = null
+      previous?.focus?.()
+      return
+    }
+    previousFocusRef.current = document.activeElement as HTMLElement | null
+    itemRefs.current.find((item) => item && !item.disabled)?.focus()
+  }, [state])
+
+  const moveFocus = useCallback((direction: 1 | -1) => {
+    const items = itemRefs.current.filter(
+      (item): item is HTMLButtonElement => item !== null && !item.disabled
+    )
+    if (items.length === 0) return
+    const current = items.indexOf(document.activeElement as HTMLButtonElement)
+    const next = current < 0 ? 0 : (current + direction + items.length) % items.length
+    items[next].focus()
+  }, [])
+
   useEffect(() => {
     if (!state) return
 
@@ -42,7 +66,16 @@ function ContextMenu({ state, onClose }: ContextMenuProps): React.JSX.Element | 
     }
 
     const handleKeyDown = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        onClose()
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        moveFocus(1)
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        moveFocus(-1)
+      }
     }
 
     document.addEventListener('mousedown', handleClick, true)
@@ -51,7 +84,7 @@ function ContextMenu({ state, onClose }: ContextMenuProps): React.JSX.Element | 
       document.removeEventListener('mousedown', handleClick, true)
       document.removeEventListener('keydown', handleKeyDown)
     }
-  }, [state, onClose])
+  }, [state, onClose, moveFocus])
 
   if (!state) return null
 
@@ -67,28 +100,58 @@ function ContextMenu({ state, onClose }: ContextMenuProps): React.JSX.Element | 
     <div
       ref={menuRef}
       id="ctxMenu"
+      role="menu"
+      aria-label="Text actions"
       className="visible"
       style={{ left: (position ?? state).x, top: (position ?? state).y }}
     >
-      <div
-        className={`item${state.canExpand ? '' : ' disabled'}`}
-        onClick={() => state.canExpand && handleItemClick('expand')}
+      <button
+        ref={(el) => {
+          itemRefs.current[0] = el
+        }}
+        type="button"
+        role="menuitem"
+        className="item"
+        disabled={!state.canExpand}
+        onClick={() => handleItemClick('expand')}
       >
         Expand
-      </div>
-      <div
-        className={`item${state.canExpand ? '' : ' disabled'}`}
-        onClick={() => state.canExpand && handleItemClick('expand-prompted')}
+      </button>
+      <button
+        ref={(el) => {
+          itemRefs.current[1] = el
+        }}
+        type="button"
+        role="menuitem"
+        className="item"
+        disabled={!state.canExpand}
+        onClick={() => handleItemClick('expand-prompted')}
       >
         Expand on…
-      </div>
-      <div className="sep" />
-      <div className="item" onClick={() => handleItemClick('copy')}>
+      </button>
+      <div className="sep" role="separator" />
+      <button
+        ref={(el) => {
+          itemRefs.current[2] = el
+        }}
+        type="button"
+        role="menuitem"
+        className="item"
+        onClick={() => handleItemClick('copy')}
+      >
         Copy
-      </div>
-      <div className="item" onClick={() => handleItemClick('select-all')}>
+      </button>
+      <button
+        ref={(el) => {
+          itemRefs.current[3] = el
+        }}
+        type="button"
+        role="menuitem"
+        className="item"
+        onClick={() => handleItemClick('select-all')}
+      >
         Select All
-      </div>
+      </button>
     </div>
   )
 }

@@ -1,13 +1,16 @@
+import { memo } from 'react'
 import type { Turn as TurnType } from '../../../../shared/conversation'
-import { InlineSegments } from './ExpansionFrame'
+import Markdown from './Markdown'
+import ExpansionFrame from './ExpansionFrame'
 
 interface TurnProps {
   turn: TurnType
   loading: boolean
   onFold: (id: number) => void
   onUnfold: (id: number) => void
-  onContextMenu: (e: React.MouseEvent, segmentIndex: number) => void
   onRetry?: (turnId: number) => void
+  onRetryExpansion?: (expansionId: number) => void
+  onDismissExpansion?: (expansionId: number) => void
 }
 
 function Turn({
@@ -15,8 +18,9 @@ function Turn({
   loading,
   onFold,
   onUnfold,
-  onContextMenu,
-  onRetry
+  onRetry,
+  onRetryExpansion,
+  onDismissExpansion
 }: TurnProps): React.JSX.Element {
   const isUser = turn.role === 'user'
 
@@ -60,16 +64,21 @@ function Turn({
         </div>
       ) : (
         <div className={`message-content${turn.error ? ' error' : ''}`}>
-          {turn.segments ? (
-            <InlineSegments
-              segments={turn.segments}
-              onFold={onFold}
-              onUnfold={onUnfold}
-              onContextMenu={onContextMenu}
-            />
-          ) : (
-            turn.content
-          )}
+          <Markdown
+            source={turn.content}
+            expansions={turn.expansions}
+            onFold={onFold}
+            onUnfold={onUnfold}
+            renderExpansion={(node) => (
+              <ExpansionFrame
+                node={node}
+                onFold={onFold}
+                onUnfold={onUnfold}
+                onRetry={onRetryExpansion}
+                onDismiss={onDismissExpansion}
+              />
+            )}
+          />
           {turn.error && onRetry && (
             <button className="message-retry" onClick={() => onRetry(turn.id)}>
               Retry
@@ -81,4 +90,4 @@ function Turn({
   )
 }
 
-export default Turn
+export default memo(Turn)

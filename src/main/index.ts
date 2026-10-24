@@ -163,7 +163,8 @@ if (!hasSingleInstanceLock) {
           transferred.turns.unshift({
             id: Date.now(),
             role: 'user',
-            content: buildScreenContextMessage(transferred.context)
+            content: buildScreenContextMessage(transferred.context),
+            expansions: []
           })
           transferred.context = ''
         }
@@ -202,7 +203,8 @@ if (!hasSingleInstanceLock) {
 
     /* Conversation persistence */
     ipcMain.handle('conversation-save', async (_event, record) => {
-      await saveConversation(record)
+      // Renderer autosaves must not clobber the KB-fed flag owned by main.
+      await saveConversation(record, { preserveKbFed: true })
     })
     ipcMain.handle('conversation-load', async (_event, id: string) => {
       return await loadConversation(id)
