@@ -147,10 +147,10 @@ hook seeds its conversation metadata from that `createdAt` so later saves update
 - `kb-analyze` runs the same pipeline over all unfed conversations; `kb-reanalyze(n)` reprocesses
   the `n` most recent without marking them fed.
 - `kb-save-prompt` stores a user-edited prompt, which the next automatic pass treats as its
-  baseline. `kb-reset` runs inside the maintenance queue, aborts an in-flight pass, deletes
-  `prompt.txt`, `keywords.json` and `state.json`, and clears `kbFed` on chat records via
-  `resetKbFedFlags()` (lookup records are untouched), so the retained history can be learned
-  again.
+  baseline. `kb-reset` runs inside the maintenance queue, aborts an in-flight pass (and
+  invalidates one still selecting its batch), deletes `prompt.txt`, `keywords.json` and
+  `state.json`, and clears `kbFed` on chat records via `resetKbFedFlags()` (lookup records are
+  untouched), so the retained history can be learned again.
 - The resulting prompt is injected into every lookup request; keywords are stored for future use.
 
 ---
