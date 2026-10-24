@@ -1,26 +1,4 @@
-:root {
-  --bg: #20212a;
-  --surface-1: #25262e;
-  --surface-2: #2c2d36;
-  --surface-3: #34354a;
-  --border: rgba(255, 255, 255, 0.07);
-  --border-strong: rgba(255, 255, 255, 0.12);
-  --text-1: rgba(238, 238, 245, 0.92);
-  --text-2: rgba(228, 230, 240, 0.62);
-  --text-3: rgba(228, 230, 240, 0.4);
-  --text-muted: rgba(228, 230, 240, 0.45);
-  --accent: #8aa0b8;
-  --accent-strong: #7a91a8;
-  --accent-soft: rgba(138, 160, 184, 0.18);
-  --accent-ring: rgba(138, 160, 184, 0.28);
-  --success: #7fb08a;
-  --error: #cf7b6e;
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
-  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.18);
-  --shadow-2: 0 6px 22px rgba(0, 0, 0, 0.22);
-}
+/* Tokens live in base.css, which main.tsx loads before this file. */
 
 * {
   box-sizing: border-box;
@@ -116,14 +94,17 @@ body {
   justify-content: center;
   width: 22px;
   height: 22px;
+  padding: 0;
+  border: none;
   border-radius: 50%;
   background: transparent;
   color: var(--text-3);
-  font-size: 14px;
+  font-family: inherit;
+  font-size: 12px;
   line-height: 1;
   transition:
-    background 150ms ease,
-    color 150ms ease;
+    background var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
 }
 
 .lookup-close:hover {
@@ -210,7 +191,7 @@ body {
 
 .ask:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-ring);
+  box-shadow: var(--focus-ring-inset);
 }
 .ask::placeholder {
   color: var(--text-3);
@@ -257,6 +238,10 @@ body {
   border-radius: var(--radius-sm);
   align-self: flex-end;
   max-width: 92%;
+}
+
+.lookup .message-user .message-body {
+  align-items: flex-end;
 }
 
 /* ---- Scrollbar ---- */

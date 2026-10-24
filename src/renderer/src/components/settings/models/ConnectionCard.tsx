@@ -53,34 +53,20 @@ function ConnectionCard({
 
   return (
     <div className="settings-card">
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: '10px'
-        }}
-      >
+      <div className="settings-card-header">
         <input
           type="text"
-          className="settings-input"
-          style={{ width: '60%', fontWeight: 600 }}
+          className="settings-input settings-input--title"
           value={connection.label}
           onChange={(e) => updateConnection({ label: e.target.value })}
           placeholder="Connection name"
         />
-        <div style={{ display: 'flex', gap: '6px' }}>
-          <button
-            className="settings-header-save"
-            style={{ padding: '4px 12px' }}
-            onClick={handleTest}
-            disabled={testing}
-          >
+        <div className="settings-card-actions">
+          <button className="btn btn--sm" onClick={handleTest} disabled={testing}>
             {testing ? 'Testing…' : 'Test'}
           </button>
           <button
-            className="settings-header-save"
-            style={{ background: '#e74c3c22', color: '#e74c3c', padding: '4px 12px' }}
+            className="btn btn--sm btn--danger"
             onClick={() => {
               const message =
                 `Delete the “${connection.label || def.label}” connection? ` +
@@ -96,21 +82,17 @@ function ConnectionCard({
       {testOutcome && (
         <p
           role="status"
-          style={{
-            margin: '0 0 10px',
-            fontSize: '12px',
-            color: testOutcome.ok ? '#2ecc71' : '#e74c3c'
-          }}
+          className={`settings-test-result${
+            testOutcome.ok ? ' settings-test-result--ok' : ' settings-test-result--err'
+          }`}
         >
           {testOutcome.ok ? '✓' : '✗'} {testOutcome.detail}
         </p>
       )}
 
       {/* Provider type */}
-      <div style={{ marginBottom: '8px' }}>
-        <label className="settings-label" style={{ marginBottom: '4px', fontSize: '13px' }}>
-          Provider
-        </label>
+      <div className="settings-field">
+        <label className="settings-label settings-label--sm">Provider</label>
         <select
           className="settings-select"
           value={connection.providerType}
@@ -126,10 +108,8 @@ function ConnectionCard({
 
       {/* Auth-specific fields */}
       {def.authShape === 'apiKey' && (
-        <div style={{ marginBottom: '8px' }}>
-          <label className="settings-label" style={{ marginBottom: '4px', fontSize: '13px' }}>
-            API Key
-          </label>
+        <div className="settings-field">
+          <label className="settings-label settings-label--sm">API Key</label>
           <input
             type="password"
             className="settings-input"
@@ -141,10 +121,8 @@ function ConnectionCard({
       )}
 
       {def.authShape === 'host' && (
-        <div style={{ marginBottom: '8px' }}>
-          <label className="settings-label" style={{ marginBottom: '4px', fontSize: '13px' }}>
-            Host
-          </label>
+        <div className="settings-field">
+          <label className="settings-label settings-label--sm">Host</label>
           <input
             type="text"
             className="settings-input"
@@ -158,10 +136,8 @@ function ConnectionCard({
 
       {/* Base URL (host-based providers like Ollama use the host field) */}
       {connection.providerType !== 'ollama' && (
-        <div style={{ marginBottom: '8px' }}>
-          <label className="settings-label" style={{ marginBottom: '4px', fontSize: '13px' }}>
-            Base URL
-          </label>
+        <div className="settings-field">
+          <label className="settings-label settings-label--sm">Base URL</label>
           <input
             type="text"
             className="settings-input"

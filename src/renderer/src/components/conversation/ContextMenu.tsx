@@ -15,6 +15,12 @@ interface ContextMenuProps {
   onClose: () => void
 }
 
+/** Items reachable by arrow keys: enabled menu buttons, in DOM order. */
+function menuItems(menu: HTMLElement | null): HTMLButtonElement[] {
+  if (!menu) return []
+  return Array.from(menu.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'))
+}
+
 function ContextMenu({ state, onClose }: ContextMenuProps): React.JSX.Element | null {
   const menuRef = useRef<HTMLDivElement>(null)
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null)
@@ -35,6 +41,9 @@ function ContextMenu({ state, onClose }: ContextMenuProps): React.JSX.Element | 
   useEffect(() => {
     if (!state) return
 
+    // Focus the first action so the menu is usable from the keyboard.
+    menuItems(menuRef.current)[0]?.focus()
+
     const handleClick = (e: MouseEvent): void => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         onClose()
@@ -42,7 +51,32 @@ function ContextMenu({ state, onClose }: ContextMenuProps): React.JSX.Element | 
     }
 
     const handleKeyDown = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        onClose()
+        return
+      }
+      if (e.key === 'Tab') {
+        onClose()
+        return
+      }
+      const items = menuItems(menuRef.current)
+      if (items.length === 0) return
+      const current = items.indexOf(document.activeElement as HTMLButtonElement)
+
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        items[current < 0 ? 0 : (current + 1) % items.length].focus()
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        items[current <= 0 ? items.length - 1 : current - 1].focus()
+      } else if (e.key === 'Home') {
+        e.preventDefault()
+        items[0].focus()
+      } else if (e.key === 'End') {
+        e.preventDefault()
+        items[items.length - 1].focus()
+      }
     }
 
     document.addEventListener('mousedown', handleClick, true)
@@ -68,27 +102,45 @@ function ContextMenu({ state, onClose }: ContextMenuProps): React.JSX.Element | 
       ref={menuRef}
       id="ctxMenu"
       className="visible"
+      role="menu"
+      aria-label="Text actions"
       style={{ left: (position ?? state).x, top: (position ?? state).y }}
     >
-      <div
-        className={`item${state.canExpand ? '' : ' disabled'}`}
-        onClick={() => state.canExpand && handleItemClick('expand')}
+      <button
+        type="button"
+        role="menuitem"
+        className="item"
+        disabled={!state.canExpand}
+        onClick={() => handleItemClick('expand')}
       >
         Expand
-      </div>
-      <div
-        className={`item${state.canExpand ? '' : ' disabled'}`}
-        onClick={() => state.canExpand && handleItemClick('expand-prompted')}
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        className="item"
+        disabled={!state.canExpand}
+        onClick={() => handleItemClick('expand-prompted')}
       >
         Expand on…
-      </div>
-      <div className="sep" />
-      <div className="item" onClick={() => handleItemClick('copy')}>
+      </button>
+      <div className="sep" role="separator" />
+      <button
+        type="button"
+        role="menuitem"
+        className="item"
+        onClick={() => handleItemClick('copy')}
+      >
         Copy
-      </div>
-      <div className="item" onClick={() => handleItemClick('select-all')}>
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        className="item"
+        onClick={() => handleItemClick('select-all')}
+      >
         Select All
-      </div>
+      </button>
     </div>
   )
 }

@@ -185,6 +185,12 @@ write the inactive shortcut; a key that only works in-app is saved with `hotkeyM
 Startup registration is wrapped the same way — an invalid stored hotkey logs, falls back to
 `DEFAULT_HOTKEY`, and never blocks window creation.
 
+The Settings view has **no Save button**. It autosaves both files (`save-model-config` +
+`save-settings`) after a 500 ms idle debounce, keeps a JSON snapshot of what is on disk so a
+re-render is not mistaken for an edit, seeds that baseline after the initial load (loading must
+never write back), flushes on unmount so leaving the view mid-typing cannot drop an edit, and
+surfaces a failed save inline (`role="alert"`) instead of a native `alert()`.
+
 ---
 
 ## 4. On-disk format
@@ -294,7 +300,39 @@ release workflow packages Linux/macOS/Windows artifacts when a GitHub release is
 
 ---
 
-## 7. Invariants
+## 7. Renderer styling
+
+All styling is plain CSS in `src/renderer/src/assets/`; no CSS-in-JS, no Tailwind. `base.css` is
+the only place tokens are defined and `main.tsx` imports it first — `lookup.css` shares those
+tokens and must not redefine them (it used to, which is how the popup drifted).
+
+- **Tokens** (`:root` in `base.css`): surfaces (`--bg`, `--surface-1..3`), text tiers (`--text-1`,
+  `--text-2`, `--text-3`; `--text-muted` aliases the third), accent (`--accent`, `--accent-soft`,
+  `--accent-ring`, `--accent-contrast` for text on an accent fill), semantic (`--success`,
+  `--error`/`--danger`, `--danger-soft`), shape (`--radius-sm|md|lg|pill`), elevation
+  (`--shadow-1..3`), focus (`--focus-ring`, `--focus-ring-inset`), motion (`--dur-1`, `--dur-2`,
+  `--ease-out`), layers (`--z-menu`, `--z-overlay`), type (`--font-sans`, `--font-display`,
+  `--font-mono`) and `--content-width`. Use a token; never hardcode a hex colour or px radius in a
+  surface stylesheet.
+- **Controls**: `.btn` with `--primary` / `--danger` / `--sm` modifiers, and `.field` for text
+  inputs and selects. A view must not invent its own button style.
+- **Focus**: buttons and clickable elements get the shared `:focus-visible` outline from
+  `base.css`. Form controls are excluded there and instead switch `border-color` plus
+  `--focus-ring-inset` on `:focus`, so a field never shows two rings.
+- **Text selection**: `body` allows selection; chrome (sidebar, toolbar, buttons, labels, hints)
+  opts out with `user-select: none`.
+- **Scrollbars**: one global `*::-webkit-scrollbar` rule guarantees no native OS scrollbar; a
+  surface may refine width or colour on top of it.
+- **Motion**: every animation and transition collapses under `prefers-reduced-motion: reduce`.
+- **Fonts**: system stacks only. The renderer CSP (`style-src 'self'`) blocks remote stylesheets,
+  so a webfont `@import` silently never applies — the display serif is `--font-display`.
+- **Narrow windows**: the sidebar collapses to a 64px icon rail at ≤860px (labels hidden, `title`
+  attributes carry the names); at ≤720px the chat drops its toolbar title, key hints and message
+  measure so the composer keeps its width.
+
+---
+
+## 8. Invariants
 
 These are load-bearing; breaking one causes a bug that is hard to trace:
 
@@ -318,7 +356,7 @@ These are load-bearing; breaking one causes a bug that is hard to trace:
 
 ---
 
-## 8. Known gaps
+## 9. Known gaps
 
 - No tests for the renderer, the IPC handlers, or the OCR pipeline; the acceptance gate is
   typecheck + lint + unit tests + format.

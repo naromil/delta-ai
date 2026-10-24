@@ -208,7 +208,8 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   `{ success: false, error }` and does not write the inactive shortcut. A key that only works
   via the in-app fallback is still saved; success returns `{ success, hotkeyMode }`
   (`'global'` = system-wide, `'local'` = in-app fallback), and a failed write returns
-  `{ success: false, error }`.
+  `{ success: false, error }`. The Settings view has no Save button: it autosaves both files on a
+  500 ms debounce (baseline seeded after load, flushed on unmount) and shows a failed save inline.
 - **`providers.json` is never trusted as-is.** `loadModelConfig` runs it through
   `migrateModelConfig` (zod + migrations + repairs) and writes the repaired file back;
   `saveModelConfig` validates before writing and returns `{ ok, error }`. An empty
@@ -360,6 +361,7 @@ callees in a **logical and sequential** order.
 - File extension `.tsx`. Components are function components returning `React.JSX.Element`
   (see `App.tsx`). No prop types file — inline `type` aliases.
 - Styling is plain CSS in `assets/`, using the `:root` CSS variables documented in
-  `docs/architecture.md`. Do not introduce CSS-in-JS or Tailwind without discussion.
+  `docs/architecture.md` (section 7). Do not introduce CSS-in-JS or Tailwind without discussion.
+  Reuse `.btn` and `.field` from `base.css` rather than hand-rolling a button or input style.
 - Keep the renderer thin: it talks only to `window.api`. Privileged work belongs in the
   main process.

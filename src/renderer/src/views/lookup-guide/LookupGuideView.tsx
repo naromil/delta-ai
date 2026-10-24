@@ -90,12 +90,19 @@ function LookupGuideView(): React.JSX.Element {
     <div className="view-shell">
       <div className="view-shell-header">
         <h1>Look-Up Guide</h1>
+        <p className="view-shell-subtitle">
+          Press the hotkey anywhere to capture what is on screen and ask about it, without leaving
+          what you are doing.
+        </p>
       </div>
       <div className="view-shell-content">
         <div className="lookup-guide-sections">
-          {GUIDE_SECTIONS.map((section) => (
+          {GUIDE_SECTIONS.map((section, index) => (
             <div key={section.title} className="lookup-guide-section">
-              <h2 className="lookup-guide-section-title">{section.title}</h2>
+              <h2 className="lookup-guide-section-title">
+                <span className="lookup-guide-step">{index + 1}</span>
+                {section.title}
+              </h2>
               <ul className="lookup-guide-section-list">
                 {section.description.map((item, i) => (
                   <li key={i}>{item}</li>

@@ -232,14 +232,14 @@ function KnowledgeView(): React.JSX.Element {
           <span className="kb-status-text">{describeStatus(status)}</span>
           <div className="kb-buttons">
             <button
-              className="settings-header-save"
+              className="btn btn--primary"
               disabled={busy || autoRunning || pendingCount === 0}
               onClick={handleAnalyze}
             >
               {loadingAnalyze ? 'Analyzing...' : 'Analyze now'}
             </button>
             <button
-              className="settings-header-save"
+              className="btn"
               disabled={busy || autoRunning || totalCount === 0}
               onClick={startReanalyze}
             >
@@ -269,11 +269,11 @@ function KnowledgeView(): React.JSX.Element {
               }}
             />
             <span> conversation(s).</span>
-            <button className="settings-header-save" onClick={confirmReanalyze}>
+            <button className="btn btn--primary btn--sm" onClick={confirmReanalyze}>
               Go
             </button>
             <button
-              className="settings-header-save"
+              className="btn btn--sm"
               onClick={() => {
                 setShowReanalyzeInput(false)
                 setReanalyzeCount('')
@@ -302,17 +302,13 @@ function KnowledgeView(): React.JSX.Element {
             </div>
             <div className="kb-buttons">
               <button
-                className="settings-header-save"
+                className="btn btn--primary"
                 disabled={busy || !promptDirty}
                 onClick={handleSavePrompt}
               >
                 {loadingSave ? 'Saving...' : 'Save prompt'}
               </button>
-              <button
-                className="settings-header-save kb-danger"
-                disabled={busy}
-                onClick={handleReset}
-              >
+              <button className="btn btn--danger" disabled={busy} onClick={handleReset}>
                 {loadingReset ? 'Resetting...' : 'Reset'}
               </button>
             </div>

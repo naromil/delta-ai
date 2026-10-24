@@ -21,8 +21,34 @@ function catalogErrorState(err: unknown): ModelCatalogState {
 
 /* ---- Component ---- */
 
+type SettingsTab = 'general' | 'models' | 'about'
+type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
+
+const SETTINGS_TABS: Array<{ id: SettingsTab; label: string }> = [
+  { id: 'general', label: 'General' },
+  { id: 'models', label: 'Models' },
+  { id: 'about', label: 'About' }
+]
+
+const SAVE_STATUS_TEXT: Record<SaveStatus, string> = {
+  idle: '',
+  saving: 'Saving…',
+  saved: 'Saved',
+  error: 'Not saved'
+}
+
+/* Settings (the small file) serialized once, so autosave can tell a real edit from a re-render. */
+function settingsSnapshot(
+  hotkey: string,
+  closeToTray: boolean,
+  lookupContextMode: LookupContextMode,
+  kbAutoMaintain: boolean
+): string {
+  return JSON.stringify({ hotkey, closeToTray, lookupContextMode, kbAutoMaintain })
+}
+
 function Settings(): React.JSX.Element {
-  const [activeTab, setActiveTab] = useState<'general' | 'models' | 'about'>('general')
+  const [activeTab, setActiveTab] = useState<SettingsTab>('general')
   const [modelConfig, setModelConfig] = useState<ModelConfig>(createDefaultModelConfig)
   const [catalog, setCatalog] = useState<ModelCatalogState>({
     catalog: null,
@@ -34,11 +60,19 @@ function Settings(): React.JSX.Element {
   const [closeToTray, setCloseToTray] = useState(true)
   const [lookupContextMode, setLookupContextMode] = useState<LookupContextMode>('clipboard')
   const [kbAutoMaintain, setKbAutoMaintain] = useState(true)
-  const [settingsLoaded, setSettingsLoaded] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [saved, setSaved] = useState(false)
-  const hotkeyRef = useRef(hotkey)
-  const lookupContextModeRef = useRef(lookupContextMode)
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [hydrated, setHydrated] = useState(false)
+  const savedConfigRef = useRef<string | null>(null)
+  const savedSettingsRef = useRef<string | null>(null)
+  const latestRef = useRef({
+    modelConfig,
+    hotkey,
+    closeToTray,
+    lookupContextMode,
+    kbAutoMaintain
+  })
+  const hydratedRef = useRef(false)
 
   const refreshCatalog = useCallback((): void => {
     setCatalogLoading(true)
@@ -49,50 +83,61 @@ function Settings(): React.JSX.Element {
       .finally(() => setCatalogLoading(false))
   }, [])
 
-  /* Load existing config on mount */
+  /* Load existing config, then hand control to autosave. */
   useEffect(() => {
-    window.api.loadModelConfig().then((cfg) => {
-      if (cfg && typeof cfg === 'object') {
-        setModelConfig(cfg as ModelConfig)
-      }
-    })
+    let cancelled = false
+
+    void (async () => {
+      const [cfg, raw] = await Promise.all([
+        window.api.loadModelConfig(),
+        window.api.loadSettings()
+      ])
+      if (cancelled) return
+
+      const settings = raw as {
+        hotkey?: string
+        closeToTray?: boolean
+        lookupContextMode?: string
+        kbAutoMaintain?: boolean
+      } | null
+      const config = (
+        cfg && typeof cfg === 'object' ? cfg : createDefaultModelConfig()
+      ) as ModelConfig
+      const nextHotkey = settings?.hotkey || 'Ctrl+Shift+D'
+      const nextTray = settings?.closeToTray ?? true
+      const nextMode: LookupContextMode =
+        settings?.lookupContextMode === 'fullscreen-ocr' ? 'fullscreen-ocr' : 'clipboard'
+      const nextKbAutoMaintain = settings?.kbAutoMaintain ?? true
+
+      // Seed both baselines before flipping `hydrated`, so loading never writes back.
+      savedConfigRef.current = JSON.stringify(config)
+      savedSettingsRef.current = settingsSnapshot(
+        nextHotkey,
+        nextTray,
+        nextMode,
+        nextKbAutoMaintain
+      )
+      setModelConfig(config)
+      setHotkey(nextHotkey)
+      setCloseToTray(nextTray)
+      setLookupContextMode(nextMode)
+      setKbAutoMaintain(nextKbAutoMaintain)
+      hydratedRef.current = true
+      setHydrated(true)
+    })()
 
     window.api
       .loadModelCatalog(false)
       .then(setCatalog)
       .catch((err: unknown) => setCatalog(catalogErrorState(err)))
 
-    window.api.getHotkeyStatus().then((status) => setHotkeyMode(status.mode))
+    window.api.getHotkeyStatus().then((status) => {
+      if (!cancelled) setHotkeyMode(status.mode)
+    })
 
-    window.api
-      .loadSettings()
-      .then((s) => {
-        const settings = s as {
-          hotkey?: string
-          closeToTray?: boolean
-          lookupContextMode?: string
-          kbAutoMaintain?: boolean
-        } | null
-        if (settings?.hotkey) {
-          setHotkey(settings.hotkey)
-          hotkeyRef.current = settings.hotkey
-        }
-        if (settings?.closeToTray !== undefined) {
-          setCloseToTray(settings.closeToTray)
-        }
-        if (
-          settings?.lookupContextMode === 'clipboard' ||
-          settings?.lookupContextMode === 'fullscreen-ocr'
-        ) {
-          setLookupContextMode(settings.lookupContextMode)
-          lookupContextModeRef.current = settings.lookupContextMode
-        }
-        if (settings?.kbAutoMaintain !== undefined) {
-          setKbAutoMaintain(settings.kbAutoMaintain)
-        }
-        setSettingsLoaded(true)
-      })
-      .catch(() => setSettingsLoaded(true))
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   /* ---- Mutation helpers ---- */
@@ -136,85 +181,172 @@ function Settings(): React.JSX.Element {
     })
   }
 
-  /* ---- Save ---- */
+  /* ---- Autosave ----
+   * Both files are written from here, each only when its own half changed, so a look-up
+   * preference never rewrites providers.json and vice versa. */
 
-  const handleSave = async (): Promise<void> => {
-    setSaving(true)
-    try {
-      const cfgRes = await window.api.saveModelConfig(modelConfig)
-      const settingsRes = await window.api.saveSettings({
-        hotkey: hotkeyRef.current,
-        closeToTray,
-        lookupContextMode: lookupContextModeRef.current,
-        kbAutoMaintain
-      })
-      if (cfgRes.success && settingsRes.success) {
-        setSaved(true)
-        setTimeout(() => setSaved(false), 2000)
-        setHotkeyMode(settingsRes.hotkeyMode)
-      } else {
-        alert(cfgRes.error ?? settingsRes.error ?? 'Failed to save configuration.')
+  const persist = useCallback(
+    async (
+      config: ModelConfig,
+      nextHotkey: string,
+      nextTray: boolean,
+      nextMode: LookupContextMode,
+      nextKbAutoMaintain: boolean
+    ): Promise<void> => {
+      setSaveStatus('saving')
+      setSaveError(null)
+      try {
+        const configJson = JSON.stringify(config)
+        if (configJson !== savedConfigRef.current) {
+          const cfgRes = await window.api.saveModelConfig(config)
+          if (!cfgRes.success) {
+            setSaveStatus('error')
+            setSaveError(cfgRes.error ?? 'Could not save the model configuration.')
+            return
+          }
+          savedConfigRef.current = configJson
+        }
+
+        const settingsJson = settingsSnapshot(nextHotkey, nextTray, nextMode, nextKbAutoMaintain)
+        if (settingsJson !== savedSettingsRef.current) {
+          const settingsRes = await window.api.saveSettings({
+            hotkey: nextHotkey,
+            closeToTray: nextTray,
+            lookupContextMode: nextMode,
+            kbAutoMaintain: nextKbAutoMaintain
+          })
+          if (!settingsRes.success) {
+            setSaveStatus('error')
+            setSaveError(settingsRes.error ?? 'Could not save settings.')
+            return
+          }
+          savedSettingsRef.current = settingsJson
+          setHotkeyMode(settingsRes.hotkeyMode)
+        }
+
+        setSaveStatus('saved')
+      } catch (err) {
+        setSaveStatus('error')
+        setSaveError(err instanceof Error ? err.message : 'Could not save settings.')
       }
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'Failed to save configuration.')
-    } finally {
-      setSaving(false)
+    },
+    []
+  )
+
+  const isDirty = useCallback(
+    (
+      config: ModelConfig,
+      nextHotkey: string,
+      nextTray: boolean,
+      nextMode: LookupContextMode,
+      nextKbAutoMaintain: boolean
+    ): boolean =>
+      JSON.stringify(config) !== savedConfigRef.current ||
+      settingsSnapshot(nextHotkey, nextTray, nextMode, nextKbAutoMaintain) !==
+        savedSettingsRef.current,
+    []
+  )
+
+  useEffect(() => {
+    latestRef.current = { modelConfig, hotkey, closeToTray, lookupContextMode, kbAutoMaintain }
+  }, [modelConfig, hotkey, closeToTray, lookupContextMode, kbAutoMaintain])
+
+  /* Debounced: typing an API key or a base URL must not hit the disk per keystroke. */
+  useEffect(() => {
+    if (!hydrated) return
+    if (!isDirty(modelConfig, hotkey, closeToTray, lookupContextMode, kbAutoMaintain)) return
+    const timer = window.setTimeout(() => {
+      void persist(modelConfig, hotkey, closeToTray, lookupContextMode, kbAutoMaintain)
+    }, 500)
+    return () => window.clearTimeout(timer)
+  }, [
+    hydrated,
+    modelConfig,
+    hotkey,
+    closeToTray,
+    lookupContextMode,
+    kbAutoMaintain,
+    isDirty,
+    persist
+  ])
+
+  /* Flush a pending edit if the view unmounts before the debounce fires. */
+  useEffect(() => {
+    return () => {
+      if (!hydratedRef.current) return
+      const latest = latestRef.current
+      if (
+        !isDirty(
+          latest.modelConfig,
+          latest.hotkey,
+          latest.closeToTray,
+          latest.lookupContextMode,
+          latest.kbAutoMaintain
+        )
+      ) {
+        return
+      }
+      void persist(
+        latest.modelConfig,
+        latest.hotkey,
+        latest.closeToTray,
+        latest.lookupContextMode,
+        latest.kbAutoMaintain
+      )
     }
-  }
+  }, [isDirty, persist])
 
   /* ---- Main render ---- */
   return (
     <div className="settings">
       <div className="settings-header">
-        <h2 className="settings-title">Settings</h2>
-        <button
-          className="settings-header-save"
-          onClick={handleSave}
-          disabled={saving || !settingsLoaded}
+        <div>
+          <h2 className="settings-title">Settings</h2>
+          <p className="settings-subtitle">
+            Connections, model roles and look-up behaviour — changes save automatically.
+          </p>
+        </div>
+        <span
+          className={`settings-save-status settings-save-status--${saveStatus}`}
+          role="status"
+          aria-live="polite"
         >
-          {saving ? 'Saving…' : saved ? '✓ Saved' : 'Save'}
-        </button>
+          {SAVE_STATUS_TEXT[saveStatus]}
+        </span>
       </div>
 
+      {saveError && (
+        <p className="settings-error" role="alert">
+          {saveError}
+        </p>
+      )}
+
       {/* ---- Tabs ---- */}
-      <div className="settings-categories">
-        <button
-          className={`settings-category-tab ${activeTab === 'general' ? 'active' : ''}`}
-          onClick={() => setActiveTab('general')}
-        >
-          General
-        </button>
-        <button
-          className={`settings-category-tab ${activeTab === 'models' ? 'active' : ''}`}
-          onClick={() => setActiveTab('models')}
-        >
-          Models
-        </button>
-        <button
-          className={`settings-category-tab ${activeTab === 'about' ? 'active' : ''}`}
-          onClick={() => setActiveTab('about')}
-        >
-          About
-        </button>
+      <div className="settings-categories" role="tablist" aria-label="Settings sections">
+        {SETTINGS_TABS.map((tab) => (
+          <button
+            key={tab.id}
+            role="tab"
+            aria-selected={activeTab === tab.id}
+            className={`settings-category-tab ${activeTab === tab.id ? 'active' : ''}`}
+            onClick={() => setActiveTab(tab.id)}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
       {/* ---- Tab content ---- */}
-      <div className="settings-content">
+      <div className="settings-content" role="tabpanel" id={`settings-panel-${activeTab}`}>
         {activeTab === 'general' && (
           <GeneralTab
             hotkey={hotkey}
-            onHotkeyChange={(combo) => {
-              setHotkey(combo)
-              hotkeyRef.current = combo
-            }}
+            onHotkeyChange={setHotkey}
             hotkeyMode={hotkeyMode}
             closeToTray={closeToTray}
             onCloseToTrayChange={setCloseToTray}
             lookupContextMode={lookupContextMode}
-            onLookupContextModeChange={(mode) => {
-              setLookupContextMode(mode)
-              lookupContextModeRef.current = mode
-            }}
+            onLookupContextModeChange={setLookupContextMode}
             kbAutoMaintain={kbAutoMaintain}
             onKbAutoMaintainChange={setKbAutoMaintain}
           />
@@ -233,8 +365,8 @@ function Settings(): React.JSX.Element {
         )}
         {activeTab === 'about' && (
           <div className="settings-section">
-            <h3 style={{ margin: '0 0 8px', fontSize: '16px' }}>Delta AI</h3>
-            <p style={{ color: 'var(--text-2)', fontSize: '14px', lineHeight: 1.6 }}>
+            <h3 className="settings-section-title">Delta AI</h3>
+            <p className="settings-about-text">
               An AI-powered desktop assistant that captures your screen, runs OCR, and provides
               context-aware answers via the model of your choice.
             </p>

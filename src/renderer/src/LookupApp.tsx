@@ -249,6 +249,7 @@ function LookupApp(): React.JSX.Element {
             disabled={isTransferDisabled}
             onClick={handleTransfer}
             title="Send to chat"
+            aria-label="Send conversation to chat"
           >
             <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
               <path
@@ -259,15 +260,23 @@ function LookupApp(): React.JSX.Element {
               />
             </svg>
           </button>
-          <span className="lookup-close" onClick={() => window.api.lookupClose()}>
+          <button
+            type="button"
+            className="lookup-close"
+            aria-label="Close look-up"
+            title="Close (Esc)"
+            onClick={() => window.api.lookupClose()}
+          >
             ✕
-          </span>
+          </button>
         </div>
       </div>
       <div className="lookup-content">
         <div className="section-label">Context</div>
         <div
           id="extracted"
+          role="status"
+          aria-live="polite"
           className={`extracted${contextHint ? ' hint' : ''}${flash ? ' flash' : ''}`}
         >
           {contextText}
@@ -279,6 +288,7 @@ function LookupApp(): React.JSX.Element {
             className="ask"
             type="text"
             placeholder="Ask Delta AI..."
+            aria-label="Ask Delta AI"
             autoComplete="off"
             value={input}
             onChange={(e) => setInput(e.target.value)}
