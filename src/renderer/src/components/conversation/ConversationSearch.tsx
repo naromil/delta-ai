@@ -126,6 +126,9 @@ function ConversationSearch({
     <div className="conversation-search-overlay" onClick={onClose}>
       <div
         className="conversation-search-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Search conversations"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={handleKeyDown}
       >
@@ -209,6 +212,23 @@ function ConversationSearch({
                 </span>
               </div>
             ))
+          )}
+        </div>
+        <div className="conversation-search-footer">
+          <span>
+            <kbd className="kbd">↑</kbd>
+            <kbd className="kbd">↓</kbd> navigate
+          </span>
+          <span>
+            <kbd className="kbd">Enter</kbd> open
+          </span>
+          <span>
+            <kbd className="kbd">Esc</kbd> close
+          </span>
+          {!loading && (
+            <span className="conversation-search-count">
+              {conversations.length} {conversations.length === 1 ? 'result' : 'results'}
+            </span>
           )}
         </div>
       </div>

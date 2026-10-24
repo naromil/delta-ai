@@ -84,15 +84,9 @@ function ModelsTab({
     <>
       {/* ---- Catalog status ---- */}
       <div className="settings-section">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <p style={{ margin: 0, flex: 1, fontSize: '12px', color: 'var(--text-muted)' }}>
-            {describeCatalogStatus(catalog)}
-          </p>
-          <button
-            className="settings-header-save"
-            onClick={onRefreshCatalog}
-            disabled={catalogLoading}
-          >
+        <div className="settings-inline">
+          <p className="settings-inline-hint">{describeCatalogStatus(catalog)}</p>
+          <button className="btn btn--sm" onClick={onRefreshCatalog} disabled={catalogLoading}>
             {catalogLoading ? 'Refreshing…' : 'Refresh models'}
           </button>
         </div>
@@ -128,9 +122,7 @@ function ModelsTab({
         <h3 className="settings-section-title">Connections</h3>
 
         {Object.values(modelConfig.connections).length === 0 && (
-          <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>
-            No connections yet. Add one below.
-          </p>
+          <p className="settings-empty-note">No connections yet. Add one below.</p>
         )}
 
         {Object.values(modelConfig.connections).map((conn) => (
@@ -144,10 +136,9 @@ function ModelsTab({
         ))}
 
         {/* Add connection */}
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '12px' }}>
+        <div className="settings-add-row">
           <select
-            className="settings-select"
-            style={{ width: 'auto', flex: 1 }}
+            className="settings-select settings-select--grow"
             value={addProviderType}
             onChange={(e) => setAddProviderType(e.target.value as ProviderType)}
           >
@@ -157,7 +148,7 @@ function ModelsTab({
               </option>
             ))}
           </select>
-          <button className="settings-header-save" onClick={handleAdd}>
+          <button className="btn btn--primary" onClick={handleAdd}>
             Add Connection
           </button>
         </div>

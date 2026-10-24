@@ -21,8 +21,16 @@ function catalogErrorState(err: unknown): ModelCatalogState {
 
 /* ---- Component ---- */
 
+type SettingsTab = 'general' | 'models' | 'about'
+
+const SETTINGS_TABS: Array<{ id: SettingsTab; label: string }> = [
+  { id: 'general', label: 'General' },
+  { id: 'models', label: 'Models' },
+  { id: 'about', label: 'About' }
+]
+
 function Settings(): React.JSX.Element {
-  const [activeTab, setActiveTab] = useState<'general' | 'models' | 'about'>('general')
+  const [activeTab, setActiveTab] = useState<SettingsTab>('general')
   const [modelConfig, setModelConfig] = useState<ModelConfig>(createDefaultModelConfig)
   const [catalog, setCatalog] = useState<ModelCatalogState>({
     catalog: null,
@@ -35,6 +43,7 @@ function Settings(): React.JSX.Element {
   const [lookupContextMode, setLookupContextMode] = useState<LookupContextMode>('clipboard')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const hotkeyRef = useRef(hotkey)
   const lookupContextModeRef = useRef(lookupContextMode)
 
@@ -130,6 +139,7 @@ function Settings(): React.JSX.Element {
 
   const handleSave = async (): Promise<void> => {
     setSaving(true)
+    setSaveError(null)
     try {
       const cfgRes = await window.api.saveModelConfig(modelConfig)
       const settingsRes = await window.api.saveSettings({
@@ -142,10 +152,10 @@ function Settings(): React.JSX.Element {
         setTimeout(() => setSaved(false), 2000)
         setHotkeyMode(settingsRes.hotkeyMode)
       } else {
-        alert(cfgRes.error ?? settingsRes.error ?? 'Failed to save configuration.')
+        setSaveError(cfgRes.error ?? settingsRes.error ?? 'Failed to save configuration.')
       }
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Failed to save configuration.')
+      setSaveError(err instanceof Error ? err.message : 'Failed to save configuration.')
     } finally {
       setSaving(false)
     }
@@ -155,36 +165,38 @@ function Settings(): React.JSX.Element {
   return (
     <div className="settings">
       <div className="settings-header">
-        <h2 className="settings-title">Settings</h2>
-        <button className="settings-header-save" onClick={handleSave} disabled={saving}>
-          {saving ? 'Saving…' : saved ? '✓ Saved' : 'Save'}
+        <div>
+          <h2 className="settings-title">Settings</h2>
+          <p className="settings-subtitle">Connections, model roles and look-up behaviour.</p>
+        </div>
+        <button className="btn btn--primary" onClick={handleSave} disabled={saving}>
+          {saving ? 'Saving…' : saved ? 'Saved' : 'Save changes'}
         </button>
       </div>
 
+      {saveError && (
+        <p className="settings-error" role="alert">
+          {saveError}
+        </p>
+      )}
+
       {/* ---- Tabs ---- */}
-      <div className="settings-categories">
-        <button
-          className={`settings-category-tab ${activeTab === 'general' ? 'active' : ''}`}
-          onClick={() => setActiveTab('general')}
-        >
-          General
-        </button>
-        <button
-          className={`settings-category-tab ${activeTab === 'models' ? 'active' : ''}`}
-          onClick={() => setActiveTab('models')}
-        >
-          Models
-        </button>
-        <button
-          className={`settings-category-tab ${activeTab === 'about' ? 'active' : ''}`}
-          onClick={() => setActiveTab('about')}
-        >
-          About
-        </button>
+      <div className="settings-categories" role="tablist" aria-label="Settings sections">
+        {SETTINGS_TABS.map((tab) => (
+          <button
+            key={tab.id}
+            role="tab"
+            aria-selected={activeTab === tab.id}
+            className={`settings-category-tab ${activeTab === tab.id ? 'active' : ''}`}
+            onClick={() => setActiveTab(tab.id)}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
       {/* ---- Tab content ---- */}
-      <div className="settings-content">
+      <div className="settings-content" role="tabpanel" id={`settings-panel-${activeTab}`}>
         {activeTab === 'general' && (
           <GeneralTab
             hotkey={hotkey}
@@ -216,8 +228,8 @@ function Settings(): React.JSX.Element {
         )}
         {activeTab === 'about' && (
           <div className="settings-section">
-            <h3 style={{ margin: '0 0 8px', fontSize: '16px' }}>Delta AI</h3>
-            <p style={{ color: 'var(--text-2)', fontSize: '14px', lineHeight: 1.6 }}>
+            <h3 className="settings-section-title">Delta AI</h3>
+            <p className="settings-about-text">
               An AI-powered desktop assistant that captures your screen, runs OCR, and provides
               context-aware answers via the model of your choice.
             </p>

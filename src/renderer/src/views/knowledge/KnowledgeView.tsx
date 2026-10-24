@@ -160,17 +160,13 @@ function KnowledgeView(): React.JSX.Element {
           </span>
           <div className="kb-buttons">
             <button
-              className="settings-header-save"
+              className="btn btn--primary"
               disabled={busy || unfedCount === 0}
               onClick={handleAnalyze}
             >
               {loadingAnalyze ? 'Analyzing...' : 'Analyze'}
             </button>
-            <button
-              className="settings-header-save"
-              disabled={busy || totalCount === 0}
-              onClick={startReanalyze}
-            >
+            <button className="btn" disabled={busy || totalCount === 0} onClick={startReanalyze}>
               {loadingReanalyze ? 'Re-analyzing...' : 'Re-Analyze'}
             </button>
           </div>
@@ -197,11 +193,11 @@ function KnowledgeView(): React.JSX.Element {
               }}
             />
             <span> conversation(s).</span>
-            <button className="settings-header-save" onClick={confirmReanalyze}>
+            <button className="btn btn--primary btn--sm" onClick={confirmReanalyze}>
               Go
             </button>
             <button
-              className="settings-header-save"
+              className="btn btn--sm"
               onClick={() => {
                 setShowReanalyzeInput(false)
                 setReanalyzeCount('')
@@ -226,17 +222,13 @@ function KnowledgeView(): React.JSX.Element {
             </div>
             <div className="kb-buttons">
               <button
-                className="settings-header-save"
+                className="btn btn--primary"
                 disabled={busy || !promptDirty}
                 onClick={handleSavePrompt}
               >
                 {loadingSave ? 'Saving...' : 'Save prompt'}
               </button>
-              <button
-                className="settings-header-save kb-danger"
-                disabled={busy}
-                onClick={handleReset}
-              >
+              <button className="btn btn--danger" disabled={busy} onClick={handleReset}>
                 {loadingReset ? 'Resetting...' : 'Reset'}
               </button>
             </div>

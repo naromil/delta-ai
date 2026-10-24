@@ -103,7 +103,8 @@ function App(): React.JSX.Element {
     unfold,
     newChat,
     loadConversation,
-    conversationId
+    conversationId,
+    conversationTitle
   } = useChatStreaming({
     onReplaceConversation: () => {
       setView('chat')
@@ -136,17 +137,19 @@ function App(): React.JSX.Element {
             <path d="M2 17l10 5 10-5" />
             <path d="M2 12l10 5 10-5" />
           </svg>
-          Delta AI
+          <span className="sidebar-brand-name">Delta AI</span>
         </div>
         <nav className="sidebar-nav">
           {mainNavEntries.map((entry) => (
             <button
               key={entry.view}
               className={`sidebar-nav-item${view === entry.view ? ' active' : ''}`}
+              title={entry.label}
+              aria-current={view === entry.view ? 'page' : undefined}
               onClick={() => setView(entry.view)}
             >
               {ICONS[entry.icon]}
-              {entry.label}
+              <span className="sidebar-nav-label">{entry.label}</span>
             </button>
           ))}
         </nav>
@@ -154,15 +157,17 @@ function App(): React.JSX.Element {
         <nav className="sidebar-nav">
           <button
             className={`sidebar-nav-item${view === settingsNavEntry.view ? ' active' : ''}`}
+            title={settingsNavEntry.label}
+            aria-current={view === settingsNavEntry.view ? 'page' : undefined}
             onClick={() => setView(settingsNavEntry.view)}
           >
             {ICONS[settingsNavEntry.icon]}
-            {settingsNavEntry.label}
+            <span className="sidebar-nav-label">{settingsNavEntry.label}</span>
           </button>
         </nav>
       </aside>
       <div className="app-main">
-        {view === 'home' && <HomeView />}
+        {view === 'home' && <HomeView onNavigate={setView} />}
         {view === 'chat' && (
           <Conversation
             state={state}
@@ -173,6 +178,7 @@ function App(): React.JSX.Element {
             onNewChat={newChat}
             onLoadConversation={loadConversation}
             conversationId={conversationId}
+            conversationTitle={conversationTitle}
             onExpand={expand}
             onFold={fold}
             onUnfold={unfold}

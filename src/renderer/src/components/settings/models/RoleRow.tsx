@@ -143,40 +143,27 @@ function RoleRow({
           onChange={handleModelChange}
           placeholder={modelIds.length === 0 ? 'Enter model ID (e.g. gpt-4)' : 'Search models…'}
         />
-        {selectedModel && (
-          <p style={{ margin: '4px 0 0', fontSize: '12px', color: 'var(--text-muted)' }}>
-            {formatModelHint(selectedModel)}
-          </p>
-        )}
+        {selectedModel && <p className="settings-inline-hint">{formatModelHint(selectedModel)}</p>}
       </>
     )
   }
 
   return (
-    <div className="settings-card" style={{ opacity: roleDef.locked ? 0.5 : 1 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-        <strong style={{ fontSize: '15px' }}>{roleDef.label}</strong>
+    <div className={`settings-card${roleDef.locked ? ' settings-card--locked' : ''}`}>
+      <div className="settings-card-heading">
+        <strong className="settings-card-title">{roleDef.label}</strong>
         {roleDef.locked && (
-          <span
-            title="Requires the Knowledge Base feature."
-            style={{ fontSize: '13px', color: 'var(--text-muted)' }}
-          >
-            🔒 Locked
+          <span className="settings-badge" title="Requires the Knowledge Base feature.">
+            Locked
           </span>
         )}
-        {isUnimplemented && (
-          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>(coming soon)</span>
-        )}
+        {isUnimplemented && <span className="settings-badge">Coming soon</span>}
       </div>
-      <p style={{ margin: '0 0 10px', fontSize: '13px', color: 'var(--text-2)' }}>
-        {roleDef.description}
-      </p>
+      <p className="settings-card-desc">{roleDef.description}</p>
 
       {/* Connection selector */}
-      <div style={{ marginBottom: '8px' }}>
-        <label className="settings-label" style={{ marginBottom: '4px', fontSize: '13px' }}>
-          Connection
-        </label>
+      <div className="settings-field">
+        <label className="settings-label settings-label--sm">Connection</label>
         <div className="settings-select-wrap" ref={connectionRef}>
           <button
             type="button"
@@ -227,16 +214,13 @@ function RoleRow({
       </div>
 
       {/* Model field */}
-      <div style={{ marginBottom: '8px' }}>
-        <label className="settings-label" style={{ marginBottom: '4px', fontSize: '13px' }}>
-          Model
-        </label>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
-          <div style={{ flex: 1, minWidth: 0 }}>{renderModelField()}</div>
+      <div className="settings-field">
+        <label className="settings-label settings-label--sm">Model</label>
+        <div className="settings-field-row">
+          <div className="settings-field-grow">{renderModelField()}</div>
           <button
             type="button"
-            className="settings-header-save"
-            style={{ padding: '8px 12px', whiteSpace: 'nowrap' }}
+            className="btn btn--sm"
             onClick={handleFetch}
             disabled={!conn || roleDef.locked || fetching}
           >
@@ -244,7 +228,7 @@ function RoleRow({
           </button>
         </div>
         {fetchError && (
-          <p role="alert" style={{ margin: '4px 0 0', fontSize: '12px', color: '#e74c3c' }}>
+          <p role="alert" className="settings-inline-error">
             {fetchError}
           </p>
         )}
