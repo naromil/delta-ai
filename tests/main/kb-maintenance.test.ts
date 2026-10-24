@@ -53,6 +53,7 @@ vi.mock('../../src/main/kb/store', () => ({
 
 import {
   resetKbMaintenanceForTests,
+  resetKbProfile,
   startKbAutoMaintenance,
   stopKbAutoMaintenance
 } from '../../src/main/kb/maintenance'
@@ -254,5 +255,67 @@ describe('automatic KB pass scheduling', () => {
     await settle()
 
     expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('aborts an in-flight pass, wipes state and then schedules a rebuild', async () => {
+    startKbAutoMaintenance()
+    await settle()
+    unfed = [chat('chat_a')]
+
+    const pass = Promise.withResolvers<string>()
+    let signal: AbortSignal | undefined
+    h.runKbAnalysis.mockImplementationOnce((_metas, options: { signal?: AbortSignal }) => {
+      signal = options.signal
+      signal?.addEventListener('abort', () => {
+        pass.reject(new Error('Generation stopped.'))
+      })
+      return pass.promise
+    })
+
+    savedListener?.(record('chat_a'))
+    await vi.advanceTimersByTimeAsync(AUTO_DEBOUNCE_MS)
+    expect(signal).toBeDefined()
+    expect(h.runKbAnalysis).toHaveBeenCalledTimes(1)
+
+    const reset = resetKbProfile()
+    await reset
+
+    expect(signal?.aborted).toBe(true)
+    expect(h.resetKb).toHaveBeenCalledTimes(1)
+    // Aborted work is neither a learning event nor a failure.
+    expect(h.saveKbState).not.toHaveBeenCalled()
+    // No pre-wipe idle snapshot may be published between the abort and the wipe.
+    const passAt = h.events.lastIndexOf('status:running')
+    const wipeAt = h.events.indexOf('wipe')
+    expect(passAt).toBeGreaterThanOrEqual(0)
+    expect(wipeAt).toBeGreaterThan(passAt)
+    expect(h.events.slice(passAt + 1, wipeAt)).not.toContain('status:idle')
+    expect(vi.getTimerCount()).toBe(1)
+
+    await vi.advanceTimersByTimeAsync(AUTO_DEBOUNCE_MS)
+    expect(h.runKbAnalysis).toHaveBeenCalledTimes(2)
+  })
+
+  it('discards a queue scan that began before a reset', async () => {
+    startKbAutoMaintenance()
+    await settle()
+    unfed = [chat('chat_a')]
+
+    const scan = Promise.withResolvers<ConversationMeta[]>()
+    h.listUnfedConversations.mockImplementationOnce(() => scan.promise)
+
+    savedListener?.(record('chat_a'))
+    await vi.advanceTimersByTimeAsync(AUTO_DEBOUNCE_MS)
+
+    const reset = resetKbProfile()
+    scan.resolve(unfed)
+    await reset
+    await settle()
+
+    expect(h.runKbAnalysis).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(1)
+
+    await vi.advanceTimersByTimeAsync(AUTO_DEBOUNCE_MS)
+    expect(h.runKbAnalysis).toHaveBeenCalledTimes(1)
   })
 })

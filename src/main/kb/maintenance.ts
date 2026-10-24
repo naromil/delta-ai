@@ -135,11 +135,14 @@ async function runAutoPass(): Promise<void> {
 
   // Claim the pass before the first await: two timer callbacks must never both
   // select the same batch and enqueue overlapping runs.
+  const generation = lifecycle
   running = true
   let controller: AbortController | null = null
 
   try {
     const unfed = await listUnfedConversations()
+    // A reset started while the queue was being read; it schedules its own rebuild.
+    if (generation !== lifecycle) return
     pendingCount = unfed.filter((meta) => meta.source === 'chat' && !meta.kbFed).length
     const batch = selectAutoBatch(unfed)
     if (batch.length === 0) return
@@ -152,10 +155,13 @@ async function runAutoPass(): Promise<void> {
     const result = await runExclusive(() =>
       runKbAnalysis(batch, { markFed: true, signal: runController.signal })
     )
-    if (runController.signal.aborted) return
+    if (runController.signal.aborted || generation !== lifecycle) return
 
     const now = new Date().toISOString()
     pendingCount = await countPending()
+    // The reset's wipe may have run while the queue was recounted; never write
+    // pacing state back over it.
+    if (runController.signal.aborted || generation !== lifecycle) return
     // A manual pass may have finished while this pass waited in the queue; keep
     // its learning event instead of restoring the snapshot taken before it.
     const state = loadKbState()
@@ -168,7 +174,7 @@ async function runAutoPass(): Promise<void> {
     })
     if (pendingCount > 0) schedule(AUTO_BACKLOG_INTERVAL_MS)
   } catch (err) {
-    if (controller?.signal.aborted) return
+    if (controller?.signal.aborted || generation !== lifecycle) return
     // Read the state as it is *now*: another pass may have finished while this
     // one waited in the queue, and its learning event must not be overwritten.
     const state = loadKbState()
@@ -184,7 +190,9 @@ async function runAutoPass(): Promise<void> {
   } finally {
     if (activeRunController === controller) activeRunController = null
     running = false
-    publishStatus()
+    // An aborted pass must not publish a snapshot of the profile that a reset is
+    // about to delete; `resetKbProfile` publishes the post-wipe state instead.
+    if (generation === lifecycle && !controller?.signal.aborted) publishStatus()
   }
 }
 
@@ -291,6 +299,9 @@ export async function recordManualKbRun(conversationsAnalyzed: number): Promise<
  * late response cannot resurrect the deleted prompt.
  */
 export async function resetKbProfile(): Promise<void> {
+  // Invalidate any pass that is still scanning the queue: the wipe below runs
+  // first, and the reset schedules its own rebuild.
+  lifecycle++
   if (timer !== undefined) {
     clearTimeout(timer)
     timer = undefined
