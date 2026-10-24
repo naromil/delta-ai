@@ -36,8 +36,13 @@ function record(id: string, overrides: Partial<ConversationRecord> = {}): Conver
     source: 'chat',
     state: {
       turns: [
-        { id: 1, role: 'user', content: 'What is a finite state machine?' },
-        { id: 2, role: 'assistant', content: 'A model of computation with states and transitions.' }
+        { id: 1, role: 'user', content: 'What is a finite state machine?', expansions: [] },
+        {
+          id: 2,
+          role: 'assistant',
+          content: 'A model of computation with states and transitions.',
+          expansions: []
+        }
       ]
     },
     kbFed: false,
@@ -87,8 +92,8 @@ describe('runKbAnalysis', () => {
       record('chat_empty', {
         state: {
           turns: [
-            { id: 1, role: 'user', content: '   ' },
-            { id: 2, role: 'assistant', content: '' }
+            { id: 1, role: 'user', content: '   ', expansions: [] },
+            { id: 2, role: 'assistant', content: '', expansions: [] }
           ]
         }
       })

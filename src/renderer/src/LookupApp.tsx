@@ -31,18 +31,36 @@ function LookupApp(): React.JSX.Element {
   const flashTimerRef = useRef<number | null>(null)
   const askRef = useRef<HTMLInputElement>(null)
 
-  const { state, loading, contextReady, send, expand, fold, unfold, setState, conversationId } =
-    useChatStreaming({
-      role: 'lookup',
-      initial: { turns: [] },
-      onGrown: () => {
-        setGrown(true)
-        setTimeout(() => askRef.current?.focus(), 360)
-      }
-    })
+  const {
+    state,
+    loading,
+    contextReady,
+    send,
+    expand,
+    retryExpansion,
+    dismissExpansion,
+    fold,
+    unfold,
+    setState,
+    conversationId
+  } = useChatStreaming({
+    role: 'lookup',
+    initial: { turns: [] },
+    onGrown: () => {
+      setGrown(true)
+      setTimeout(() => askRef.current?.focus(), 360)
+    }
+  })
 
-  const { ctxMenu, expandPrompt, handleContextMenu, closeContextMenu, closeExpandPrompt } =
-    useExpansionContextMenu({ turns: state.turns, onExpand: expand })
+  const {
+    ctxMenu,
+    expandPrompt,
+    notice,
+    handleContextMenu,
+    closeContextMenu,
+    closeExpandPrompt,
+    dismissNotice
+  } = useExpansionContextMenu({ turns: state.turns, onExpand: expand })
 
   /* ---- Flash hint helper ---- */
   const flashHint = useCallback((msg?: string) => {
@@ -306,13 +324,19 @@ function LookupApp(): React.JSX.Element {
         </div>
         <div ref={scrollRef} className={`lookup-conversation${grown ? ' visible' : ''}`}>
           {visibleTurns.map((turn) => (
-            <div key={turn.id} className="message-turn" data-turn-id={turn.id}>
+            <div
+              key={turn.id}
+              className="message-turn"
+              data-turn-id={turn.id}
+              onContextMenu={handleContextMenu}
+            >
               <Turn
                 turn={turn}
                 loading={loading}
                 onFold={fold}
                 onUnfold={unfold}
-                onContextMenu={handleContextMenu}
+                onRetryExpansion={retryExpansion}
+                onDismissExpansion={dismissExpansion}
               />
             </div>
           ))}
@@ -320,6 +344,11 @@ function LookupApp(): React.JSX.Element {
       </div>
       <ContextMenu state={ctxMenu} onClose={closeContextMenu} />
       <ExpandPrompt state={expandPrompt} onClose={closeExpandPrompt} />
+      {notice ? (
+        <div className="expand-notice" role="status" onClick={dismissNotice}>
+          {notice}
+        </div>
+      ) : null}
     </div>
   )
 }

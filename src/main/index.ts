@@ -27,7 +27,7 @@ import { sendToSession } from './lookup/state'
 import { setMainWindow, getMainWindow } from './main-window'
 import type { ConversationRecord, ConversationState } from '../shared/conversation'
 import { buildConversationTitle } from '../shared/conversation'
-import { buildScreenContextMessage } from '../shared/prompts'
+import { prepareTransferredState } from './transfer'
 import {
   saveConversation,
   loadConversation,
@@ -159,15 +159,9 @@ if (!hasSingleInstanceLock) {
           session.window.close()
         }
 
-        const transferred = { ...state, turns: [...state.turns] }
-        if (transferred.context) {
-          transferred.turns.unshift({
-            id: Date.now(),
-            role: 'user',
-            content: buildScreenContextMessage(transferred.context)
-          })
-          transferred.context = ''
-        }
+        // Single boundary: finalise in-flight frames before persisting or
+        // forwarding, and fold the screen context into a user turn.
+        const transferred = prepareTransferredState(state)
 
         const now = new Date().toISOString()
         const existing = conversationId ? await loadConversation(conversationId) : null
@@ -203,7 +197,8 @@ if (!hasSingleInstanceLock) {
 
     /* Conversation persistence */
     ipcMain.handle('conversation-save', async (_event, record) => {
-      await saveConversation(record)
+      // Renderer autosaves must not clobber the KB-fed flag owned by main.
+      await saveConversation(record, { preserveKbFed: true })
     })
     ipcMain.handle('conversation-load', async (_event, id: string) => {
       return await loadConversation(id)

@@ -19,9 +19,7 @@ export interface KbAnalysisOptions {
  * signal even when the surrounding text is blank).
  */
 function hasLearningMaterial(record: ConversationRecord): boolean {
-  return record.state.turns.some(
-    (turn) => turn.content.trim() !== '' || (turn.segments?.length ?? 0) > 0
-  )
+  return record.state.turns.some((turn) => turn.content.trim() !== '' || turn.expansions.length > 0)
 }
 
 /**

@@ -1,9 +1,11 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 interface ContextMenuState {
   x: number
   y: number
   canExpand: boolean
+  /** Why Expand is disabled when a selection exists but cannot be used. */
+  hint?: string
   onExpand: () => void
   onExpandPrompted: () => void
   onCopy: () => void
@@ -15,14 +17,10 @@ interface ContextMenuProps {
   onClose: () => void
 }
 
-/** Items reachable by arrow keys: enabled menu buttons, in DOM order. */
-function menuItems(menu: HTMLElement | null): HTMLButtonElement[] {
-  if (!menu) return []
-  return Array.from(menu.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'))
-}
-
 function ContextMenu({ state, onClose }: ContextMenuProps): React.JSX.Element | null {
   const menuRef = useRef<HTMLDivElement>(null)
+  const itemRefs = useRef<Array<HTMLButtonElement | null>>([])
+  const previousFocusRef = useRef<HTMLElement | null>(null)
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null)
 
   useLayoutEffect(() => {
@@ -38,11 +36,30 @@ function ContextMenu({ state, onClose }: ContextMenuProps): React.JSX.Element | 
     })
   }, [state])
 
+  /* Focus the first enabled item, and give focus back when the menu closes. */
+  useEffect(() => {
+    if (!state) {
+      const previous = previousFocusRef.current
+      previousFocusRef.current = null
+      previous?.focus?.()
+      return
+    }
+    previousFocusRef.current = document.activeElement as HTMLElement | null
+    itemRefs.current.find((item) => item && !item.disabled)?.focus()
+  }, [state])
+
+  const moveFocus = useCallback((direction: 1 | -1) => {
+    const items = itemRefs.current.filter(
+      (item): item is HTMLButtonElement => item !== null && !item.disabled
+    )
+    if (items.length === 0) return
+    const current = items.indexOf(document.activeElement as HTMLButtonElement)
+    const next = current < 0 ? 0 : (current + direction + items.length) % items.length
+    items[next].focus()
+  }, [])
+
   useEffect(() => {
     if (!state) return
-
-    // Focus the first action so the menu is usable from the keyboard.
-    menuItems(menuRef.current)[0]?.focus()
 
     const handleClick = (e: MouseEvent): void => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
@@ -54,28 +71,20 @@ function ContextMenu({ state, onClose }: ContextMenuProps): React.JSX.Element | 
       if (e.key === 'Escape') {
         e.preventDefault()
         onClose()
-        return
-      }
-      if (e.key === 'Tab') {
+      } else if (e.key === 'Tab') {
         onClose()
-        return
-      }
-      const items = menuItems(menuRef.current)
-      if (items.length === 0) return
-      const current = items.indexOf(document.activeElement as HTMLButtonElement)
-
-      if (e.key === 'ArrowDown') {
+      } else if (e.key === 'ArrowDown') {
         e.preventDefault()
-        items[current < 0 ? 0 : (current + 1) % items.length].focus()
+        moveFocus(1)
       } else if (e.key === 'ArrowUp') {
         e.preventDefault()
-        items[current <= 0 ? items.length - 1 : current - 1].focus()
-      } else if (e.key === 'Home') {
+        moveFocus(-1)
+      } else if (e.key === 'Home' || e.key === 'End') {
         e.preventDefault()
-        items[0].focus()
-      } else if (e.key === 'End') {
-        e.preventDefault()
-        items[items.length - 1].focus()
+        const items = itemRefs.current.filter(
+          (item): item is HTMLButtonElement => item !== null && !item.disabled
+        )
+        if (items.length > 0) items[e.key === 'Home' ? 0 : items.length - 1].focus()
       }
     }
 
@@ -85,7 +94,7 @@ function ContextMenu({ state, onClose }: ContextMenuProps): React.JSX.Element | 
       document.removeEventListener('mousedown', handleClick, true)
       document.removeEventListener('keydown', handleKeyDown)
     }
-  }, [state, onClose])
+  }, [state, onClose, moveFocus])
 
   if (!state) return null
 
@@ -101,12 +110,15 @@ function ContextMenu({ state, onClose }: ContextMenuProps): React.JSX.Element | 
     <div
       ref={menuRef}
       id="ctxMenu"
-      className="visible"
       role="menu"
       aria-label="Text actions"
+      className="visible"
       style={{ left: (position ?? state).x, top: (position ?? state).y }}
     >
       <button
+        ref={(el) => {
+          itemRefs.current[0] = el
+        }}
         type="button"
         role="menuitem"
         className="item"
@@ -116,6 +128,9 @@ function ContextMenu({ state, onClose }: ContextMenuProps): React.JSX.Element | 
         Expand
       </button>
       <button
+        ref={(el) => {
+          itemRefs.current[1] = el
+        }}
         type="button"
         role="menuitem"
         className="item"
@@ -124,8 +139,16 @@ function ContextMenu({ state, onClose }: ContextMenuProps): React.JSX.Element | 
       >
         Expand on…
       </button>
+      {state.hint ? (
+        <div className="hint" role="presentation">
+          {state.hint}
+        </div>
+      ) : null}
       <div className="sep" role="separator" />
       <button
+        ref={(el) => {
+          itemRefs.current[2] = el
+        }}
         type="button"
         role="menuitem"
         className="item"
@@ -134,6 +157,9 @@ function ContextMenu({ state, onClose }: ContextMenuProps): React.JSX.Element | 
         Copy
       </button>
       <button
+        ref={(el) => {
+          itemRefs.current[3] = el
+        }}
         type="button"
         role="menuitem"
         className="item"

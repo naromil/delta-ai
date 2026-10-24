@@ -1,0 +1,342 @@
+/* ---- Rendered markdown (turn content) ---- */
+
+.markdown-body {
+  white-space: normal;
+  word-break: break-word;
+}
+
+.markdown-body > *:first-child {
+  margin-top: 0;
+}
+
+.markdown-body > *:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-body p {
+  margin: 0 0 0.6em;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+  margin: 0.9em 0 0.4em;
+  line-height: 1.3;
+  font-weight: 600;
+}
+
+.markdown-body h1 {
+  font-size: 1.4em;
+}
+
+.markdown-body h2 {
+  font-size: 1.25em;
+}
+
+.markdown-body h3 {
+  font-size: 1.1em;
+}
+
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+  font-size: 1em;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+  margin: 0.4em 0 0.6em;
+  padding-left: 1.5em;
+}
+
+.markdown-body li {
+  margin: 0.15em 0;
+}
+
+.markdown-body blockquote {
+  margin: 0.5em 0;
+  padding-left: 0.8em;
+  border-left: 2px solid var(--border-strong);
+  color: var(--text-2);
+}
+
+.markdown-body strong {
+  font-weight: 600;
+}
+
+.markdown-body em {
+  font-style: italic;
+}
+
+.markdown-body del {
+  opacity: 0.7;
+}
+
+.markdown-body a {
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.markdown-body code {
+  font-family: 'SFMono-Regular', 'JetBrains Mono', Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  background: var(--surface-3);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+}
+
+.markdown-body pre {
+  margin: 0.5em 0;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.markdown-body pre code {
+  background: transparent;
+  padding: 0;
+  font-size: 13px;
+}
+
+.markdown-body pre::-webkit-scrollbar {
+  height: 8px;
+}
+
+.markdown-body pre::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.markdown-body pre::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 4px;
+}
+
+.markdown-body pre::-webkit-scrollbar-thumb:hover {
+  background: var(--text-3);
+}
+
+.markdown-body table {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  font-size: 14px;
+  max-width: 100%;
+}
+
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid var(--border-strong);
+  padding: 4px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown-body th {
+  font-weight: 600;
+  background: var(--surface-2);
+}
+
+.markdown-body hr {
+  border: none;
+  border-top: 1px solid var(--border-strong);
+  margin: 0.8em 0;
+}
+
+.markdown-body .md-img {
+  display: none;
+}
+
+/* ---- Inline markdown (inside expansion frames) ----
+ *
+ * The frame host is a <span>, so every block construct is restored with a
+ * span carrying a md-* class and block-ish display. */
+
+.markdown-inline {
+  white-space: normal;
+}
+
+.markdown-inline .md-p {
+  display: block;
+  margin: 0.35em 0;
+}
+
+.markdown-inline .md-p:first-child {
+  margin-top: 0;
+}
+
+.markdown-inline .md-p:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-inline .md-h1,
+.markdown-inline .md-h2,
+.markdown-inline .md-h3,
+.markdown-inline .md-h4,
+.markdown-inline .md-h5,
+.markdown-inline .md-h6 {
+  display: block;
+  margin: 0.5em 0 0.25em;
+  line-height: 1.3;
+  font-weight: 600;
+}
+
+.markdown-inline .md-h1 {
+  font-size: 1.15em;
+}
+
+.markdown-inline .md-h2 {
+  font-size: 1.08em;
+}
+
+.markdown-inline .md-h3,
+.markdown-inline .md-h4,
+.markdown-inline .md-h5,
+.markdown-inline .md-h6 {
+  font-size: 1em;
+}
+
+.markdown-inline .md-list {
+  display: block;
+  margin: 0.35em 0;
+  padding-left: 1.2em;
+}
+
+.markdown-inline .md-li {
+  display: list-item;
+  list-style-position: inside;
+  margin: 0.1em 0;
+}
+
+.markdown-inline .md-ul > .md-li {
+  list-style-type: disc;
+}
+
+.markdown-inline .md-ol > .md-li {
+  list-style-type: decimal;
+}
+
+.markdown-inline .md-quote {
+  display: block;
+  margin: 0.4em 0;
+  padding-left: 0.7em;
+  border-left: 2px solid var(--border-strong);
+  color: var(--text-2);
+}
+
+.markdown-inline .md-pre {
+  display: block;
+  margin: 0.45em 0;
+  padding: 8px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+  max-width: 100%;
+  white-space: pre;
+}
+
+.markdown-inline .md-pre code {
+  background: transparent;
+  padding: 0;
+  font-size: 12px;
+  white-space: pre;
+}
+
+.markdown-inline .md-pre::-webkit-scrollbar {
+  height: 8px;
+}
+
+.markdown-inline .md-pre::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.markdown-inline .md-pre::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 4px;
+}
+
+.markdown-inline .md-pre::-webkit-scrollbar-thumb:hover {
+  background: var(--text-3);
+}
+
+.markdown-inline .md-table {
+  display: block;
+  margin: 0.45em 0;
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.markdown-inline .md-table::-webkit-scrollbar {
+  height: 8px;
+}
+
+.markdown-inline .md-table::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 4px;
+}
+
+.markdown-inline .md-table-head,
+.markdown-inline .md-table-body,
+.markdown-inline .md-table-foot {
+  display: block;
+}
+
+.markdown-inline .md-row {
+  display: flex;
+}
+
+.markdown-inline .md-cell {
+  display: inline-block;
+  min-width: 5em;
+  padding: 3px 7px;
+  border: 1px solid var(--border-strong);
+  font-size: 0.92em;
+  vertical-align: top;
+  white-space: normal;
+}
+
+.markdown-inline .md-table-head .md-cell {
+  font-weight: 600;
+  background: var(--surface-2);
+}
+
+.markdown-inline .md-hr {
+  display: block;
+  height: 1px;
+  margin: 0.6em 0;
+  background: var(--border-strong);
+}
+
+.markdown-inline .md-section {
+  display: block;
+}
+
+.markdown-inline .md-img {
+  color: var(--text-3);
+  font-style: italic;
+}
+
+.markdown-inline code {
+  font-family: 'SFMono-Regular', 'JetBrains Mono', Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  background: var(--surface-3);
+  padding: 0.1em 0.3em;
+  border-radius: 4px;
+}
+
+.markdown-inline a {
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* User messages keep typed line breaks. */
+.message-user .markdown-body {
+  white-space: pre-wrap;
+}

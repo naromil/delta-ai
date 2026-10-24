@@ -1,22 +1,15 @@
-/* ---- Expandable segments (inline expansion frames) ---- */
+/* ---- Expansion frames (inline annotations over markdown) ---- */
 
 .frame.expanded {
-  display: inline;
+  display: inline-block;
+  max-width: 100%;
   background: var(--accent-soft);
-  border: 1px solid var(--accent-ring);
-  border-radius: 6px;
-  padding: 2px 5px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 2px 6px;
   margin: 0 2px;
   vertical-align: baseline;
-  box-decoration-break: clone;
-  -webkit-box-decoration-break: clone;
-  transition:
-    background var(--dur-1) var(--ease-out),
-    border-color var(--dur-1) var(--ease-out);
-}
-
-.frame.expanded:hover {
-  border-color: var(--accent);
+  transition: opacity 0.25s ease;
 }
 
 .frame.loading {
@@ -24,7 +17,7 @@
   background: rgba(120, 120, 120, 0.06);
 }
 
-.frame.loading .frame-inner {
+.frame.loading .frame-placeholder {
   color: var(--text-3);
   font-style: italic;
 }
@@ -34,29 +27,69 @@
   background: rgba(207, 123, 110, 0.08);
 }
 
-.frame.error .frame-inner {
+.frame-error {
+  display: block;
+  margin-top: 0.25em;
   color: var(--error);
-}
-
-.frame.error .fold-toggle {
-  display: none;
+  font-size: 13px;
 }
 
 .frame-inner {
-  display: inline;
-  font-size: 15px;
-  line-height: 1.5;
-  white-space: normal;
+  display: block;
+  /* Inherit typography so a frame never shifts the surrounding line box. */
+  font: inherit;
+  line-height: inherit;
+  white-space: inherit;
   word-break: break-word;
 }
 
-.frame-inner p {
-  display: inline;
-  margin: 0;
+.frame-term {
+  display: block;
+  margin-top: 0.25em;
+  color: var(--text-2);
+  font-style: italic;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.frame-inner p + p::before {
-  content: ' ';
+.frame-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 0.4em;
+}
+
+.frame-action {
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-1);
+  font: inherit;
+  font-size: 12px;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+
+.frame-action:hover {
+  background: var(--surface-2);
+  border-color: var(--accent);
+}
+
+.expand-notice {
+  position: fixed;
+  left: 50%;
+  bottom: 96px;
+  transform: translateX(-50%);
+  z-index: 1100;
+  max-width: min(520px, calc(100% - 32px));
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-2);
+  color: var(--text-1);
+  font-size: 13px;
+  cursor: pointer;
 }
 
 .frame .fold-toggle {
@@ -168,6 +201,15 @@
 #ctxMenu .item:disabled {
   color: var(--text-3);
   opacity: 0.6;
+  cursor: default;
+}
+
+#ctxMenu .hint {
+  max-width: 260px;
+  padding: 2px 14px 6px;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.35;
   cursor: default;
 }
 

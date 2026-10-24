@@ -18,6 +18,8 @@ interface ConversationProps {
   onExpand: ExpandRequest
   onFold: (id: number) => void
   onUnfold: (id: number) => void
+  onRetryExpansion?: (expansionId: number) => void
+  onDismissExpansion?: (expansionId: number) => void
   hideToolbar?: boolean
   transferKey?: number
   conversationId?: string | null
@@ -40,6 +42,8 @@ function Conversation({
   onExpand,
   onFold,
   onUnfold,
+  onRetryExpansion,
+  onDismissExpansion,
   onLoadConversation,
   hideToolbar = false,
   transferKey,
@@ -51,8 +55,15 @@ function Conversation({
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [showSearch, setShowSearch] = useState(false)
-  const { ctxMenu, expandPrompt, handleContextMenu, closeContextMenu, closeExpandPrompt } =
-    useExpansionContextMenu({ turns: state.turns, onExpand })
+  const {
+    ctxMenu,
+    expandPrompt,
+    notice,
+    handleContextMenu,
+    closeContextMenu,
+    closeExpandPrompt,
+    dismissNotice
+  } = useExpansionContextMenu({ turns: state.turns, onExpand })
 
   useEffect(() => {
     const el = scrollRef.current
@@ -208,14 +219,20 @@ function Conversation({
         ) : (
           <div className="message-list">
             {visibleTurns.map((turn) => (
-              <div key={turn.id} className="message-turn" data-turn-id={turn.id}>
+              <div
+                key={turn.id}
+                className="message-turn"
+                data-turn-id={turn.id}
+                onContextMenu={handleContextMenu}
+              >
                 <Turn
                   turn={turn}
                   loading={loading}
                   onFold={onFold}
                   onUnfold={onUnfold}
-                  onContextMenu={handleContextMenu}
                   onRetry={onRetry}
+                  onRetryExpansion={onRetryExpansion}
+                  onDismissExpansion={onDismissExpansion}
                 />
               </div>
             ))}
@@ -286,6 +303,11 @@ function Conversation({
       </div>
       <ContextMenu state={ctxMenu} onClose={closeContextMenu} />
       <ExpandPrompt state={expandPrompt} onClose={closeExpandPrompt} />
+      {notice ? (
+        <div className="expand-notice" role="status" onClick={dismissNotice}>
+          {notice}
+        </div>
+      ) : null}
       {showSearch && onLoadConversation && (
         <ConversationSearch
           onSelect={onLoadConversation}

@@ -1,21 +1,13 @@
-import { useCallback } from 'react'
-import type { ExpandableSegment, ExpansionSegment } from '../../../../shared/conversation'
-import { tokenize } from '../../../../shared/conversation'
+import { memo } from 'react'
+import type { ExpansionNode } from '../../../../shared/rich-text'
+import Markdown from './Markdown'
 
 interface ExpansionFrameProps {
-  segment: ExpansionSegment
+  node: ExpansionNode
   onFold: (id: number) => void
   onUnfold: (id: number) => void
-  onContextMenu: (e: React.MouseEvent, segmentIndex: number) => void
-}
-
-function selectNodeContents(node: Node): void {
-  const sel = window.getSelection()
-  if (!sel) return
-  const range = document.createRange()
-  range.selectNodeContents(node)
-  sel.removeAllRanges()
-  sel.addRange(range)
+  onRetry?: (id: number) => void
+  onDismiss?: (id: number) => void
 }
 
 function handleActivationKey(e: React.KeyboardEvent, action: () => void): void {
@@ -25,141 +17,136 @@ function handleActivationKey(e: React.KeyboardEvent, action: () => void): void {
   action()
 }
 
+function renderChild(
+  child: ExpansionNode,
+  onFold: (id: number) => void,
+  onUnfold: (id: number) => void,
+  onRetry?: (id: number) => void,
+  onDismiss?: (id: number) => void
+): React.ReactNode {
+  return (
+    <ExpansionFrame
+      node={child}
+      onFold={onFold}
+      onUnfold={onUnfold}
+      onRetry={onRetry}
+      onDismiss={onDismiss}
+    />
+  )
+}
+
+/**
+ * Inline expansion frame. The host element is always a `<span>`: in block mode
+ * it sits inside a paragraph, and its answer is rendered in inline mode so no
+ * block element ever nests inside it.
+ *
+ * An errored frame keeps the fold toggle (folding restores `originalText` into
+ * the text flow) and offers Retry / Dismiss.
+ */
 function ExpansionFrame({
-  segment,
+  node,
   onFold,
   onUnfold,
-  onContextMenu
+  onRetry,
+  onDismiss
 }: ExpansionFrameProps): React.JSX.Element {
-  const {
-    folded,
-    loading,
-    error,
-    cachedText,
-    originalText,
-    expansionId,
-    segments: childSegments
-  } = segment
+  const bodyId = `expansion-body-${node.id}`
 
-  const handleTripleClick = useCallback((e: React.MouseEvent) => {
-    if (e.detail === 3 && e.button === 0) {
-      e.preventDefault()
-      e.stopPropagation()
-      const inner = (e.currentTarget as HTMLElement).querySelector('.frame-inner')
-      selectNodeContents(inner || e.currentTarget)
-    }
-  }, [])
-
-  if (folded) {
+  if (node.folded) {
     return (
       <span
         className="queried"
-        data-expansion-id={expansionId}
+        data-expansion-id={node.id}
         role="button"
         tabIndex={0}
-        aria-label={`Expand ${originalText}`}
-        title="Click to re-expand"
-        onClick={() => onUnfold(expansionId)}
-        onKeyDown={(e) => handleActivationKey(e, () => onUnfold(expansionId))}
-        onContextMenu={(e) => {
-          e.stopPropagation()
-          onContextMenu(e, -1)
-        }}
+        aria-expanded={false}
+        aria-label={`Expand ${node.originalText}`}
+        title="Click to expand again"
+        onClick={() => onUnfold(node.id)}
+        onKeyDown={(e) => handleActivationKey(e, () => onUnfold(node.id))}
       >
-        {originalText}
+        {node.originalText}
       </span>
     )
   }
 
-  const frameClass = ['frame expanded', loading ? 'loading' : '', error ? 'error' : '']
+  const pending = node.status === 'loading' && node.answer === ''
+  const frameClass = [
+    'frame expanded',
+    node.status === 'loading' ? 'loading' : '',
+    node.status === 'error' ? 'error' : ''
+  ]
     .filter(Boolean)
     .join(' ')
 
   return (
-    <span
-      className={frameClass}
-      data-expansion-id={expansionId}
-      onMouseDown={handleTripleClick}
-      onContextMenu={(e) => {
-        e.stopPropagation()
-        onContextMenu(e, -1)
-      }}
-    >
-      <span className="frame-inner">
-        {loading && !cachedText ? (
-          'Thinking\u2026'
+    <span className={frameClass} data-expansion-id={node.id}>
+      <span className="frame-inner" id={bodyId}>
+        {pending ? (
+          <span className="frame-placeholder">Thinking…</span>
         ) : (
-          <InlineSegments
-            segments={childSegments.length > 0 ? childSegments : tokenize(cachedText)}
+          <Markdown
+            source={node.answer}
+            expansions={node.children}
+            inline
             onFold={onFold}
             onUnfold={onUnfold}
-            onContextMenu={onContextMenu}
+            renderExpansion={(child) => renderChild(child, onFold, onUnfold, onRetry, onDismiss)}
           />
         )}
+        {node.status === 'error' ? (
+          <>
+            <span className="frame-term" title={node.originalText}>
+              {node.originalText}
+            </span>
+            {node.error ? <span className="frame-error">{node.error}</span> : null}
+            <span className="frame-actions">
+              {onRetry ? (
+                <button
+                  type="button"
+                  className="frame-action"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onRetry(node.id)
+                  }}
+                >
+                  Retry
+                </button>
+              ) : null}
+              {onDismiss ? (
+                <button
+                  type="button"
+                  className="frame-action"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onDismiss(node.id)
+                  }}
+                >
+                  Dismiss
+                </button>
+              ) : null}
+            </span>
+          </>
+        ) : null}
       </span>
-      {!error && (
-        <span
-          className="fold-toggle"
-          role="button"
-          tabIndex={0}
-          aria-label="Fold expansion"
-          aria-expanded={true}
-          onClick={(e) => {
-            e.stopPropagation()
-            onFold(expansionId)
-          }}
-          onKeyDown={(e) => handleActivationKey(e, () => onFold(expansionId))}
-          title="Fold"
-        >
-          ▾
-        </span>
-      )}
+      <span
+        className="fold-toggle"
+        role="button"
+        tabIndex={0}
+        aria-label="Fold expansion"
+        aria-expanded={true}
+        aria-controls={bodyId}
+        onClick={(e) => {
+          e.stopPropagation()
+          onFold(node.id)
+        }}
+        onKeyDown={(e) => handleActivationKey(e, () => onFold(node.id))}
+        title="Fold"
+      >
+        ▾
+      </span>
     </span>
   )
 }
 
-interface InlineSegmentsProps {
-  segments: ExpandableSegment[]
-  onFold: (id: number) => void
-  onUnfold: (id: number) => void
-  onContextMenu: (e: React.MouseEvent, segmentIndex: number) => void
-}
-
-function InlineSegments({
-  segments,
-  onFold,
-  onUnfold,
-  onContextMenu
-}: InlineSegmentsProps): React.JSX.Element {
-  return (
-    <>
-      {segments.map((seg, i) => {
-        if (seg.kind === 'text') {
-          return (
-            <span
-              key={i}
-              onContextMenu={(e) => {
-                e.stopPropagation()
-                onContextMenu(e, i)
-              }}
-            >
-              {seg.text}
-            </span>
-          )
-        }
-        return (
-          <ExpansionFrame
-            key={seg.expansionId}
-            segment={seg}
-            onFold={onFold}
-            onUnfold={onUnfold}
-            onContextMenu={onContextMenu}
-          />
-        )
-      })}
-    </>
-  )
-}
-
-export default ExpansionFrame
-export { InlineSegments }
+export default memo(ExpansionFrame)

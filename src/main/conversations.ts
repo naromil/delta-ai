@@ -8,7 +8,8 @@ import type {
   ConversationMeta,
   ConversationSearchResult
 } from '../shared/conversation'
-import { flattenMarkdown, toConversationMeta } from '../shared/conversation'
+import { migrateConversationRecord, toConversationMeta } from '../shared/conversation'
+import { flattenMarkdown } from '../shared/rich-text'
 import { writeFileAtomic } from './services/atomic-file'
 
 /** Conversation ids are UUIDs; anything else must never reach the filesystem. */
@@ -64,24 +65,62 @@ async function ensureConversationsDir(): Promise<void> {
   }
 }
 
-export async function saveConversation(record: ConversationRecord): Promise<void> {
+async function readRecordFile(
+  filePath: string,
+  label?: string
+): Promise<ConversationRecord | null> {
+  try {
+    const data = await readFile(filePath, 'utf-8')
+    return JSON.parse(data) as ConversationRecord
+  } catch (err) {
+    if (label !== undefined) console.warn(`Failed to read conversation ${label}:`, err)
+    return null
+  }
+}
+
+async function writeConversation(
+  record: ConversationRecord,
+  preserveKbFed: boolean
+): Promise<void> {
   const filePath = conversationPath(record.id)
   if (!filePath) return
   await ensureConversationsDir()
-  await writeFileAtomic(filePath, JSON.stringify(record, null, 2))
-  notifyConversationSaved(record)
+  // `kbFed` is owned by the KB flow in main; an auto-save from the renderer
+  // must not reset it. Pass `preserveKbFed: false` from the KB writers.
+  const next = preserveKbFed
+    ? await readRecordFile(filePath).then((existing) =>
+        existing ? { ...record, kbFed: existing.kbFed } : record
+      )
+    : record
+  await writeFileAtomic(filePath, JSON.stringify(next, null, 2))
+  // Notify with what actually landed on disk, so a preserved `kbFed` is not
+  // mistaken for a freshly unfed conversation.
+  notifyConversationSaved(next)
+}
+
+/** Per-id save chains: overlapping autosaves can never finish out of order. */
+const saveChains = new Map<string, Promise<void>>()
+
+export function saveConversation(
+  record: ConversationRecord,
+  options?: { preserveKbFed?: boolean }
+): Promise<void> {
+  const runWrite = (): Promise<void> => writeConversation(record, options?.preserveKbFed ?? false)
+  const previous = saveChains.get(record.id) ?? Promise.resolve()
+  const run = previous.then(runWrite, runWrite)
+  const chain = run.catch(() => undefined)
+  saveChains.set(record.id, chain)
+  void chain.then(() => {
+    if (saveChains.get(record.id) === chain) saveChains.delete(record.id)
+  })
+  return run
 }
 
 export async function loadConversation(id: string): Promise<ConversationRecord | null> {
   const filePath = conversationPath(id)
   if (!filePath) return null
-  try {
-    const data = await readFile(filePath, 'utf-8')
-    return JSON.parse(data) as ConversationRecord
-  } catch (err) {
-    console.warn(`Failed to read conversation ${id}:`, err)
-    return null
-  }
+  const record = await readRecordFile(filePath, id)
+  return record ? migrateConversationRecord(record) : null
 }
 
 export async function deleteConversation(id: string): Promise<void> {
