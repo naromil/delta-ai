@@ -1,9 +1,42 @@
 import { useState, useEffect, useRef } from 'react'
+import type { KbMaintenanceStatus } from '../../../../shared/kb'
+
+const MINUTE_MS = 60_000
+
+function formatElapsed(iso: string): string {
+  const then = Date.parse(iso)
+  if (!Number.isFinite(then)) return 'recently'
+  const minutes = Math.max(0, Math.round((Date.now() - then) / MINUTE_MS))
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`
+  const hours = Math.round(minutes / 60)
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`
+  const days = Math.round(hours / 24)
+  return `${days} day${days === 1 ? '' : 's'} ago`
+}
+
+/** One sentence explaining what the background loop is doing, and why. */
+function describeStatus(status: KbMaintenanceStatus | null): string {
+  if (!status) return 'Automatic learning status unavailable.'
+  if (!status.configured) {
+    return 'Assign a model to Knowledge Base Maintenance to learn automatically.'
+  }
+  if (!status.enabled) {
+    return 'Automatic learning is off — turn it on in Settings → General.'
+  }
+  if (status.state === 'running') return 'Learning from your conversations…'
+  if (status.pending > 0) {
+    const pending = `${status.pending} conversation${status.pending === 1 ? '' : 's'}`
+    return `${pending} queued for automatic learning`
+  }
+  if (status.lastLearnedAt) return `Learning profile updated ${formatElapsed(status.lastLearnedAt)}`
+  return 'Automatic learning is on — the profile builds as you chat.'
+}
 
 function KnowledgeView(): React.JSX.Element {
   const [prompt, setPrompt] = useState<string>('')
   const [savedPrompt, setSavedPrompt] = useState<string>('')
-  const [unfedCount, setUnfedCount] = useState<number>(0)
+  const [status, setStatus] = useState<KbMaintenanceStatus | null>(null)
   const [totalCount, setTotalCount] = useState<number>(0)
   const [loadingAnalyze, setLoadingAnalyze] = useState<boolean>(false)
   const [loadingReanalyze, setLoadingReanalyze] = useState<boolean>(false)
@@ -14,22 +47,36 @@ function KnowledgeView(): React.JSX.Element {
   const [showReanalyzeInput, setShowReanalyzeInput] = useState<boolean>(false)
   const [reanalyzeCount, setReanalyzeCount] = useState<string>('')
   const reanalyzeInputRef = useRef<HTMLInputElement>(null)
+  const promptRef = useRef(prompt)
+  const savedPromptRef = useRef(savedPrompt)
+  const statusVersionRef = useRef(0)
+
+  useEffect(() => {
+    promptRef.current = prompt
+  }, [prompt])
+
+  useEffect(() => {
+    savedPromptRef.current = savedPrompt
+  }, [savedPrompt])
 
   useEffect(() => {
     let cancelled = false
+    const version = statusVersionRef.current
     async function load(): Promise<void> {
       try {
-        const [{ prompt: p }, unfed, all] = await Promise.all([
+        const [{ prompt: p }, all, kbStatus] = await Promise.all([
           window.api.kbLoadPrompt(),
-          window.api.listUnfedConversations(),
-          window.api.listConversations()
+          window.api.listConversations(),
+          window.api.kbGetStatus()
         ])
-        if (!cancelled) {
-          setPrompt(p)
-          setSavedPrompt(p)
-          setUnfedCount(unfed.length)
-          setTotalCount(all.length)
-        }
+        if (cancelled) return
+        setTotalCount(all.length)
+        // A pushed status (and its prompt read) landed while this snapshot was
+        // in flight; the subscription owns the display from now on.
+        if (statusVersionRef.current !== version) return
+        setPrompt(p)
+        setSavedPrompt(p)
+        setStatus(kbStatus)
       } catch {
         // ignore
       }
@@ -40,12 +87,39 @@ function KnowledgeView(): React.JSX.Element {
     }
   }, [])
 
+  /* Follow the background loop: it can finish a pass while this view is open. */
+  useEffect(() => {
+    let cancelled = false
+    const unsubscribe = window.api.kbOnStatus((next) => {
+      if (cancelled) return
+      statusVersionRef.current += 1
+      setStatus(next)
+
+      // A pass rewrites prompt.txt. Adopt it unless the user is editing; re-check
+      // after the read, since typing may start while it is in flight.
+      if (promptRef.current !== savedPromptRef.current) return
+      window.api
+        .kbLoadPrompt()
+        .then(({ prompt: learned }) => {
+          if (cancelled) return
+          if (promptRef.current !== savedPromptRef.current) return
+          setPrompt(learned)
+          setSavedPrompt(learned)
+        })
+        .catch(() => undefined)
+    })
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
+  }, [])
+
   const refreshCounts = async (): Promise<void> => {
-    const [unfed, all] = await Promise.all([
-      window.api.listUnfedConversations(),
-      window.api.listConversations()
+    const [all, kbStatus] = await Promise.all([
+      window.api.listConversations(),
+      window.api.kbGetStatus()
     ])
-    setUnfedCount(unfed.length)
+    setStatus(kbStatus)
     setTotalCount(all.length)
   }
 
@@ -121,8 +195,8 @@ function KnowledgeView(): React.JSX.Element {
   const handleReset = async (): Promise<void> => {
     if (
       !window.confirm(
-        'Delete the generated prompt and keywords? Conversation history is kept and becomes ' +
-          'available for analysis again.'
+        'Delete the generated prompt and keywords? Conversation history is kept, and automatic ' +
+          'learning rebuilds the profile from it when enabled.'
       )
     ) {
       return
@@ -135,7 +209,7 @@ function KnowledgeView(): React.JSX.Element {
       setPrompt(result.prompt)
       setSavedPrompt(result.prompt)
       await refreshCounts()
-      setLastResult('Knowledge base reset. Conversations are ready to be analyzed again.')
+      setLastResult('Knowledge base reset. Conversations are ready to be learned again.')
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -144,6 +218,8 @@ function KnowledgeView(): React.JSX.Element {
   }
 
   const busy = loadingAnalyze || loadingReanalyze || loadingSave || loadingReset
+  const autoRunning = status?.state === 'running'
+  const pendingCount = status?.pending ?? 0
   const promptDirty = prompt !== savedPrompt
 
   return (
@@ -153,22 +229,18 @@ function KnowledgeView(): React.JSX.Element {
       </div>
       <div className="view-shell-content">
         <div className="kb-status-bar">
-          <span className="kb-status-text">
-            {unfedCount > 0
-              ? `${unfedCount} unfed conversation(s) ready for analysis`
-              : 'All conversations analyzed'}
-          </span>
+          <span className="kb-status-text">{describeStatus(status)}</span>
           <div className="kb-buttons">
             <button
               className="settings-header-save"
-              disabled={busy || unfedCount === 0}
+              disabled={busy || autoRunning || pendingCount === 0}
               onClick={handleAnalyze}
             >
-              {loadingAnalyze ? 'Analyzing...' : 'Analyze'}
+              {loadingAnalyze ? 'Analyzing...' : 'Analyze now'}
             </button>
             <button
               className="settings-header-save"
-              disabled={busy || totalCount === 0}
+              disabled={busy || autoRunning || totalCount === 0}
               onClick={startReanalyze}
             >
               {loadingReanalyze ? 'Re-analyzing...' : 'Re-Analyze'}
@@ -213,6 +285,9 @@ function KnowledgeView(): React.JSX.Element {
         )}
 
         {error && <p className="kb-error">{error}</p>}
+        {!error && status?.lastError && !autoRunning && (
+          <p className="kb-error">Automatic learning failed: {status.lastError}</p>
+        )}
         {lastResult && <p className="kb-result">{lastResult}</p>}
 
         <div className="kb-section">
@@ -220,8 +295,9 @@ function KnowledgeView(): React.JSX.Element {
             <div>
               <h3 className="settings-section-title">Personalized Lookup Prompt</h3>
               <p className="kb-section-desc">
-                Generated by the Knowledge Base Maintenance model from your conversation history.
-                You can revise it before the next look-up.
+                Learned from your conversation history and applied to every look-up. It refines
+                itself in the background; edits saved here are used as the baseline for the next
+                update.
               </p>
             </div>
             <div className="kb-buttons">
@@ -246,7 +322,7 @@ function KnowledgeView(): React.JSX.Element {
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             rows={12}
-            placeholder="Run analysis to generate a personalized system prompt..."
+            placeholder="Your learning profile appears here after a few conversations..."
             spellCheck={false}
           />
           {promptDirty && <p className="kb-dirty">Unsaved changes</p>}

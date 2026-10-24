@@ -40,11 +40,13 @@ export const KB_ANALYSIS_SYSTEM_PROMPT = [
   '- Preferred explanation formats (e.g. examples first, definitions first, comparisons)',
   "- Current knowledge level in topics discussed (inferred from what the user didn't ask about)",
   '- Recurring question patterns',
+  'An existing personalization prompt may be provided. Treat it as the baseline: keep what the new conversations confirm, and change only what they contradict or extend. Never drop a stable preference because one conversation does not mention it.',
+  'The prompt is applied silently to an AI assistant, so it must describe preferences in general terms — never reference a specific conversation or screen.',
   "Output ONLY a structured description of the user's learning preference.",
   'No preamble, no explanations, no "Based on the analysis..."',
   "just the paragraph text that will be injected as a system prompt to personalize an AI assistant's responses.",
   "No content related to the specific details of the conversations, just the user's learning preferences.",
-  'Always answer in one paragraph. No irrelevant information.'
+  'Always answer in one paragraph of at most 200 words. No irrelevant information.'
 ].join(' ')
 
 export const KB_KEYWORD_SYSTEM_PROMPT = [

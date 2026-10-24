@@ -43,6 +43,8 @@ interface AppSettings {
   hotkey: string
   closeToTray: boolean
   lookupContextMode: LookupContextMode
+  /** Learn the user's preferences in the background; see `kb/maintenance.ts`. */
+  kbAutoMaintain: boolean
 }
 
 /* ---- Wayland detection ----
@@ -174,7 +176,8 @@ export let currentLookupContextMode: LookupContextMode = 'clipboard'
 const DEFAULT_SETTINGS: AppSettings = {
   hotkey: DEFAULT_HOTKEY,
   closeToTray: true,
-  lookupContextMode: 'clipboard'
+  lookupContextMode: 'clipboard',
+  kbAutoMaintain: true
 }
 
 /** Accept only the shapes the app can honour; a hand-edited file must not poison them. */
@@ -192,7 +195,11 @@ export function normalizeAppSettings(raw: unknown): AppSettings {
     lookupContextMode:
       record.lookupContextMode === 'fullscreen-ocr'
         ? 'fullscreen-ocr'
-        : DEFAULT_SETTINGS.lookupContextMode
+        : DEFAULT_SETTINGS.lookupContextMode,
+    kbAutoMaintain:
+      typeof record.kbAutoMaintain === 'boolean'
+        ? record.kbAutoMaintain
+        : DEFAULT_SETTINGS.kbAutoMaintain
   }
 }
 
@@ -279,6 +286,34 @@ export function resolveRole(roleId: RoleId): { connection: Connection; model: st
   return { connection, model: assignment.model }
 }
 
+/* ---- Config change notifications ---- */
+
+type AppConfigChangedListener = () => void
+
+const configChangedListeners = new Set<AppConfigChangedListener>()
+
+/**
+ * Notifies listeners after a successful settings/model-config save. The
+ * Knowledge Base maintenance loop uses it to start learning as soon as it is
+ * configured or re-enabled, instead of waiting for the next chat.
+ */
+export function onAppConfigChanged(listener: AppConfigChangedListener): () => void {
+  configChangedListeners.add(listener)
+  return () => {
+    configChangedListeners.delete(listener)
+  }
+}
+
+function notifyAppConfigChanged(): void {
+  for (const listener of configChangedListeners) {
+    try {
+      listener()
+    } catch (err) {
+      console.warn('Config change listener failed:', err)
+    }
+  }
+}
+
 /* ---- IPC handlers ---- */
 
 export function registerConfigIpcHandlers(): void {
@@ -319,7 +354,10 @@ export function registerConfigIpcHandlers(): void {
       }
 
       const ok = saveAppSettings(normalized)
-      if (ok) applyAppSettings(normalized)
+      if (ok) {
+        applyAppSettings(normalized)
+        notifyAppConfigChanged()
+      }
       return {
         success: ok,
         hotkeyMode: getHotkeyStatus().mode,
@@ -350,6 +388,7 @@ export function registerConfigIpcHandlers(): void {
     (_event, config: ModelConfig): { success: boolean; error?: string } => {
       const result = saveModelConfig(config)
       if (!result.ok) console.warn(`Failed to save model config: ${result.error}`)
+      if (result.ok) notifyAppConfigChanged()
       return result.ok ? { success: true } : { success: false, error: result.error }
     }
   )

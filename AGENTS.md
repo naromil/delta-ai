@@ -79,8 +79,9 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | `conversation-load-most-recent`           | Renderer → Main | Load most recently updated chat conversation (startup auto-load)                 |
 | `conversation-list-unfed` / `-kb-fed`     | Renderer → Main | KB model integration: list unfed; mark fed (+ auto-delete lookup source)         |
 | `kb-load-prompt` / `kb-save-prompt`       | Renderer → Main | Read the learned prompt; save an edited prompt (+ return keywords)               |
-| `kb-reset`                                | Renderer → Main | Delete prompt + keywords; clears `kbFed` on chat records                         |
-| `kb-analyze` / `kb-reanalyze`             | Renderer → Main | KB maintenance over unfed conversations / the last N                             |
+| `kb-reset`                                | Renderer → Main | Delete prompt + keywords + run state; clears `kbFed`; auto rebuilds when enabled |
+| `kb-analyze` / `kb-reanalyze`             | Renderer → Main | Manual maintenance over unfed conversations / the last N                         |
+| `kb-get-status` / `kb-status`             | Renderer ↔ Main | Automatic learning status: invoke a snapshot; main pushes every change           |
 
 #### Module map
 
@@ -104,10 +105,13 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | Atomic writes       | `services/atomic-file.ts`     | Temp-file + rename writes (`writeFileAtomic[Sync]`) for config, KB and conversation files          |
 | Provider dispatch   | `provider.ts`                 | `callProvider` + `callProviderStream(…, signal?)` (resolves role → connection → backend)           |
 | Model re-exports    | `models/registries.ts`        | Re-exports shared types/registries so main imports stay stable without crossing renderer boundary  |
-| Config schema       | `models/config-schema.ts`     | Zod schema, v1→v2 migration, repair of dangling roles/unknown providers                            |
+| Config schema       | `models/config-schema.ts`     | Zod schema, v1→v3 migrations, repair of dangling roles/unknown providers                           |
 | Model catalog       | `services/model-catalog.ts`   | models.dev fetch + 24h disk cache (`{userData}/cache/models-dev.json`) + `load-model-catalog` IPC  |
-| KB handlers         | `kb/handlers.ts`              | `kb-*` handlers; `kb-reset` also clears chat `kbFed` via `resetKbFedFlags`                         |
-| KB store            | `kb/store.ts`                 | `{userData}/kb/prompt.txt` + `keywords.json` I/O (atomic); `resetKb` deletes both                  |
+| KB handlers         | `kb/handlers.ts`              | `kb-*` handlers; `kb-reset` queues the wipe behind running passes via `resetKbProfile`             |
+| KB scheduler        | `kb/maintenance.ts`           | Automatic learning: debounce, batching, backoff, single-flight queue, `kb-status` push             |
+| KB run pipeline     | `kb/run.ts`                   | `runKbAnalysis(metas, { markFed, signal })` — folds conversations into prompt + keywords           |
+| KB pacing policy    | `kb/schedule.ts`              | Pure timing/batch decisions (debounce, backlog, retry backoff, startup delay)                      |
+| KB store            | `kb/store.ts`                 | `prompt.txt` + `keywords.json` + `state.json` I/O (atomic); `resetKb` deletes all three            |
 | Lookup orchestrator | `lookup/lookup.ts`            | Hotkey entry point (capture + OCR + create popup)                                                  |
 | Lookup popup window | `lookup/window.ts`            | BrowserWindow + grow animation + ref-counted ocr-image handler                                     |
 | Capture + OCR       | `lookup/capture.ts`           | Screen capture + tesseract.js worker                                                               |
@@ -155,6 +159,8 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | Persist or load conversations         | `conversations.ts` (main) + `useChatStreaming.ts` (renderer)                         |
 | Search conversations                  | `conversations.ts` (`searchConversations`) + `ConversationSearch.tsx`                |
 | KB prompt / fed flags                 | `kb/handlers.ts` + `conversations.ts` (`resetKbFedFlags`) + `KnowledgeView.tsx`      |
+| Automatic learning pacing             | `kb/schedule.ts` (pure) + `kb/maintenance.ts` (timers, queue, status)                |
+| What gets folded into the profile     | `kb/run.ts` (`runKbAnalysis`) + `kb/analysis.ts` (material/messages)                 |
 | Stop/retry generation                 | `useChatStreaming.ts` (`stop`/`retry`) + `Conversation.tsx`, `Turn.tsx`              |
 | Renderer chat UI                      | `App.tsx`, `Conversation.tsx`, `Turn.tsx`, `ConversationSearch.tsx`                  |
 | Provider config form                  | `components/settings/models/ModelsTab.tsx` (+ `RoleRow.tsx`, `ConnectionCard.tsx`)   |
@@ -192,6 +198,9 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   `isKdeWaylandSession()` gate it. Keep `desktopCapturer` as default for
   X11/macOS/Windows and non-KDE Wayland.
 - **Config files** live under `{userData}/config/` (`providers.json`, `settings.json`).
+  `settings.json` holds `hotkey`, `closeToTray`, `lookupContextMode` and `kbAutoMaintain`
+  (default `true`); `save-settings` normalizes the whole payload, so a new field must be
+  preserved by every `saveSettings` caller (Settings view, Look-Up Guide).
   Always go through `config.ts` helpers; call `ensureConfigDir()` before writing. Writes use
   `services/atomic-file.ts` (sibling temp file + rename), so a crash can't truncate them.
   `save-settings` normalizes the payload and registers the requested hotkey **before**
@@ -261,11 +270,21 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   `serializeForChat` omits assistant turns that are `error: true` or have blank/whitespace
   content (in-flight/legacy placeholders), so neither error text nor empty placeholders are
   replayed to the model; error turns stay on disk so Retry survives a reload.
-- **KB reset (`kb-reset`) deletes `{userData}/kb/prompt.txt` + `keywords.json` and clears
-  `kbFed` on chat records** via `resetKbFedFlags()` (lookup records are untouched). Conversation
-  history stays on disk, so the next Analyze can rebuild the prompt from it; the Knowledge view
-  refreshes unfed/total counts and its confirm text says history is retained.
-  `kb-save-prompt` writes an edited prompt atomically and returns the prompt + keywords.
+- **KB maintenance is automatic.** `kb/maintenance.ts` subscribes to `onConversationSaved`
+  (`conversations.ts`) and `onAppConfigChanged` (`config.ts`). A save starts a 20s-debounced
+  pass that folds at most 4 newest unfed chat conversations into `prompt.txt` through the
+  `kb-maintenance` role; a backlog continues every 45s, failures back off 2m → 30m, and
+  `kb/state.json` persists pacing/error state. All runs (manual or automatic) share one queue,
+  so writes never interleave. Nothing runs without a `kb-maintenance` model, and
+  `settings.json → kbAutoMaintain` (default true, Settings → General) stops it. Status is pushed
+  as `kb-status`; the Knowledge view renders it, and the Home view refreshes its tags.
+- **KB reset (`kb-reset`) is queued behind running passes.** `resetKbProfile()` aborts the
+  in-flight pass, deletes `{userData}/kb/prompt.txt` + `keywords.json` + `state.json`, and clears
+  `kbFed` on chat records via `resetKbFedFlags()` (lookup records are untouched). Conversation
+  history stays on disk, so automatic learning rebuilds the profile from it when enabled;
+  the Knowledge view refreshes its status and its confirm text says history is retained.
+  `kb-save-prompt` writes an edited prompt atomically; the next automatic pass treats it as the
+  baseline to refine rather than replacing it from scratch.
 - **Inline expansions use index-based anchoring, not live DOM Range.** Right-click
   computes `(startIndex, endIndex)` against the `ExpandableSegment[]` at event time,
   snapshots the indices, and closes over them. No `Range` objects survive into React state.

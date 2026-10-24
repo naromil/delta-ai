@@ -33,6 +33,8 @@ function Settings(): React.JSX.Element {
   const [hotkeyMode, setHotkeyMode] = useState<'global' | 'local'>('global')
   const [closeToTray, setCloseToTray] = useState(true)
   const [lookupContextMode, setLookupContextMode] = useState<LookupContextMode>('clipboard')
+  const [kbAutoMaintain, setKbAutoMaintain] = useState(true)
+  const [settingsLoaded, setSettingsLoaded] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const hotkeyRef = useRef(hotkey)
@@ -62,27 +64,35 @@ function Settings(): React.JSX.Element {
 
     window.api.getHotkeyStatus().then((status) => setHotkeyMode(status.mode))
 
-    window.api.loadSettings().then((s) => {
-      const settings = s as {
-        hotkey?: string
-        closeToTray?: boolean
-        lookupContextMode?: string
-      } | null
-      if (settings?.hotkey) {
-        setHotkey(settings.hotkey)
-        hotkeyRef.current = settings.hotkey
-      }
-      if (settings?.closeToTray !== undefined) {
-        setCloseToTray(settings.closeToTray)
-      }
-      if (
-        settings?.lookupContextMode === 'clipboard' ||
-        settings?.lookupContextMode === 'fullscreen-ocr'
-      ) {
-        setLookupContextMode(settings.lookupContextMode)
-        lookupContextModeRef.current = settings.lookupContextMode
-      }
-    })
+    window.api
+      .loadSettings()
+      .then((s) => {
+        const settings = s as {
+          hotkey?: string
+          closeToTray?: boolean
+          lookupContextMode?: string
+          kbAutoMaintain?: boolean
+        } | null
+        if (settings?.hotkey) {
+          setHotkey(settings.hotkey)
+          hotkeyRef.current = settings.hotkey
+        }
+        if (settings?.closeToTray !== undefined) {
+          setCloseToTray(settings.closeToTray)
+        }
+        if (
+          settings?.lookupContextMode === 'clipboard' ||
+          settings?.lookupContextMode === 'fullscreen-ocr'
+        ) {
+          setLookupContextMode(settings.lookupContextMode)
+          lookupContextModeRef.current = settings.lookupContextMode
+        }
+        if (settings?.kbAutoMaintain !== undefined) {
+          setKbAutoMaintain(settings.kbAutoMaintain)
+        }
+        setSettingsLoaded(true)
+      })
+      .catch(() => setSettingsLoaded(true))
   }, [])
 
   /* ---- Mutation helpers ---- */
@@ -135,7 +145,8 @@ function Settings(): React.JSX.Element {
       const settingsRes = await window.api.saveSettings({
         hotkey: hotkeyRef.current,
         closeToTray,
-        lookupContextMode: lookupContextModeRef.current
+        lookupContextMode: lookupContextModeRef.current,
+        kbAutoMaintain
       })
       if (cfgRes.success && settingsRes.success) {
         setSaved(true)
@@ -156,7 +167,11 @@ function Settings(): React.JSX.Element {
     <div className="settings">
       <div className="settings-header">
         <h2 className="settings-title">Settings</h2>
-        <button className="settings-header-save" onClick={handleSave} disabled={saving}>
+        <button
+          className="settings-header-save"
+          onClick={handleSave}
+          disabled={saving || !settingsLoaded}
+        >
           {saving ? 'Saving…' : saved ? '✓ Saved' : 'Save'}
         </button>
       </div>
@@ -200,6 +215,8 @@ function Settings(): React.JSX.Element {
               setLookupContextMode(mode)
               lookupContextModeRef.current = mode
             }}
+            kbAutoMaintain={kbAutoMaintain}
+            onKbAutoMaintainChange={setKbAutoMaintain}
           />
         )}
         {activeTab === 'models' && (

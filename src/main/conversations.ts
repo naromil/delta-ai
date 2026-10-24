@@ -17,6 +17,34 @@ const SAFE_CONVERSATION_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
 const SEARCH_SNIPPET_RADIUS = 80
 const SEARCH_RESULT_LIMIT = 100
 
+/* ---- Save notifications ---- */
+
+type ConversationSavedListener = (record: ConversationRecord) => void
+
+const savedListeners = new Set<ConversationSavedListener>()
+
+/**
+ * Notifies listeners after every successful write. A save is the only moment
+ * new learning material appears on disk, so the Knowledge Base maintenance loop
+ * subscribes here instead of polling.
+ */
+export function onConversationSaved(listener: ConversationSavedListener): () => void {
+  savedListeners.add(listener)
+  return () => {
+    savedListeners.delete(listener)
+  }
+}
+
+function notifyConversationSaved(record: ConversationRecord): void {
+  for (const listener of savedListeners) {
+    try {
+      listener(record)
+    } catch (err) {
+      console.warn('Conversation save listener failed:', err)
+    }
+  }
+}
+
 function conversationsDir(): string {
   return join(app.getPath('userData'), 'conversations')
 }
@@ -41,6 +69,7 @@ export async function saveConversation(record: ConversationRecord): Promise<void
   if (!filePath) return
   await ensureConversationsDir()
   await writeFileAtomic(filePath, JSON.stringify(record, null, 2))
+  notifyConversationSaved(record)
 }
 
 export async function loadConversation(id: string): Promise<ConversationRecord | null> {

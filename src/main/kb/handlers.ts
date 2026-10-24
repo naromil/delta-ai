@@ -1,62 +1,18 @@
 import { ipcMain } from 'electron'
-import { loadKbPrompt, saveKbPrompt, loadKbKeywords, saveKbKeywords, resetKb } from './store'
-import { callProvider } from '../provider'
+import { loadKbPrompt, saveKbPrompt, loadKbKeywords } from './store'
+import { listConversations, listUnfedConversations } from '../conversations'
 import {
-  loadConversation,
-  listConversations,
-  listUnfedConversations,
-  markConversationKbFed,
-  resetKbFedFlags
-} from '../conversations'
-import { buildSingleMaterial, buildKbAnalysisMessages, buildKbKeywordMessages } from './analysis'
-import { parseKeywords, mergeKeywords, trimByCategory } from './keywords'
-import type { CategorizedKeyword } from '../../shared/models'
+  getKbMaintenanceStatus,
+  recordManualKbRun,
+  resetKbProfile,
+  runKbAnalysisExclusive
+} from './maintenance'
 
-async function analyzeConversations(
-  metas: Array<{ id: string }>,
-  markFed: boolean
-): Promise<{ newPrompt: string; keywords: CategorizedKeyword[]; conversationsAnalyzed: number }> {
-  let currentPrompt = loadKbPrompt()
-  let analyzed = 0
-
-  for (const meta of metas) {
-    const record = await loadConversation(meta.id)
-    if (!record) continue
-
-    const material = buildSingleMaterial(record)
-    const analysisMessages = buildKbAnalysisMessages(currentPrompt, material)
-    currentPrompt = await callProvider(analysisMessages, 'kb-maintenance')
-    saveKbPrompt(currentPrompt)
-    analyzed++
-
-    if (markFed) {
-      await markConversationKbFed(meta.id)
-    }
-  }
-
-  if (analyzed === 0) {
-    return {
-      newPrompt: currentPrompt,
-      keywords: loadKbKeywords(),
-      conversationsAnalyzed: 0
-    }
-  }
-
-  const existingKeywords = loadKbKeywords()
-  const keywordMessages = buildKbKeywordMessages(currentPrompt, existingKeywords)
-  const rawKeywords = await callProvider(keywordMessages, 'kb-maintenance')
-  const parsed = parseKeywords(rawKeywords)
-  const merged = mergeKeywords(existingKeywords, parsed)
-  const trimmed = trimByCategory(merged)
-  saveKbKeywords(trimmed)
-
-  return {
-    newPrompt: currentPrompt,
-    keywords: trimmed,
-    conversationsAnalyzed: analyzed
-  }
-}
-
+/**
+ * Manual controls over the same pipeline the automatic loop runs. The
+ * Knowledge view keeps them for deliberate re-learning; normal use never
+ * needs them.
+ */
 export function registerKbIpcHandlers(): void {
   ipcMain.handle('kb-load-prompt', () => {
     return { prompt: loadKbPrompt(), keywords: loadKbKeywords() }
@@ -67,21 +23,26 @@ export function registerKbIpcHandlers(): void {
     return { prompt: loadKbPrompt(), keywords: loadKbKeywords() }
   })
 
+  ipcMain.handle('kb-get-status', () => getKbMaintenanceStatus())
+
   ipcMain.handle('kb-reset', async () => {
-    resetKb()
-    // Without this the next Analyze would see every conversation as already fed
-    // and rebuild nothing from the history that still exists on disk.
-    await resetKbFedFlags()
+    // The wipe is queued behind any running pass and clears kbFed, so the
+    // retained history can be learned again.
+    await resetKbProfile()
     return { prompt: loadKbPrompt(), keywords: loadKbKeywords() }
   })
 
   ipcMain.handle('kb-analyze', async () => {
     const unfed = await listUnfedConversations()
-    return analyzeConversations(unfed, true)
+    const result = await runKbAnalysisExclusive(unfed, { markFed: true })
+    await recordManualKbRun(result.conversationsAnalyzed)
+    return result
   })
 
   ipcMain.handle('kb-reanalyze', async (_event, n: number) => {
     const all = await listConversations()
-    return analyzeConversations(all.slice(0, n), false)
+    const result = await runKbAnalysisExclusive(all.slice(0, n), { markFed: false })
+    await recordManualKbRun(result.conversationsAnalyzed)
+    return result
   })
 }
