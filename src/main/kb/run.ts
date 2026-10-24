@@ -42,6 +42,9 @@ export async function runKbAnalysis(
     if (options.signal?.aborted) break
     const record = await loadConversation(meta.id)
     if (!record) continue
+    // The caller's list may predate the queue wait: a manual or automatic pass
+    // that won the queue already folded this conversation in.
+    if (options.markFed && record.kbFed) continue
 
     if (record.source === 'lookup' || !hasLearningMaterial(record)) {
       if (options.markFed) await markConversationKbFed(meta.id)

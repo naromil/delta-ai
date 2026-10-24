@@ -112,6 +112,29 @@ describe('runKbAnalysis', () => {
     expect(markConversationKbFed).toHaveBeenCalledWith('lookup_a')
   })
 
+  it('does not relearn a conversation that was fed while it was queued', async () => {
+    loadConversation.mockResolvedValueOnce(record('chat_fed', { kbFed: true }))
+
+    const result = await runKbAnalysis([{ id: 'chat_fed' }], { markFed: true })
+
+    expect(result.conversationsAnalyzed).toBe(0)
+    expect(callProvider).not.toHaveBeenCalled()
+    expect(markConversationKbFed).not.toHaveBeenCalled()
+  })
+
+  it('still re-analyzes fed conversations when markFed is false', async () => {
+    loadConversation.mockResolvedValueOnce(record('chat_fed', { kbFed: true }))
+    callProvider
+      .mockResolvedValueOnce('REFRESHED PROMPT')
+      .mockResolvedValueOnce('machine learning [topic]')
+
+    const result = await runKbAnalysis([{ id: 'chat_fed' }], { markFed: false })
+
+    expect(result.conversationsAnalyzed).toBe(1)
+    expect(saveKbPrompt).toHaveBeenCalledWith('REFRESHED PROMPT')
+    expect(markConversationKbFed).not.toHaveBeenCalled()
+  })
+
   it('stops between conversations when the pass is aborted, keeping earlier progress', async () => {
     const controller = new AbortController()
     loadConversation.mockImplementation(async (id: string) => record(id))
