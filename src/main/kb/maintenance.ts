@@ -29,7 +29,7 @@ import { loadKbState, resetKb, saveKbState } from './store'
  * - nothing runs without a `kb-maintenance` model assignment.
  */
 
-let timer: NodeJS.Timeout | null = null
+let timer: NodeJS.Timeout | undefined
 let running = false
 let started = false
 let pendingCount = 0
@@ -102,11 +102,11 @@ export async function getKbMaintenanceStatus(): Promise<KbMaintenanceStatus> {
 /* ---- Scheduling ---- */
 
 function schedule(delayMs: number): void {
-  if (timer) clearTimeout(timer)
+  clearTimeout(timer)
   timer = setTimeout(
     () => {
-      timer = null
-      void runAutoPass()
+      timer = undefined
+      void runAutoPass().catch((err) => console.warn('Automatic KB pass failed:', err))
     },
     Math.max(0, delayMs)
   )
@@ -131,25 +131,27 @@ async function runAutoPass(): Promise<void> {
     return
   }
 
-  const unfed = await listUnfedConversations()
-  pendingCount = unfed.filter((meta) => meta.source === 'chat' && !meta.kbFed).length
-  const batch = selectAutoBatch(unfed)
-  if (batch.length === 0) {
-    publishStatus()
-    return
-  }
-
-  const previous = loadKbState()
-  const controller = new AbortController()
-  activeRunController = controller
+  // Claim the pass before the first await: two timer callbacks must never both
+  // select the same batch and enqueue overlapping runs.
   running = true
-  publishStatus()
+  let controller: AbortController | null = null
 
   try {
+    const unfed = await listUnfedConversations()
+    pendingCount = unfed.filter((meta) => meta.source === 'chat' && !meta.kbFed).length
+    const batch = selectAutoBatch(unfed)
+    if (batch.length === 0) return
+
+    const previous = loadKbState()
+    const runController = new AbortController()
+    controller = runController
+    activeRunController = runController
+    publishStatus()
+
     const result = await runExclusive(() =>
-      runKbAnalysis(batch, { markFed: true, signal: controller.signal })
+      runKbAnalysis(batch, { markFed: true, signal: runController.signal })
     )
-    if (controller.signal.aborted) return
+    if (runController.signal.aborted) return
 
     const now = new Date().toISOString()
     pendingCount = await countPending()
@@ -162,18 +164,21 @@ async function runAutoPass(): Promise<void> {
     })
     if (pendingCount > 0) schedule(AUTO_BACKLOG_INTERVAL_MS)
   } catch (err) {
-    if (controller.signal.aborted) return
-    const failedAttempts = previous.failedAttempts + 1
+    if (controller?.signal.aborted) return
+    // Read the state as it is *now*: another pass may have finished while this
+    // one waited in the queue, and its learning event must not be overwritten.
+    const state = loadKbState()
+    const failedAttempts = state.failedAttempts + 1
     const message = errorMessage(err)
     saveKbState({
-      ...previous,
+      ...state,
       lastRunAt: new Date().toISOString(),
       lastError: message,
       failedAttempts
     })
     schedule(autoFollowUpDelayMs({ pending: true, failed: true, failedAttempts }))
   } finally {
-    activeRunController = null
+    if (activeRunController === controller) activeRunController = null
     running = false
     publishStatus()
   }
@@ -223,15 +228,24 @@ export function startKbAutoMaintenance(): void {
 }
 
 export function stopKbAutoMaintenance(): void {
-  if (timer) {
+  if (timer !== undefined) {
     clearTimeout(timer)
-    timer = null
+    timer = undefined
   }
   unsubscribeConversations?.()
   unsubscribeConversations = null
   unsubscribeConfig?.()
   unsubscribeConfig = null
   started = false
+}
+
+/** Test-only: drop timers, subscriptions and queue state between isolated cases. */
+export function resetKbMaintenanceForTests(): void {
+  stopKbAutoMaintenance()
+  queue = Promise.resolve()
+  running = false
+  pendingCount = 0
+  activeRunController = null
 }
 
 /* ---- Manual runs (Analyze / Re-Analyze) ---- */
@@ -267,9 +281,9 @@ export async function recordManualKbRun(conversationsAnalyzed: number): Promise<
  * late response cannot resurrect the deleted prompt.
  */
 export async function resetKbProfile(): Promise<void> {
-  if (timer) {
+  if (timer !== undefined) {
     clearTimeout(timer)
-    timer = null
+    timer = undefined
   }
   activeRunController?.abort()
 
