@@ -2,6 +2,7 @@ import { join } from 'path'
 import { readFileSync, existsSync, mkdirSync, rmSync } from 'fs'
 import { app } from 'electron'
 import type { CategorizedKeyword } from '../../shared/models'
+import { emptyKbState, normalizeKbState, type KbPersistedState } from '../../shared/kb'
 import { writeFileAtomicSync } from '../services/atomic-file'
 
 /* ---- KB directory ---- */
@@ -46,9 +47,26 @@ export function saveKbKeywords(keywords: CategorizedKeyword[]): void {
   writeFileAtomicSync(join(kbDir(), 'keywords.json'), JSON.stringify(keywords))
 }
 
-/** Delete the learned prompt and keywords; the next analysis starts from scratch. */
+/* ---- Maintenance state ---- */
+export function loadKbState(): KbPersistedState {
+  let statePath = ''
+  try {
+    statePath = join(kbDir(), 'state.json')
+    if (!existsSync(statePath)) return emptyKbState()
+    return normalizeKbState(JSON.parse(readFileSync(statePath, 'utf-8')))
+  } catch (err) {
+    if (statePath) console.warn(`Failed to read KB state at ${statePath}:`, err)
+    return emptyKbState()
+  }
+}
+
+export function saveKbState(state: KbPersistedState): void {
+  writeFileAtomicSync(join(kbDir(), 'state.json'), JSON.stringify(normalizeKbState(state), null, 2))
+}
+
+/** Delete the learned prompt, keywords and run state; the next analysis starts from scratch. */
 export function resetKb(): void {
-  for (const name of ['prompt.txt', 'keywords.json']) {
+  for (const name of ['prompt.txt', 'keywords.json', 'state.json']) {
     rmSync(join(kbDir(), name), { force: true })
   }
 }

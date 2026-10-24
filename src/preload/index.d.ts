@@ -6,6 +6,7 @@ import type {
   ConversationSearchResult
 } from '../shared/conversation'
 import type { CategorizedKeyword, Connection } from '../shared/models'
+import type { KbMaintenanceStatus } from '../shared/kb'
 import type { ModelCatalogState } from '../shared/model-catalog'
 import type { ConnectionTestResult, DiscoveredModels } from '../main/services/model-discovery'
 
@@ -25,11 +26,13 @@ declare global {
         hotkey: string
         closeToTray: boolean
         lookupContextMode: string
+        kbAutoMaintain: boolean
       }>
       saveSettings: (settings: {
         hotkey: string
         closeToTray: boolean
         lookupContextMode: string
+        kbAutoMaintain: boolean
       }) => Promise<{ success: boolean; hotkeyMode: 'global' | 'local'; error?: string }>
       getHotkeyStatus: () => Promise<{ accelerator: string; mode: 'global' | 'local' }>
       setHotkeyCaptureActive: (active: boolean) => void
@@ -108,6 +111,8 @@ declare global {
         keywords: CategorizedKeyword[]
         conversationsAnalyzed: number
       }>
+      kbGetStatus: () => Promise<KbMaintenanceStatus>
+      kbOnStatus: (cb: (status: KbMaintenanceStatus) => void) => () => void
     }
   }
 }

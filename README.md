@@ -71,8 +71,11 @@ Renderer (React 19)          Preload (contextBridge)        Main process (Node)
 | `src/main/services/screen-capture.ts`               | Freedesktop Screenshot D-Bus portal for KDE Wayland (silent capture)                                                                                         |
 | `src/main/kb/analysis.ts`                           | KB personalization pipeline: serialize conversations, build analysis messages, extract learning preferences                                                  |
 | `src/main/kb/keywords.ts`                           | Pure keyword parsing, merging and per-category trimming                                                                                                      |
-| `src/main/kb/store.ts`                              | KB prompt/keyword files under `{userData}/kb/`                                                                                                               |
-| `src/main/kb/handlers.ts`                           | KB IPC handlers (kb-load-prompt, kb-analyze, kb-reanalyze)                                                                                                   |
+| `src/main/kb/run.ts`                                | Folds conversations into the learned prompt/keywords; skips empty and look-up records                                                                        |
+| `src/main/kb/schedule.ts`                           | Pure pacing policy: debounce, batch size, backlog interval, retry backoff, startup delay                                                                     |
+| `src/main/kb/maintenance.ts`                        | Automatic background maintenance: subscriptions, single-flight queue, status push, reset                                                                     |
+| `src/main/kb/store.ts`                              | KB prompt/keyword/state files under `{userData}/kb/`                                                                                                         |
+| `src/main/kb/handlers.ts`                           | KB IPC handlers (`kb-load-prompt`, `kb-get-status`, `kb-analyze`, `kb-reanalyze`, `kb-reset`)                                                                |
 | `src/preload/index.ts`                              | `contextBridge` API — config, lookup, chat streaming, conversation persistence, KB channels                                                                  |
 | `src/renderer/src/Root.tsx`                         | Routes between `App` (main window) and `LookupApp` (popup) via `?role=lookup`                                                                                |
 | `src/renderer/src/App.tsx`                          | App shell: sidebar navigation with 5 views (Home, Chat, Knowledge Base, Look-Up Guide, Settings)                                                             |
@@ -95,8 +98,8 @@ Renderer (React 19)          Preload (contextBridge)        Main process (Node)
 | `lookup-input-changed` / `lookup-close`                                            | Lookup → Main   | Blur guard and close                             |
 | `conversation-*`                                                                   | Renderer ↔ Main | Conversation CRUD (save/load/delete/list/search) |
 | `load-model-config` / `save-model-config`                                          | Renderer ↔ Main | Provider config                                  |
-| `load-settings` / `save-settings`                                                  | Renderer ↔ Main | App settings (hotkey, tray behavior)             |
-| `kb-*`                                                                             | Renderer ↔ Main | Knowledge Base analysis                          |
+| `load-settings` / `save-settings`                                                  | Renderer ↔ Main | App settings (hotkey, tray, automatic learning)  |
+| `kb-*`                                                                             | Renderer ↔ Main | Knowledge Base learning profile and analysis     |
 
 ---
 

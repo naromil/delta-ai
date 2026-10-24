@@ -51,8 +51,11 @@ Both windows talk to the same main process. Everything the app knows about the u
 | `src/main/lookup/handlers.ts`                                     | Paste-text / paste-image handlers                                                                                                                                                                                                                                                     |
 | `src/main/kb/analysis.ts`                                         | Structured conversation material + analysis/keyword message construction                                                                                                                                                                                                              |
 | `src/main/kb/keywords.ts`                                         | Pure keyword parsing, merging, per-category trimming                                                                                                                                                                                                                                  |
-| `src/main/kb/store.ts`                                            | `{userData}/kb/prompt.txt` and `keywords.json` I/O (atomic); `resetKb` deletes both                                                                                                                                                                                                   |
-| `src/main/kb/handlers.ts`                                         | `kb-load-prompt`, `kb-save-prompt`, `kb-reset` (also clears chat `kbFed`), `kb-analyze`, `kb-reanalyze`                                                                                                                                                                               |
+| `src/main/kb/run.ts`                                              | `runKbAnalysis(metas, { markFed, signal })`: folds conversations into the prompt and keywords, persisting per conversation, skipping empty/look-up records                                                                                                                            |
+| `src/main/kb/schedule.ts`                                         | Pure pacing policy: debounce, batch size, backlog interval, exponential retry, startup delay                                                                                                                                                                                          |
+| `src/main/kb/maintenance.ts`                                      | Automatic maintenance loop: save/config subscriptions, single-flight queue, bounded passes, backoff, `kb-status` fan-out, reset that aborts a running pass                                                                                                                            |
+| `src/main/kb/store.ts`                                            | `{userData}/kb/prompt.txt`, `keywords.json`, `state.json` I/O (atomic); `resetKb` deletes all three                                                                                                                                                                                   |
+| `src/main/kb/handlers.ts`                                         | `kb-load-prompt`, `kb-save-prompt`, `kb-reset`, `kb-get-status`, manual `kb-analyze`/`kb-reanalyze` (queued with the automatic loop)                                                                                                                                                  |
 | `src/main/services/global-shortcut.ts`                            | `org.freedesktop.portal.GlobalShortcuts` over D-Bus                                                                                                                                                                                                                                   |
 | `src/main/services/screen-capture.ts`                             | `org.freedesktop.portal.Screenshot` over D-Bus (silent capture)                                                                                                                                                                                                                       |
 | `src/renderer/src/hooks/useChatStreaming.ts`                      | Owns `ConversationState`, correlates `requestId`s, stop/retry, auto-saves                                                                                                                                                                                                             |
@@ -124,13 +127,30 @@ hook seeds its conversation metadata from that `createdAt` so later saves update
   assistant placeholders are dropped, and conversations with no persistable turns are not
   written. Error turns stay on disk but are omitted by `serializeForChat`, which also drops
   blank assistant placeholders.
-- `kb-analyze` walks unfed conversations one at a time through the `kb-maintenance` role,
-  persisting the rewritten prompt and marking each conversation fed **per conversation**, so an
-  interrupted run keeps its progress.
-- `kb-reanalyze(n)` reprocesses the `n` most recent conversations without marking them fed.
-- `kb-save-prompt` stores a user-edited prompt. `kb-reset` deletes `prompt.txt` and
-  `keywords.json`, then clears `kbFed` on chat records via `resetKbFedFlags()` (lookup records
-  are untouched), so the next Analyze can rebuild from the retained history.
+- The learning profile maintains itself. `onConversationSaved` in `conversations.ts` notifies
+  `kb/maintenance.ts` after every successful write; a 20s debounce after the last chat activity
+  starts a bounded pass (`AUTO_BATCH_SIZE`, newest first, chat only). The pass folds each
+  conversation into `prompt.txt` through the `kb-maintenance` role and marks it fed **per
+  conversation**, so an interrupted run keeps its progress. Empty conversations and standalone
+  look-ups are marked fed and skipped rather than retried forever.
+- Pacing lives in `kb/schedule.ts`: 45s between passes while a backlog remains, 10-minute
+  interval across restarts, exponential backoff (2m → 30m) after a failure. Every run is
+  serialized through one queue shared with the manual buttons, so two passes never interleave
+  writes. `kb/state.json` persists `lastRunAt`/`lastLearnedAt`/`lastError`/`failedAttempts`.
+- Nothing runs without a `kb-maintenance` model assignment, and `settings.json` →
+  `kbAutoMaintain` (default `true`, toggle in Settings → General) can stop it entirely.
+  Saving settings or the model config re-checks the queue, so enabling the feature or assigning
+  the model takes effect without waiting for the next chat.
+- `kb-status` is pushed to every window on run start/finish and on request through
+  `kb-get-status`; the Knowledge view renders it and adopts a newly learned prompt unless the
+  user has unsaved edits, and the Home view refreshes its keyword tags when a pass finishes.
+- `kb-analyze` runs the same pipeline over all unfed conversations; `kb-reanalyze(n)` reprocesses
+  the `n` most recent without marking them fed.
+- `kb-save-prompt` stores a user-edited prompt, which the next automatic pass treats as its
+  baseline. `kb-reset` runs inside the maintenance queue, aborts an in-flight pass, deletes
+  `prompt.txt`, `keywords.json` and `state.json`, and clears `kbFed` on chat records via
+  `resetKbFedFlags()` (lookup records are untouched), so the retained history can be learned
+  again.
 - The resulting prompt is injected into every lookup request; keywords are stored for future use.
 
 ---
@@ -156,7 +176,8 @@ hook seeds its conversation metadata from that `createdAt` so later saves update
 | `load-model-config` / `save-model-config`                   | R ↔ M        | Connections and role assignments                                |
 | `load-model-catalog`                                        | R ↔ M        | models.dev model catalog (cached, force-refresh)                |
 | `kb-load-prompt` / `kb-save-prompt` / `kb-reset`            | R ↔ M        | Prompt CRUD; reset also clears chat `kbFed`                     |
-| `kb-analyze` / `kb-reanalyze`                               | R ↔ M        | Knowledge Base maintenance                                      |
+| `kb-analyze` / `kb-reanalyze`                               | R ↔ M        | Manual Knowledge Base maintenance                               |
+| `kb-get-status` / `kb-status`                               | R ↔ M        | Automatic maintenance snapshot (invoke) + change push           |
 
 `save-settings` registers the requested accelerator before persisting. If registration throws or
 the desktop keeps the previous binding, it returns `{ success: false, error }` and does not
@@ -171,11 +192,12 @@ Startup registration is wrapped the same way — an invalid stored hotkey logs, 
 ```
 {userData}/
   config/providers.json     ModelConfig (schemaVersion 2)
-  config/settings.json      { hotkey, closeToTray, lookupContextMode }
+  config/settings.json      { hotkey, closeToTray, lookupContextMode, kbAutoMaintain }
   cache/models-dev.json     models.dev snapshot (24h TTL, offline fallback)
   conversations/{id}.json   ConversationRecord
   kb/prompt.txt             personalization prompt (plain text)
   kb/keywords.json          CategorizedKeyword[]
+  kb/state.json             { lastRunAt, lastLearnedAt, lastAnalyzed, lastError, failedAttempts }
   tesseract-cache/          tesseract.js traineddata
 ```
 
@@ -301,5 +323,6 @@ These are load-bearing; breaking one causes a bug that is hard to trace:
 - No tests for the renderer, the IPC handlers, or the OCR pipeline; the acceptance gate is
   typecheck + lint + unit tests + format.
 - The KB personalization prompt is only injected into lookup requests, not chat requests.
-- `kb-reanalyze` has no progress reporting: a long run shows nothing until it returns.
+- `kb-reanalyze` has no progress reporting and an automatic pass reports only its start/finish
+  through `kb-status`; a long run shows no per-conversation progress.
 - No auto-update path; releases are manual downloads.

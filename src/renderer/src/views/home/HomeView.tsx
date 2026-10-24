@@ -23,8 +23,14 @@ function HomeView(): React.JSX.Element {
       }
     }
     load()
+    // The profile learns itself; refresh the tags whenever a pass finishes.
+    const unsubscribe = window.api.kbOnStatus((status) => {
+      if (status.state === 'running') return
+      void load()
+    })
     return () => {
       cancelled = true
+      unsubscribe()
     }
   }, [])
 
@@ -38,8 +44,9 @@ function HomeView(): React.JSX.Element {
           <div className="home-empty">
             <h2 className="home-empty-title">No learning profile yet</h2>
             <p className="home-empty-text">
-              Open <strong>Knowledge Base</strong> and choose <strong>Analyze</strong> to build a
-              profile from your conversations. New topics and preferences will appear here.
+              Your learning profile builds itself as you chat with Delta AI. New topics and
+              preferences will appear here; automatic learning can be turned off in{' '}
+              <strong>Settings → General</strong>.
             </p>
           </div>
         ) : (

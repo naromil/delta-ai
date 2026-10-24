@@ -34,7 +34,8 @@ vi.mock('../../src/main/services/local-shortcut', () => ({
 const DEFAULTS = {
   hotkey: 'Ctrl+Shift+D',
   closeToTray: true,
-  lookupContextMode: 'clipboard'
+  lookupContextMode: 'clipboard',
+  kbAutoMaintain: true
 }
 
 describe('normalizeAppSettings', () => {
@@ -67,5 +68,12 @@ describe('normalizeAppSettings', () => {
     expect(normalizeAppSettings({ closeToTray: false }).closeToTray).toBe(false)
     expect(normalizeAppSettings({ closeToTray: 'false' }).closeToTray).toBe(true)
     expect(normalizeAppSettings({ closeToTray: null }).closeToTray).toBe(true)
+  })
+
+  it('defaults automatic KB maintenance on, and preserves an explicit opt-out', () => {
+    expect(normalizeAppSettings({}).kbAutoMaintain).toBe(true)
+    expect(normalizeAppSettings({ kbAutoMaintain: false }).kbAutoMaintain).toBe(false)
+    expect(normalizeAppSettings({ kbAutoMaintain: 'false' }).kbAutoMaintain).toBe(true)
+    expect(normalizeAppSettings({ kbAutoMaintain: null }).kbAutoMaintain).toBe(true)
   })
 })

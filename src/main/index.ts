@@ -39,6 +39,7 @@ import {
   searchConversations
 } from './conversations'
 import { registerKbIpcHandlers } from './kb/handlers'
+import { startKbAutoMaintenance, stopKbAutoMaintenance } from './kb/maintenance'
 import { registerModelCatalogIpcHandlers } from './services/model-catalog'
 import { loadKbPrompt } from './kb/store'
 
@@ -249,6 +250,7 @@ if (!hasSingleInstanceLock) {
     }
 
     createWindow()
+    startKbAutoMaintenance()
 
     app.on('activate', function () {
       if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -257,6 +259,7 @@ if (!hasSingleInstanceLock) {
 }
 
 app.on('will-quit', async () => {
+  stopKbAutoMaintenance()
   globalShortcut.unregisterAll()
   await unregisterGlobalShortcutPortal()
 })

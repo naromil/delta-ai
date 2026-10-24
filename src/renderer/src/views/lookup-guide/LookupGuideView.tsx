@@ -81,6 +81,7 @@ function LookupGuideView(): React.JSX.Element {
       hotkey: string
       closeToTray: boolean
       lookupContextMode: string
+      kbAutoMaintain: boolean
     }
     await window.api.saveSettings({ ...settings, lookupContextMode: mode })
   }, [])

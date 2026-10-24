@@ -9,6 +9,8 @@ interface GeneralTabProps {
   onCloseToTrayChange: (value: boolean) => void
   lookupContextMode: LookupContextMode
   onLookupContextModeChange: (value: LookupContextMode) => void
+  kbAutoMaintain: boolean
+  onKbAutoMaintainChange: (value: boolean) => void
 }
 
 function GeneralTab({
@@ -18,7 +20,9 @@ function GeneralTab({
   closeToTray,
   onCloseToTrayChange,
   lookupContextMode,
-  onLookupContextModeChange
+  onLookupContextModeChange,
+  kbAutoMaintain,
+  onKbAutoMaintainChange
 }: GeneralTabProps): React.JSX.Element {
   return (
     <>
@@ -39,6 +43,30 @@ function GeneralTab({
         <p className="settings-hint">
           Clipboard mode uses copied text or an image as context. Full-screen OCR captures the
           screen every time the look-up hotkey is pressed.
+        </p>
+      </div>
+      <div className="settings-section">
+        <label className="settings-label">Automatic learning profile</label>
+        <label className="toggle-row">
+          <input
+            type="checkbox"
+            className="toggle-input"
+            checked={kbAutoMaintain}
+            onChange={(e) => onKbAutoMaintainChange(e.target.checked)}
+          />
+          <span className="toggle-track">
+            <span className="toggle-thumb" />
+          </span>
+          <span className="toggle-label">
+            {kbAutoMaintain
+              ? 'Preferences learn from new chats in the background'
+              : 'Only learn when Analyze is pressed'}
+          </span>
+        </label>
+        <p className="settings-hint">
+          Delta AI periodically folds your conversations into a private learning-preference profile,
+          which tailors look-up answers. Runs use the Knowledge Base Maintenance model and never
+          block a look-up. Edit or clear the profile in the Knowledge Base view.
         </p>
       </div>
       <div className="settings-section">

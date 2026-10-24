@@ -6,6 +6,7 @@ import type {
   ConversationSearchResult
 } from '../shared/conversation'
 import type { CategorizedKeyword, Connection } from '../shared/models'
+import type { KbMaintenanceStatus } from '../shared/kb'
 import type { ModelCatalogState } from '../shared/model-catalog'
 import type { ConnectionTestResult, DiscoveredModels } from '../main/services/model-discovery'
 
@@ -25,11 +26,13 @@ const api = {
     hotkey: string
     closeToTray: boolean
     lookupContextMode: string
+    kbAutoMaintain: boolean
   }> => ipcRenderer.invoke('load-settings'),
   saveSettings: (settings: {
     hotkey: string
     closeToTray: boolean
     lookupContextMode: string
+    kbAutoMaintain: boolean
   }): Promise<{ success: boolean; hotkeyMode: 'global' | 'local'; error?: string }> =>
     ipcRenderer.invoke('save-settings', settings),
   getHotkeyStatus: (): Promise<{ accelerator: string; mode: 'global' | 'local' }> =>
@@ -165,7 +168,13 @@ const api = {
     newPrompt: string
     keywords: CategorizedKeyword[]
     conversationsAnalyzed: number
-  }> => ipcRenderer.invoke('kb-reanalyze', n)
+  }> => ipcRenderer.invoke('kb-reanalyze', n),
+  kbGetStatus: (): Promise<KbMaintenanceStatus> => ipcRenderer.invoke('kb-get-status'),
+  kbOnStatus: (cb: (status: KbMaintenanceStatus) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, status: KbMaintenanceStatus): void => cb(status)
+    ipcRenderer.on('kb-status', handler)
+    return () => ipcRenderer.removeListener('kb-status', handler)
+  }
 }
 
 if (process.contextIsolated) {
