@@ -87,18 +87,6 @@
   color: var(--accent);
 }
 
-.sidebar-nav-item.active::before {
-  content: '';
-  position: absolute;
-  left: -8px;
-  top: 50%;
-  width: 2px;
-  height: 18px;
-  transform: translateY(-50%);
-  border-radius: 0 2px 2px 0;
-  background: var(--accent);
-}
-
 .sidebar-nav-label {
   overflow: hidden;
   text-overflow: ellipsis;

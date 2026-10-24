@@ -90,7 +90,7 @@ function LookupGuideView(): React.JSX.Element {
       <div className="view-shell-header">
         <h1>Look-Up Guide</h1>
         <p className="view-shell-subtitle">
-          Press the hotkey anywhere to capture what is on screen and ask about it — without leaving
+          Press the hotkey anywhere to capture what is on screen and ask about it, without leaving
           what you are doing.
         </p>
       </div>

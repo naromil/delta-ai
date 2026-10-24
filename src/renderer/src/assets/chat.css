@@ -233,6 +233,11 @@ body {
   min-width: 0;
 }
 
+/* Keep answering text at a comfortable measure on wide windows. */
+.message-assistant .message-content {
+  max-width: 68ch;
+}
+
 /* Per-message actions, revealed on hover or keyboard focus */
 .message-actions {
   display: flex;
@@ -318,7 +323,7 @@ body {
 /* Jump to the newest turn */
 .jump-latest {
   position: absolute;
-  top: -40px;
+  top: -46px;
   left: 50%;
   transform: translateX(-50%);
   display: inline-flex;

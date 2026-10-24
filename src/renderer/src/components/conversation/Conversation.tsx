@@ -119,6 +119,10 @@ function Conversation({
     return () => window.removeEventListener('keydown', handleShortcut)
   }, [onLoadConversation, onNewChat])
 
+  useEffect(() => {
+    if (showSearch) closeContextMenu()
+  }, [showSearch, closeContextMenu])
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
     if (e.key === 'Enter' && !e.shiftKey) {
       if (e.nativeEvent.isComposing) return
