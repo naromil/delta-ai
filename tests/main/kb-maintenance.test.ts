@@ -54,10 +54,15 @@ vi.mock('../../src/main/kb/store', () => ({
 import {
   resetKbMaintenanceForTests,
   resetKbProfile,
+  runKbAnalysisExclusive,
   startKbAutoMaintenance,
   stopKbAutoMaintenance
 } from '../../src/main/kb/maintenance'
-import { AUTO_DEBOUNCE_MS } from '../../src/main/kb/schedule'
+import {
+  AUTO_BACKLOG_INTERVAL_MS,
+  AUTO_DEBOUNCE_MS,
+  AUTO_RETRY_BASE_MS
+} from '../../src/main/kb/schedule'
 
 const DEFAULT_SETTINGS = {
   hotkey: 'Ctrl+Shift+D',
@@ -138,12 +143,10 @@ beforeEach(() => {
   h.saveKbState.mockReset().mockImplementation((next: KbPersistedState) => {
     state = { ...next }
   })
-  h.resetKb
-    .mockReset()
-    .mockImplementation(() => {
-      h.events.push('wipe')
-      state = emptyKbState()
-    })
+  h.resetKb.mockReset().mockImplementation(() => {
+    h.events.push('wipe')
+    state = emptyKbState()
+  })
 })
 
 afterEach(() => {
@@ -314,6 +317,169 @@ describe('automatic KB pass scheduling', () => {
 
     expect(h.runKbAnalysis).not.toHaveBeenCalled()
     expect(vi.getTimerCount()).toBe(1)
+
+    await vi.advanceTimersByTimeAsync(AUTO_DEBOUNCE_MS)
+    expect(h.runKbAnalysis).toHaveBeenCalledTimes(1)
+  })
+
+  it('runs exactly one debounced pass and records the learning event', async () => {
+    startKbAutoMaintenance()
+    await settle()
+    expect(savedListener).not.toBeNull()
+    expect(vi.getTimerCount()).toBe(0)
+
+    unfed = [chat('chat_a')]
+    savedListener?.(record('chat_a'))
+    expect(vi.getTimerCount()).toBe(1)
+
+    await vi.advanceTimersByTimeAsync(AUTO_DEBOUNCE_MS - 1)
+    expect(h.runKbAnalysis).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(1)
+    expect(h.runKbAnalysis).toHaveBeenCalledTimes(1)
+    expect(h.runKbAnalysis.mock.calls[0][0].map((meta) => meta.id)).toEqual(['chat_a'])
+    expect(state.lastLearnedAt).toBe(new Date().toISOString())
+    expect(state.lastAnalyzed).toBe(1)
+    expect(state.lastError).toBeNull()
+    expect(state.failedAttempts).toBe(0)
+  })
+
+  it('coalesces a second save inside the debounce window', async () => {
+    startKbAutoMaintenance()
+    await settle()
+    unfed = [chat('chat_a')]
+
+    savedListener?.(record('chat_a'))
+    await vi.advanceTimersByTimeAsync(10_000)
+    savedListener?.(record('chat_a'))
+    expect(vi.getTimerCount()).toBe(1)
+
+    await vi.advanceTimersByTimeAsync(AUTO_DEBOUNCE_MS - 1)
+    expect(h.runKbAnalysis).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(h.runKbAnalysis).toHaveBeenCalledTimes(1)
+  })
+
+  it('drains a backlog on the 45s follow-up timer', async () => {
+    startKbAutoMaintenance()
+    await settle()
+    unfed = ['a', 'b', 'c', 'd', 'e', 'f'].map((id) => chat(id))
+
+    savedListener?.(record('a'))
+    await vi.advanceTimersByTimeAsync(AUTO_DEBOUNCE_MS)
+    expect(h.runKbAnalysis).toHaveBeenCalledTimes(1)
+    expect(h.runKbAnalysis.mock.calls[0][0].map((meta) => meta.id)).toEqual(['a', 'b', 'c', 'd'])
+    expect(vi.getTimerCount()).toBe(1)
+
+    await vi.advanceTimersByTimeAsync(AUTO_BACKLOG_INTERVAL_MS - 1)
+    expect(h.runKbAnalysis).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(h.runKbAnalysis).toHaveBeenCalledTimes(2)
+    expect(h.runKbAnalysis.mock.calls[1][0].map((meta) => meta.id)).toEqual(['e', 'f'])
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('records a failure and retries with exponential backoff', async () => {
+    startKbAutoMaintenance()
+    await settle()
+    unfed = [chat('chat_a')]
+    state = { ...emptyKbState(), lastLearnedAt: '2026-10-20T00:00:00.000Z' }
+
+    h.runKbAnalysis.mockRejectedValueOnce(new Error('API error 500'))
+    savedListener?.(record('chat_a'))
+    await vi.advanceTimersByTimeAsync(AUTO_DEBOUNCE_MS)
+
+    expect(state.lastError).toBe('API error 500')
+    expect(state.failedAttempts).toBe(1)
+    expect(state.lastLearnedAt).toBe('2026-10-20T00:00:00.000Z')
+    expect(vi.getTimerCount()).toBe(1)
+
+    await vi.advanceTimersByTimeAsync(AUTO_RETRY_BASE_MS - 1)
+    expect(h.runKbAnalysis).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(h.runKbAnalysis).toHaveBeenCalledTimes(2)
+    expect(state.lastError).toBeNull()
+    expect(state.failedAttempts).toBe(0)
+  })
+
+  it('does nothing when automatic learning is disabled', async () => {
+    h.loadAppSettings.mockReturnValue({ ...DEFAULT_SETTINGS, kbAutoMaintain: false })
+    unfed = [chat('chat_a')]
+
+    startKbAutoMaintenance()
+    await settle()
+    expect(vi.getTimerCount()).toBe(0)
+
+    savedListener?.(record('chat_a'))
+    expect(vi.getTimerCount()).toBe(0)
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(h.runKbAnalysis).not.toHaveBeenCalled()
+  })
+
+  it('does nothing when the maintenance role is unassigned', async () => {
+    h.resolveRole.mockReturnValue(null)
+    unfed = [chat('chat_a')]
+
+    startKbAutoMaintenance()
+    await settle()
+    expect(vi.getTimerCount()).toBe(0)
+
+    savedListener?.(record('chat_a'))
+    expect(vi.getTimerCount()).toBe(0)
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(h.runKbAnalysis).not.toHaveBeenCalled()
+  })
+
+  it('re-checks the setting when an already-scheduled timer fires', async () => {
+    startKbAutoMaintenance()
+    await settle()
+    unfed = [chat('chat_a')]
+
+    savedListener?.(record('chat_a'))
+    h.loadAppSettings.mockReturnValue({ ...DEFAULT_SETTINGS, kbAutoMaintain: false })
+    await vi.advanceTimersByTimeAsync(AUTO_DEBOUNCE_MS)
+
+    expect(h.runKbAnalysis).not.toHaveBeenCalled()
+  })
+
+  it('keeps the shared queue alive after a rejected task', async () => {
+    h.runKbAnalysis.mockRejectedValueOnce(new Error('provider exploded'))
+    await expect(runKbAnalysisExclusive([{ id: 'chat_a' }], { markFed: true })).rejects.toThrow(
+      'provider exploded'
+    )
+
+    h.runKbAnalysis.mockResolvedValueOnce({
+      newPrompt: 'recovered',
+      keywords: [],
+      conversationsAnalyzed: 1
+    })
+    await expect(
+      runKbAnalysisExclusive([{ id: 'chat_b' }], { markFed: true })
+    ).resolves.toMatchObject({ newPrompt: 'recovered' })
+  })
+
+  it('ignores saves that carry no learning signal', async () => {
+    startKbAutoMaintenance()
+    await settle()
+
+    savedListener?.(record('chat_a', { kbFed: true }))
+    savedListener?.(record('lookup_a', { source: 'lookup' }))
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('does not let startup pacing defer a pass scheduled by a save', async () => {
+    // The previous run was a minute ago, so the startup probe would wait ~9 minutes.
+    state = { ...emptyKbState(), lastRunAt: '2026-10-24T11:59:00.000Z' }
+    const scan = Promise.withResolvers<ConversationMeta[]>()
+    h.listUnfedConversations.mockImplementationOnce(() => scan.promise)
+
+    startKbAutoMaintenance()
+    unfed = [chat('chat_a')]
+    savedListener?.(record('chat_a'))
+    expect(vi.getTimerCount()).toBe(1)
+
+    scan.resolve(unfed)
+    await settle()
 
     await vi.advanceTimersByTimeAsync(AUTO_DEBOUNCE_MS)
     expect(h.runKbAnalysis).toHaveBeenCalledTimes(1)

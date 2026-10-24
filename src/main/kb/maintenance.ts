@@ -235,6 +235,9 @@ export function startKbAutoMaintenance(): void {
       // A stop (or stop/start pair) may have landed while the probe ran.
       if (token !== lifecycle || !started) return
       if (!status.enabled || !status.configured || status.pending === 0) return
+      // A save during the probe already scheduled the debounced pass; startup
+      // pacing must not push it out by up to the cross-restart interval.
+      if (timer !== undefined) return
       schedule(startupDelayMs(loadKbState().lastRunAt, Date.now()))
     } catch (err) {
       console.warn('Failed to start automatic Knowledge Base maintenance:', err)
