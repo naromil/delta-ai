@@ -150,7 +150,7 @@ afterEach(() => {
 })
 
 describe('automatic KB pass scheduling', () => {
-  it('starts a pass twice when two timers fire while the queue scan is still pending', async () => {
+  it('does not start a pass twice when two timers fire mid-scan', async () => {
     startKbAutoMaintenance()
     await settle()
     expect(savedListener).not.toBeNull()
@@ -172,5 +172,54 @@ describe('automatic KB pass scheduling', () => {
     await settle()
 
     expect(h.runKbAnalysis).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps a learning event recorded while a failing pass was queued', async () => {
+    startKbAutoMaintenance()
+    await settle()
+    unfed = [chat('chat_a')]
+
+    h.runKbAnalysis.mockImplementationOnce(async () => {
+      // A manual pass finished between selection and this provider failure.
+      state = {
+        lastRunAt: '2026-10-23T00:00:00.000Z',
+        lastLearnedAt: '2026-10-22T00:00:00.000Z',
+        lastAnalyzed: 7,
+        lastError: null,
+        failedAttempts: 2
+      }
+      throw new Error('API error 503')
+    })
+
+    savedListener?.(record('chat_a'))
+    await vi.advanceTimersByTimeAsync(AUTO_DEBOUNCE_MS)
+
+    expect(state.lastError).toBe('API error 503')
+    expect(state.failedAttempts).toBe(3)
+    expect(state.lastLearnedAt).toBe('2026-10-22T00:00:00.000Z')
+    expect(state.lastAnalyzed).toBe(7)
+  })
+
+  it('keeps the latest learning timestamp when a pass analyzes nothing', async () => {
+    startKbAutoMaintenance()
+    await settle()
+    unfed = [chat('chat_a')]
+
+    h.runKbAnalysis.mockImplementationOnce(async () => {
+      state = {
+        lastRunAt: '2026-10-23T00:00:00.000Z',
+        lastLearnedAt: '2026-10-22T00:00:00.000Z',
+        lastAnalyzed: 7,
+        lastError: null,
+        failedAttempts: 0
+      }
+      return { newPrompt: 'prompt', keywords: [], conversationsAnalyzed: 0 }
+    })
+
+    savedListener?.(record('chat_a'))
+    await vi.advanceTimersByTimeAsync(AUTO_DEBOUNCE_MS)
+
+    expect(state.lastLearnedAt).toBe('2026-10-22T00:00:00.000Z')
+    expect(state.lastError).toBeNull()
   })
 })

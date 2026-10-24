@@ -142,7 +142,6 @@ async function runAutoPass(): Promise<void> {
     const batch = selectAutoBatch(unfed)
     if (batch.length === 0) return
 
-    const previous = loadKbState()
     const runController = new AbortController()
     controller = runController
     activeRunController = runController
@@ -155,9 +154,12 @@ async function runAutoPass(): Promise<void> {
 
     const now = new Date().toISOString()
     pendingCount = await countPending()
+    // A manual pass may have finished while this pass waited in the queue; keep
+    // its learning event instead of restoring the snapshot taken before it.
+    const state = loadKbState()
     saveKbState({
       lastRunAt: now,
-      lastLearnedAt: result.conversationsAnalyzed > 0 ? now : previous.lastLearnedAt,
+      lastLearnedAt: result.conversationsAnalyzed > 0 ? now : state.lastLearnedAt,
       lastAnalyzed: result.conversationsAnalyzed,
       lastError: null,
       failedAttempts: 0
