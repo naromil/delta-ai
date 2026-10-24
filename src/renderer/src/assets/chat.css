@@ -56,6 +56,15 @@ body {
   height: 16px;
 }
 
+.chat-export-error {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--error);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .chat-title {
   margin-left: auto;
   min-width: 0;
@@ -66,6 +75,35 @@ body {
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.chat-title-button {
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-title-button:hover {
+  color: var(--text-1);
+}
+
+.chat-title-input {
+  padding: 2px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-1);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  outline: none;
+}
+
+.chat-title-input:focus {
+  border-color: var(--accent);
 }
 
 .icon {
@@ -252,7 +290,8 @@ body {
   opacity: 1;
 }
 
-.message-copy {
+.message-copy,
+.message-regenerate {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -269,12 +308,14 @@ body {
     color var(--dur-1) var(--ease-out);
 }
 
-.message-copy:hover {
+.message-copy:hover,
+.message-regenerate:hover {
   background: var(--surface-2);
   color: var(--text-1);
 }
 
-.message-copy svg {
+.message-copy svg,
+.message-regenerate svg {
   width: 13px;
   height: 13px;
 }

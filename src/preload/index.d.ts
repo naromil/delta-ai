@@ -93,6 +93,9 @@ declare global {
       searchConversations: (query: string) => Promise<ConversationSearchResult[]>
       listUnfedConversations: () => Promise<ConversationMeta[]>
       markConversationKbFed: (id: string) => Promise<void>
+      exportConversation: (
+        id: string
+      ) => Promise<{ ok: true; path: string } | { ok: false; error: string }>
 
       kbLoadPrompt: () => Promise<{ prompt: string; keywords: CategorizedKeyword[] }>
       kbSavePrompt: (content: string) => Promise<{

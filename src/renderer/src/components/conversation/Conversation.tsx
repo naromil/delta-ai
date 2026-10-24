@@ -1,5 +1,6 @@
-import { useRef, useState, useEffect } from 'react'
+import { useCallback, useRef, useState, useEffect } from 'react'
 import type { ConversationState } from '../../../../shared/conversation'
+import { CONVERSATION_TITLE_MAX_LENGTH } from '../../../../shared/conversation'
 import { useExpansionContextMenu } from '../../hooks/useExpansionContextMenu'
 import type { ExpandRequest } from '../../hooks/useExpansionContextMenu'
 import Turn from './Turn'
@@ -13,6 +14,8 @@ interface ConversationProps {
   onSend: (content: string) => void
   onStop: () => void
   onRetry: (turnId: number) => void
+  onRegenerate?: (turnId: number) => void
+  onRename?: (title: string) => void
   onNewChat: () => void
   onLoadConversation?: (id: string) => void
   onExpand: ExpandRequest
@@ -38,6 +41,8 @@ function Conversation({
   onSend,
   onStop,
   onRetry,
+  onRegenerate,
+  onRename,
   onNewChat,
   onExpand,
   onFold,
@@ -55,6 +60,18 @@ function Conversation({
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [showSearch, setShowSearch] = useState(false)
+  const [exporting, setExporting] = useState(false)
+  const [exported, setExported] = useState(false)
+  const [exportError, setExportError] = useState<string | null>(null)
+  const exportSavedTimerRef = useRef<number | null>(null)
+  const [editingTitle, setEditingTitle] = useState(false)
+  const [titleDraft, setTitleDraft] = useState('')
+  const titleSettledRef = useRef(false)
+  const turnsRef = useRef(state.turns)
+
+  useEffect(() => {
+    turnsRef.current = state.turns
+  }, [state.turns])
   const {
     ctxMenu,
     expandPrompt,
@@ -75,6 +92,12 @@ function Conversation({
 
   useEffect(() => {
     textareaRef.current?.focus()
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (exportSavedTimerRef.current !== null) window.clearTimeout(exportSavedTimerRef.current)
+    }
   }, [])
 
   const handleScroll = (): void => {
@@ -149,6 +172,70 @@ function Conversation({
     onSend(trimmed)
   }
 
+  const handleExport = async (): Promise<void> => {
+    if (!conversationId || exporting) return
+    if (exportSavedTimerRef.current !== null) {
+      window.clearTimeout(exportSavedTimerRef.current)
+      exportSavedTimerRef.current = null
+    }
+    setExported(false)
+    setExportError(null)
+    setExporting(true)
+    try {
+      const result = await window.api.exportConversation(conversationId)
+      if (result.ok) {
+        setExported(true)
+        exportSavedTimerRef.current = window.setTimeout(() => {
+          exportSavedTimerRef.current = null
+          setExported(false)
+        }, 2000)
+      } else if (result.error !== 'Canceled.') {
+        setExportError(result.error)
+      }
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  const beginTitleEdit = (): void => {
+    if (!onRename || !conversationTitle) return
+    titleSettledRef.current = false
+    setTitleDraft(conversationTitle)
+    setEditingTitle(true)
+  }
+
+  const commitTitle = (): void => {
+    if (titleSettledRef.current) return
+    titleSettledRef.current = true
+    setEditingTitle(false)
+    onRename?.(titleDraft)
+  }
+
+  const cancelTitleEdit = (): void => {
+    titleSettledRef.current = true
+    setEditingTitle(false)
+  }
+
+  const handleRegenerate = useCallback(
+    (turnId: number) => {
+      if (!onRegenerate) return
+      const turns = turnsRef.current
+      const index = turns.findIndex((turn) => turn.id === turnId)
+      if (index < 0) return
+      if (index !== turns.length - 1) {
+        const removed = turns.length - index
+        const confirmed = window.confirm(
+          `Regenerate this answer? ${removed} later message${removed === 1 ? '' : 's'} will be removed.`
+        )
+        if (!confirmed) return
+      }
+      onRegenerate(turnId)
+    },
+    [onRegenerate]
+  )
+
   const visibleTurns = state.turns.filter(
     (t) => t.content !== '' || (t.role === 'assistant' && loading)
   )
@@ -184,11 +271,66 @@ function Conversation({
             </svg>
             Search
           </button>
-          {conversationTitle && (
-            <span className="chat-title" title={conversationTitle}>
-              {conversationTitle}
+          {conversationId && (
+            <button
+              className="new-chat-button"
+              onClick={handleExport}
+              disabled={exporting}
+              aria-label="Export conversation"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  fill="none"
+                />
+              </svg>
+              {exporting ? 'Exporting…' : exported ? 'Saved' : 'Export'}
+            </button>
+          )}
+          {exportError && (
+            <span className="chat-export-error" role="alert">
+              {exportError}
             </span>
           )}
+          {conversationTitle &&
+            (editingTitle ? (
+              <input
+                className="chat-title chat-title-input"
+                value={titleDraft}
+                maxLength={CONVERSATION_TITLE_MAX_LENGTH}
+                autoFocus
+                aria-label="Conversation title"
+                onChange={(e) => setTitleDraft(e.target.value)}
+                onBlur={commitTitle}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    commitTitle()
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault()
+                    cancelTitleEdit()
+                  }
+                }}
+              />
+            ) : onRename ? (
+              <button
+                type="button"
+                className="chat-title chat-title-button"
+                title={conversationTitle}
+                aria-label="Rename conversation"
+                onClick={beginTitleEdit}
+              >
+                {conversationTitle}
+              </button>
+            ) : (
+              <span className="chat-title" title={conversationTitle}>
+                {conversationTitle}
+              </span>
+            ))}
         </div>
       )}
       <div className="sr-only" role="status" aria-live="polite">
@@ -231,6 +373,7 @@ function Conversation({
                   onFold={onFold}
                   onUnfold={onUnfold}
                   onRetry={onRetry}
+                  onRegenerate={onRegenerate ? handleRegenerate : undefined}
                   onRetryExpansion={onRetryExpansion}
                   onDismissExpansion={onDismissExpansion}
                 />

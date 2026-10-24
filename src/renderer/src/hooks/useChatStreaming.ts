@@ -1,18 +1,12 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
-import type {
-  ConversationState,
-  Turn,
-  ConversationRecord,
-  ProviderMessage
-} from '../../../shared/conversation'
+import type { ConversationState, Turn, ProviderMessage } from '../../../shared/conversation'
 import {
   serializeForChat,
   buildConversationTitle,
-  persistableTurns
+  CONVERSATION_TITLE_MAX_LENGTH
 } from '../../../shared/conversation'
-import type { ExpansionChunk, ExpansionTarget } from '../../../shared/rich-text'
+import type { ExpansionTarget } from '../../../shared/rich-text'
 import {
-  applyExpansionChunk,
   expansionMessageInput,
   finalizeTurns,
   findExpansionInTurns,
@@ -25,56 +19,24 @@ import {
 import { isAnchoredRange } from '../lib/markdown'
 import { getSystemPrompt } from '../../../shared/prompts'
 import { buildExpandMessages } from '../../../shared/expand-prompt'
+import {
+  clearRequests,
+  createRequests,
+  discardExpands,
+  discardExpandsForTurns,
+  generateRequestId,
+  registerExpand,
+  registerSend
+} from './chat/requests'
+import type { RequestBookkeeping } from './chat/requests'
+import { saveConversationState, useConversationPersistence } from './chat/persistence'
+import type { ConversationMeta } from './chat/persistence'
+import { subscribeChatTransport } from './chat/transport'
 
 let nextTurnId = Date.now()
 
-function generateRequestId(): string {
-  return `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
-}
-
 /** Why an expand request was refused; the UI surfaces this instead of silence. */
 export type ExpandOutcome = { ok: true } | { ok: false; reason: string }
-
-interface ConversationMeta {
-  id: string
-  title: string
-  createdAt: string
-  /** Last *content* change; fold/dismiss never move this. */
-  updatedAt: string
-  kbFed: boolean
-}
-
-function saveConversationState(
-  state: ConversationState,
-  role: 'chat' | 'lookup',
-  meta: ConversationMeta
-): Promise<void> | undefined {
-  const turns = finalizeTurns(persistableTurns(state.turns))
-  if (turns.length === 0 || turns.every((turn) => turn.content.trim() === '')) return undefined
-  const record: ConversationRecord = {
-    id: meta.id,
-    title: meta.title,
-    createdAt: meta.createdAt,
-    updatedAt: meta.updatedAt,
-    source: role === 'lookup' ? 'lookup' : 'chat',
-    state: { ...state, turns },
-    kbFed: meta.kbFed
-  }
-  return window.api.saveConversation(record).catch((err: unknown) => {
-    console.warn('Failed to save conversation:', err)
-  })
-}
-
-interface PendingRequest {
-  kind: 'send' | 'expand'
-  turnId: number
-  expansionId?: number
-}
-
-interface SaveRequest {
-  pending: boolean
-  touchContent: boolean
-}
 
 interface UseChatStreamingOptions {
   role?: 'chat' | 'lookup'
@@ -92,11 +54,13 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
   send: (content: string) => void
   stop: () => void
   retry: (turnId: number) => void
+  regenerate: (turnId: number) => void
   expand: (turnId: number, target: ExpansionTarget, prompt?: string) => ExpandOutcome
   retryExpansion: (expansionId: number) => void
   dismissExpansion: (expansionId: number) => void
   fold: (id: number) => void
   unfold: (id: number) => void
+  renameConversation: (title: string) => void
   newChat: () => void
   loadConversation: (id: string) => Promise<void>
   setState: React.Dispatch<React.SetStateAction<ConversationState>>
@@ -111,12 +75,10 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
   const [contextReady, setContextReady] = useState(role !== 'lookup')
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [conversationTitle, setConversationTitle] = useState('')
-  const pendingRef = useRef<Map<string, PendingRequest>>(new Map())
-  const activeRequestRef = useRef<string | null>(null)
+  const requestsRef = useRef<RequestBookkeeping>(createRequests())
   const expansionIdCounterRef = useRef(1)
   const hasSentRef = useRef(false)
   const conversationMetaRef = useRef<ConversationMeta | null>(null)
-  const saveRequestRef = useRef<SaveRequest>({ pending: false, touchContent: false })
   const stateRef = useRef<ConversationState>({
     context: options?.initial?.context ?? '',
     systemNote: options?.initial?.systemNote ?? '',
@@ -127,136 +89,36 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
     stateRef.current = state
   }, [state])
 
-  const saveCurrentState = useCallback(
-    (snapshot: ConversationState, touchContent: boolean): void => {
-      const meta = conversationMetaRef.current
-      if (!meta) return
-      if (touchContent) meta.updatedAt = new Date().toISOString()
-      void saveConversationState(snapshot, role, meta)
-    },
-    [role]
-  )
+  const { requestSave, saveSnapshot } = useConversationPersistence(state, role, conversationMetaRef)
 
-  /**
-   * Saves are derived from committed state: the flag is set here and the
-   * effect below flushes the newest committed snapshot. No IPC happens inside
-   * a `setState` updater (StrictMode double-invokes those).
-   */
-  const requestSave = useCallback((touchContent: boolean): void => {
-    saveRequestRef.current.pending = true
-    saveRequestRef.current.touchContent = saveRequestRef.current.touchContent || touchContent
+  const getRequests = useCallback((): RequestBookkeeping => requestsRef.current, [])
+
+  const setRequests = useCallback((book: RequestBookkeeping): void => {
+    requestsRef.current = book
+  }, [])
+
+  const cancelAllRequests = useCallback((): void => {
+    const { book, requestIds } = clearRequests(requestsRef.current)
+    requestsRef.current = book
+    for (const requestId of requestIds) window.api.chatCancel(requestId)
   }, [])
 
   useEffect(() => {
-    const request = saveRequestRef.current
-    if (!request.pending) return
-    request.pending = false
-    const touchContent = request.touchContent
-    request.touchContent = false
-    saveCurrentState(state, touchContent)
-  }, [state, saveCurrentState])
-
-  useEffect(() => {
-    const unsubs: Array<() => void> = []
-
-    unsubs.push(
-      window.api.chatOnChunk((data) => {
-        const pending = pendingRef.current.get(data.requestId)
-        if (!pending || pending.kind !== 'send') return
-
-        setState((prev) => {
-          const turns = [...prev.turns]
-          const turnIdx = turns.findIndex((t) => t.id === pending.turnId)
-          if (turnIdx < 0) return prev
-          turns[turnIdx] = { ...turns[turnIdx], content: data.text }
-          return { ...prev, turns }
-        })
-      })
-    )
-
-    unsubs.push(
-      window.api.chatOnResponse((data) => {
-        const pending = pendingRef.current.get(data.requestId)
-        if (!pending || pending.kind !== 'send') return
-
-        setState((prev) => {
-          const turns = [...prev.turns]
-          const turnIdx = turns.findIndex((t) => t.id === pending.turnId)
-          if (turnIdx < 0) return prev
-          // Stopping before the first token should not leave a phantom empty turn.
-          if (data.cancelled && data.text.trim() === '') {
-            return { ...prev, turns: turns.filter((t) => t.id !== pending.turnId) }
-          }
-          turns[turnIdx] = { ...turns[turnIdx], content: data.text }
-          return { ...prev, turns }
-        })
-        pendingRef.current.delete(data.requestId)
-        if (activeRequestRef.current === data.requestId) activeRequestRef.current = null
-        setLoading(false)
-        requestSave(true)
-      })
-    )
-
-    unsubs.push(
-      window.api.chatOnError((data) => {
-        const pending = pendingRef.current.get(data.requestId)
-        if (!pending || pending.kind !== 'send') return
-
-        setState((prev) => {
-          const turns = [...prev.turns]
-          const turnIdx = turns.findIndex((t) => t.id === pending.turnId)
-          if (turnIdx < 0) return prev
-          turns[turnIdx] = { ...turns[turnIdx], content: data.error, error: true }
-          return { ...prev, turns }
-        })
-        pendingRef.current.delete(data.requestId)
-        if (activeRequestRef.current === data.requestId) activeRequestRef.current = null
-        setLoading(false)
-        // Keep the failure on disk so Retry survives a reload.
-        requestSave(true)
-      })
-    )
-
-    unsubs.push(
-      window.api.chatOnExpandChunk((data) => {
-        const pending = pendingRef.current.get(data.requestId)
-        if (!pending || pending.kind !== 'expand') return
-        const expansionId = pending.expansionId
-        if (expansionId === undefined) return
-
-        const chunk: ExpansionChunk = {
-          ...(data.text !== undefined ? { text: data.text } : {}),
-          ...(data.done !== undefined ? { done: data.done } : {}),
-          ...(data.error !== undefined ? { error: data.error } : {})
-        }
-        setState((prev) => ({
-          ...prev,
-          turns: applyExpansionChunk(prev.turns, expansionId, chunk)
-        }))
-
-        if (data.error !== undefined || data.done) {
-          pendingRef.current.delete(data.requestId)
-          requestSave(true)
-        }
-      })
-    )
-
-    if (role === 'lookup') {
-      window.api.lookupOnContext((status) => {
-        setContextReady(status.status === 'ready')
-      })
-
-      window.api.lookupOnGrow(() => {
-        options?.onGrown?.()
-      })
-    }
-
-    unsubs.push(
-      window.api.chatOnReplaceConversation((imported) => {
+    return subscribeChatTransport({
+      role,
+      getRequests,
+      setRequests,
+      setState,
+      setLoading,
+      setContextReady,
+      requestSave,
+      onGrown: options?.onGrown,
+      onReplaceConversation: (imported) => {
+        // The transferred conversation replaces every in-flight request; their
+        // late chunks must not land on turns of the imported state.
+        cancelAllRequests()
         setState({ ...imported.state, turns: finalizeTurns(imported.state.turns) })
         setLoading(false)
-        pendingRef.current.clear()
-        activeRequestRef.current = null
         setConversationId(imported.conversationId)
         setConversationTitle(imported.conversationTitle)
         // Keep the meta so the next message updates the transferred record
@@ -270,20 +132,16 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
         }
         expansionIdCounterRef.current = maxExpansionId(imported.state.turns) + 1
         options?.onReplaceConversation?.()
-      })
-    )
-
-    return () => {
-      for (const unsub of unsubs) unsub()
-    }
+      }
+    })
+    // Subscriptions are mounted once: the IPC bridge outlives every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const requestCompletion = useCallback(
     (messages: ProviderMessage[], assistantTurnId: number) => {
       const requestId = generateRequestId()
-      activeRequestRef.current = requestId
-      pendingRef.current.set(requestId, { kind: 'send', turnId: assistantTurnId })
+      requestsRef.current = registerSend(requestsRef.current, requestId, assistantTurnId)
       window.api.chatSend({ messages, requestId, role })
       setLoading(true)
     },
@@ -291,25 +149,35 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
   )
 
   const stop = useCallback(() => {
-    const requestId = activeRequestRef.current
-    if (!requestId) {
+    // Expands are cancellable too: drop them *before* cancelling so their
+    // pending chunks cannot land on a frame that just became an error.
+    const expands = discardExpands(requestsRef.current)
+    requestsRef.current = expands.book
+    for (const requestId of expands.requestIds) window.api.chatCancel(requestId)
+    if (expands.requestIds.length > 0) {
+      setState((prev) => ({ ...prev, turns: finalizeTurns(prev.turns) }))
+    }
+
+    const activeSendId = expands.book.activeSendId
+    if (!activeSendId) {
       // Nothing in flight to abort; make sure the UI cannot stay in a loading state.
       setLoading(false)
       return
     }
-    window.api.chatCancel(requestId)
+    window.api.chatCancel(activeSendId)
   }, [])
 
-  const retry = useCallback(
-    (turnId: number) => {
+  const replaceAssistantTurn = useCallback(
+    (turnId: number, errorOnly: boolean) => {
       if (loading) return
       const current = stateRef.current
-      const errorIndex = current.turns.findIndex(
-        (turn) => turn.id === turnId && turn.role === 'assistant' && turn.error
-      )
-      if (errorIndex < 0) return
+      const turnIndex = current.turns.findIndex((turn) => turn.id === turnId)
+      const target = turnIndex >= 0 ? current.turns[turnIndex] : undefined
+      if (!target || target.role !== 'assistant') return
+      if (errorOnly ? !target.error : target.content.trim() === '') return
+
       let hasUserTurn = false
-      for (let i = errorIndex - 1; i >= 0; i--) {
+      for (let i = turnIndex - 1; i >= 0; i--) {
         if (current.turns[i].role === 'user') {
           hasUserTurn = true
           break
@@ -317,12 +185,17 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
       }
       if (!hasUserTurn) return
 
-      // Drop the failed answer (and anything after it), keep the user message,
-      // and ask again against the same conversation.
-      const baseTurns = current.turns.slice(0, errorIndex)
+      // Anything after the target is being replaced; expand streams attached to
+      // those turns must not keep running against state that no longer exists.
+      const droppedTurnIds = new Set(current.turns.slice(turnIndex).map((turn) => turn.id))
+      const expands = discardExpandsForTurns(requestsRef.current, droppedTurnIds)
+      requestsRef.current = expands.book
+      for (const requestId of expands.requestIds) window.api.chatCancel(requestId)
+
+      const baseTurns = current.turns.slice(0, turnIndex)
       const baseState: ConversationState = { ...current, turns: baseTurns }
       const assistantTurnId = nextTurnId++
-      const messages = serializeForChat(baseState, role as 'chat' | 'lookup')
+      const messages = serializeForChat(baseState, role)
       setState({
         ...baseState,
         turns: [
@@ -333,6 +206,20 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
       requestCompletion(messages, assistantTurnId)
     },
     [loading, role, requestCompletion]
+  )
+
+  const retry = useCallback(
+    (turnId: number) => {
+      replaceAssistantTurn(turnId, true)
+    },
+    [replaceAssistantTurn]
+  )
+
+  const regenerate = useCallback(
+    (turnId: number) => {
+      replaceAssistantTurn(turnId, false)
+    },
+    [replaceAssistantTurn]
   )
 
   const send = useCallback(
@@ -388,6 +275,15 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
     [loading, role, contextReady, requestCompletion]
   )
 
+  const startExpansion = useCallback(
+    (turnId: number, expansionId: number, messages: ProviderMessage[]): void => {
+      const requestId = generateRequestId()
+      requestsRef.current = registerExpand(requestsRef.current, requestId, turnId, expansionId)
+      window.api.chatExpand({ messages, requestId, role })
+    },
+    [role]
+  )
+
   const expand = useCallback(
     (turnId: number, target: ExpansionTarget, prompt?: string): ExpandOutcome => {
       const turn = stateRef.current.turns.find((item) => item.id === turnId)
@@ -412,23 +308,19 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
       if (!insertion.ok) return { ok: false, reason: insertion.reason }
 
       expansionIdCounterRef.current += 1
-      const requestId = generateRequestId()
-
-      const expandMessages = buildExpandMessages({
-        answer: input.answer,
-        selection: input.selection,
-        ...(prompt !== undefined ? { prompt } : {})
-      })
-      const allMessages = [
+      const allMessages: ProviderMessage[] = [
         {
-          role: 'system' as const,
+          role: 'system',
           content: getSystemPrompt(role as 'chat' | 'lookup')
         },
-        ...expandMessages
+        ...buildExpandMessages({
+          answer: input.answer,
+          selection: input.selection,
+          ...(prompt !== undefined ? { prompt } : {})
+        })
       ]
 
-      pendingRef.current.set(requestId, { kind: 'expand', turnId, expansionId })
-      window.api.chatExpand({ messages: allMessages, requestId, role })
+      startExpansion(turnId, expansionId, allMessages)
 
       setState((prev) => {
         const result = insertExpansionInTurns(prev.turns, turnId, target, expansionId, prompt)
@@ -436,7 +328,7 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
       })
       return { ok: true }
     },
-    [role]
+    [role, startExpansion]
   )
 
   const retryExpansion = useCallback(
@@ -447,10 +339,9 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
       const input = expansionMessageInput(location.turn, parentId, location.node)
       if (!input || !isAnchoredRange(input.answer, location.node)) return
 
-      const requestId = generateRequestId()
-      const messages = [
+      const messages: ProviderMessage[] = [
         {
-          role: 'system' as const,
+          role: 'system',
           content: getSystemPrompt(role as 'chat' | 'lookup')
         },
         ...buildExpandMessages({
@@ -460,11 +351,7 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
         })
       ]
 
-      pendingRef.current.set(requestId, {
-        kind: 'expand',
-        turnId: location.turn.id,
-        expansionId
-      })
+      startExpansion(location.turn.id, expansionId, messages)
       setState((prev) => ({
         ...prev,
         turns: updateExpansion(prev.turns, expansionId, {
@@ -473,10 +360,9 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
           error: undefined
         })
       }))
-      window.api.chatExpand({ messages, requestId, role })
       requestSave(true)
     },
-    [role, requestSave]
+    [role, startExpansion, requestSave]
   )
 
   const dismissExpansion = useCallback(
@@ -506,23 +392,33 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
     [requestSave]
   )
 
+  const renameConversation = useCallback(
+    (title: string) => {
+      const meta = conversationMetaRef.current
+      if (!meta) return
+      const trimmed = title.trim().slice(0, CONVERSATION_TITLE_MAX_LENGTH).trimEnd()
+      if (trimmed === '' || trimmed === meta.title) return
+      meta.title = trimmed
+      setConversationTitle(trimmed)
+      // A rename is metadata, not content: recents keep their order.
+      requestSave(false)
+    },
+    [requestSave]
+  )
+
   const newChat = useCallback(() => {
-    stop()
-    saveCurrentState(stateRef.current, false)
+    cancelAllRequests()
+    saveSnapshot(stateRef.current, false)
     setState({ context: '', turns: [] })
     setLoading(false)
-    pendingRef.current.clear()
-    activeRequestRef.current = null
     setConversationId(null)
     setConversationTitle('')
     conversationMetaRef.current = null
-  }, [saveCurrentState, stop])
+  }, [cancelAllRequests, saveSnapshot])
 
   const loadConversation = useCallback(
     async (id: string) => {
-      stop()
-      pendingRef.current.clear()
-      activeRequestRef.current = null
+      cancelAllRequests()
       setLoading(false)
 
       const meta = conversationMetaRef.current
@@ -543,7 +439,7 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
       }
       expansionIdCounterRef.current = maxExpansionId(loaded.state.turns) + 1
     },
-    [role, stop]
+    [cancelAllRequests, role]
   )
 
   return {
@@ -555,11 +451,13 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
     send,
     stop,
     retry,
+    regenerate,
     expand,
     retryExpansion,
     dismissExpansion,
     fold,
     unfold,
+    renameConversation,
     newChat,
     loadConversation,
     setState

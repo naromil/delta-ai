@@ -98,11 +98,13 @@ function App(): React.JSX.Element {
     send,
     stop,
     retry,
+    regenerate,
     expand,
     retryExpansion,
     dismissExpansion,
     fold,
     unfold,
+    renameConversation,
     newChat,
     loadConversation,
     conversationId,
@@ -168,6 +170,8 @@ function App(): React.JSX.Element {
             onSend={send}
             onStop={stop}
             onRetry={retry}
+            onRegenerate={regenerate}
+            onRename={renameConversation}
             onNewChat={newChat}
             onLoadConversation={loadConversation}
             conversationId={conversationId}

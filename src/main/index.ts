@@ -1,4 +1,5 @@
 import { app, shell, BrowserWindow, ipcMain, globalShortcut, Tray, Menu } from 'electron'
+import type { WebContents } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
@@ -24,7 +25,9 @@ import {
   LOOKUP_GROWN_HEIGHT
 } from './lookup/window'
 import { sendToSession } from './lookup/state'
-import { setMainWindow, getMainWindow } from './main-window'
+import { setMainWindow, getMainWindow, clearMainWindow } from './main-window'
+import { applyContextBudget } from './context-budget'
+import { exportConversationToFile } from './conversation-export'
 import type { ConversationRecord, ConversationState } from '../shared/conversation'
 import { buildConversationTitle } from '../shared/conversation'
 import { prepareTransferredState } from './transfer'
@@ -42,8 +45,14 @@ import { startKbAutoMaintenance, stopKbAutoMaintenance } from './kb/maintenance'
 import { registerModelCatalogIpcHandlers } from './services/model-catalog'
 import { loadKbPrompt } from './kb/store'
 
+interface ActiveStream {
+  controller: AbortController
+  /** The webContents that started the request; only it may cancel it. */
+  senderId: number
+}
+
 /** In-flight provider streams, keyed by requestId, so the UI can stop them. */
-const activeStreams = new Map<string, AbortController>()
+const activeStreams = new Map<string, ActiveStream>()
 
 /* ---- App lifecycle ---- */
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
@@ -77,23 +86,33 @@ if (!hasSingleInstanceLock) {
         const role: RoleId = (payload.role as RoleId) ?? 'chat'
         const messages =
           role === 'lookup' ? withKbPrompt(payload.messages, loadKbPrompt()) : payload.messages
+        // Chat sends are trimmed after any KB prompt insertion; lookup keeps its
+        // full screen context.
+        const finalMessages = role === 'chat' ? applyContextBudget(messages, role) : messages
+        const sender = event.sender
         const controller = new AbortController()
-        activeStreams.set(requestId, controller)
+        // A closed popup must stop the request instead of throwing on every send.
+        const onDestroyed = (): void => controller.abort()
+        sender.once('destroyed', onDestroyed)
+        activeStreams.set(requestId, { controller, senderId: sender.id })
         let fullResponse = ''
         try {
-          for await (const chunk of callProviderStream(messages, role, controller.signal)) {
+          for await (const chunk of callProviderStream(finalMessages, role, controller.signal)) {
             fullResponse += chunk
-            event.sender.send('chat-chunk', { requestId, text: fullResponse })
+            safeSend(sender, 'chat-chunk', { requestId, text: fullResponse })
           }
-          event.sender.send('chat-response', { requestId, text: fullResponse })
+          safeSend(sender, 'chat-response', { requestId, text: fullResponse })
         } catch (err) {
           if (controller.signal.aborted) {
-            event.sender.send('chat-response', { requestId, text: fullResponse, cancelled: true })
+            safeSend(sender, 'chat-response', { requestId, text: fullResponse, cancelled: true })
           } else {
-            event.sender.send('chat-error', { requestId, error: formatStreamError(err) })
+            safeSend(sender, 'chat-error', { requestId, error: formatStreamError(err) })
           }
         } finally {
-          activeStreams.delete(requestId)
+          sender.removeListener('destroyed', onDestroyed)
+          if (activeStreams.get(requestId)?.controller === controller) {
+            activeStreams.delete(requestId)
+          }
         }
       }
     )
@@ -111,31 +130,40 @@ if (!hasSingleInstanceLock) {
       ) => {
         const { messages, requestId } = payload
         const role: RoleId = (payload.role as RoleId) ?? 'chat'
+        const sender = event.sender
         const controller = new AbortController()
-        activeStreams.set(requestId, controller)
+        const onDestroyed = (): void => controller.abort()
+        sender.once('destroyed', onDestroyed)
+        activeStreams.set(requestId, { controller, senderId: sender.id })
         let fullResponse = ''
         try {
           for await (const chunk of callProviderStream(messages, role, controller.signal)) {
             fullResponse += chunk
-            event.sender.send('chat-expand-chunk', { requestId, text: fullResponse })
+            safeSend(sender, 'chat-expand-chunk', { requestId, text: fullResponse })
           }
-          event.sender.send('chat-expand-chunk', { requestId, text: fullResponse, done: true })
+          safeSend(sender, 'chat-expand-chunk', { requestId, text: fullResponse, done: true })
         } catch (err) {
-          event.sender.send(
+          safeSend(
+            sender,
             'chat-expand-chunk',
             controller.signal.aborted
               ? { requestId, text: fullResponse, done: true, cancelled: true }
               : { requestId, error: formatStreamError(err) }
           )
         } finally {
-          activeStreams.delete(requestId)
+          sender.removeListener('destroyed', onDestroyed)
+          if (activeStreams.get(requestId)?.controller === controller) {
+            activeStreams.delete(requestId)
+          }
         }
       }
     )
 
     /** Stop a provider stream started by chat-send/chat-expand. */
-    ipcMain.on('chat-cancel', (_event, requestId: string) => {
-      activeStreams.get(requestId)?.abort()
+    ipcMain.on('chat-cancel', (event, requestId: string) => {
+      const stream = activeStreams.get(requestId)
+      // Only the window that started the request may stop it.
+      if (stream && stream.senderId === event.sender.id) stream.controller.abort()
     })
 
     /* Lookup: trigger window grow on first ask */
@@ -151,12 +179,9 @@ if (!hasSingleInstanceLock) {
     /* Lookup: transfer conversation to chat window */
     ipcMain.on(
       'lookup-transfer',
-      async (_event, payload: { state: ConversationState; conversationId?: string }) => {
+      async (event, payload: { state: ConversationState; conversationId?: string }) => {
         const { state, conversationId } = payload
-        const session = lookupSessions.find((s) => s.window.webContents.id === _event.sender.id)
-        if (session) {
-          session.window.close()
-        }
+        const session = lookupSessions.find((s) => s.window.webContents.id === event.sender.id)
 
         // Single boundary: finalise in-flight frames before persisting or
         // forwarding, and fold the screen context into a user turn.
@@ -178,19 +203,24 @@ if (!hasSingleInstanceLock) {
           state: transferred,
           kbFed: existing?.kbFed ?? false
         }
-        await saveConversation(record)
 
-        const mainWin = getMainWindow()
-        if (mainWin && !mainWin.isDestroyed()) {
-          mainWin.webContents.send('chat-replace-conversation', {
-            state: transferred,
-            conversationId: id,
-            conversationTitle: title,
-            conversationCreatedAt: createdAt
-          })
-          mainWin.show()
-          mainWin.focus()
+        // Persist before closing anything: a failed write leaves the popup open
+        // with its error shown, so the user can retry instead of losing the chat.
+        try {
+          await saveConversation(record)
+        } catch (err) {
+          if (session) sendToSession(session, 'ai-error', formatStreamError(err))
+          return
         }
+
+        if (session && !session.window.isDestroyed()) session.window.close()
+
+        deliverConversation({
+          state: transferred,
+          conversationId: id,
+          conversationTitle: title,
+          conversationCreatedAt: createdAt
+        })
       }
     )
 
@@ -216,6 +246,12 @@ if (!hasSingleInstanceLock) {
     })
     ipcMain.handle('conversation-kb-fed', async (_event, id: string) => {
       await markConversationKbFed(id)
+    })
+    ipcMain.handle('conversation-export', async (_event, id: unknown) => {
+      if (typeof id !== 'string' || id.length === 0) {
+        return { ok: false, error: 'Invalid conversation id.' }
+      }
+      return await exportConversationToFile(id)
     })
 
     registerConfigIpcHandlers() // includes provider-models and provider-test
@@ -268,6 +304,12 @@ function formatStreamError(err: unknown): string {
   return String(err)
 }
 
+/** Sends only while the renderer is alive; a closed popup must not throw mid-stream. */
+function safeSend(sender: WebContents, channel: string, payload: unknown): void {
+  if (sender.isDestroyed()) return
+  sender.send(channel, payload)
+}
+
 function withKbPrompt(messages: ProviderMessage[], kbPrompt: string): ProviderMessage[] {
   if (!kbPrompt) return messages
   const systemIndex = messages.findIndex((msg) => msg.role === 'system')
@@ -285,7 +327,8 @@ app.on('before-quit', () => {
   isQuitting = true
 })
 
-function createTray(mainWindow: BrowserWindow): void {
+function createTray(): void {
+  if (tray) return
   tray = new Tray(icon)
   tray.setToolTip('Delta AI')
 
@@ -298,10 +341,7 @@ function createTray(mainWindow: BrowserWindow): void {
     },
     {
       label: 'Show Delta AI',
-      click: () => {
-        mainWindow.show()
-        mainWindow.focus()
-      }
+      click: () => showMainWindow()
     },
     { type: 'separator' },
     {
@@ -314,18 +354,23 @@ function createTray(mainWindow: BrowserWindow): void {
 
   tray.setContextMenu(contextMenu)
 
-  tray.on('click', () => {
-    if (mainWindow.isVisible()) {
-      mainWindow.focus()
-    } else {
-      mainWindow.show()
-      mainWindow.focus()
-    }
-  })
+  tray.on('click', () => showMainWindow())
+}
+
+/** Brings the current chat window forward, recreating it after a real close. */
+function showMainWindow(): void {
+  const win = getMainWindow()
+  if (!win || win.isDestroyed()) {
+    // `createWindow`'s ready-to-show handler performs the show/focus.
+    createWindow()
+    return
+  }
+  win.show()
+  win.focus()
 }
 
 /* ---- Main window ---- */
-function createWindow(): void {
+function createWindow(): BrowserWindow {
   const mainWindow = new BrowserWindow({
     width: 960,
     height: 640,
@@ -356,6 +401,11 @@ function createWindow(): void {
     }
   })
 
+  // A hidden-to-tray window still exists; a closed one must not be handed out.
+  mainWindow.on('closed', () => {
+    clearMainWindow()
+  })
+
   mainWindow.webContents.setWindowOpenHandler((details) => {
     if (isSafeExternalUrl(details.url)) void shell.openExternal(details.url)
     return { action: 'deny' }
@@ -374,7 +424,39 @@ function createWindow(): void {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
 
-  createTray(mainWindow)
+  createTray()
+
+  return mainWindow
+}
+
+interface ConversationDelivery {
+  state: ConversationState
+  conversationId: string
+  conversationTitle: string
+  conversationCreatedAt: string
+}
+
+/**
+ * Hydrates the transferred conversation into the chat window. Without one, a
+ * fresh window is created and receives the payload once its renderer loads.
+ */
+function deliverConversation(payload: ConversationDelivery): void {
+  const existing = getMainWindow()
+  if (existing && !existing.isDestroyed()) {
+    showMainWindow()
+    safeSend(existing.webContents, 'chat-replace-conversation', payload)
+    return
+  }
+
+  const win = createWindow()
+  const deliver = (): void => {
+    if (!win.isDestroyed()) safeSend(win.webContents, 'chat-replace-conversation', payload)
+  }
+  if (win.webContents.isLoading()) {
+    win.webContents.once('did-finish-load', deliver)
+  } else {
+    deliver()
+  }
 }
 
 function isSafeExternalUrl(rawUrl: string): boolean {

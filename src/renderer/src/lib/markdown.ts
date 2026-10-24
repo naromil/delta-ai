@@ -40,8 +40,16 @@ function walk(node: MarkdownNode, visit: (node: MarkdownNode) => void): void {
   for (const child of node.children ?? []) walk(child, visit)
 }
 
+const TEXT_SPAN_CACHE_LIMIT = 32
+
+/** Parsing is the expensive part of anchoring; keep the newest sources only. */
+const textSpanCache = new Map<string, ExpansionRange[]>()
+
 /** Absolute source offsets of every mdast `text` node, in document order. */
 export function collectTextNodeSpans(source: string): ExpansionRange[] {
+  const cached = textSpanCache.get(source)
+  if (cached) return cached
+
   const spans: ExpansionRange[] = []
   walk(parseMarkdown(source), (node) => {
     if (node.type !== 'text') return
@@ -50,6 +58,12 @@ export function collectTextNodeSpans(source: string): ExpansionRange[] {
     if (start === null || end === null) return
     spans.push({ start, end })
   })
+
+  textSpanCache.set(source, spans)
+  if (textSpanCache.size > TEXT_SPAN_CACHE_LIMIT) {
+    const oldest = textSpanCache.keys().next().value
+    if (oldest !== undefined) textSpanCache.delete(oldest)
+  }
   return spans
 }
 

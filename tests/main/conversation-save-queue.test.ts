@@ -12,7 +12,9 @@ vi.mock('electron', () => ({
 }))
 
 vi.mock('../../src/main/services/atomic-file', () => ({
-  writeFileAtomic: async (_path: string, data: string): Promise<void> => {
+  writeFileAtomic: async (path: string, data: string): Promise<void> => {
+    // Sidecars are written alongside the body; only body writes are ordered here.
+    if (path.endsWith('.meta.json')) return
     const title = (JSON.parse(data) as { title: string }).title
     writes.push(`start:${title}`)
     await new Promise((resolve) => setTimeout(resolve, 15))

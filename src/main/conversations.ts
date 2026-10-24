@@ -1,7 +1,6 @@
 import { join } from 'path'
-import { readFile, readdir, mkdir } from 'fs/promises'
+import { readFile, readdir, mkdir, unlink } from 'fs/promises'
 import { existsSync } from 'fs'
-import { unlink } from 'fs/promises'
 import { app } from 'electron'
 import type {
   ConversationRecord,
@@ -14,6 +13,9 @@ import { writeFileAtomic } from './services/atomic-file'
 
 /** Conversation ids are UUIDs; anything else must never reach the filesystem. */
 const SAFE_CONVERSATION_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
+
+const RECORD_SUFFIX = '.json'
+const META_SUFFIX = '.meta.json'
 
 const SEARCH_SNIPPET_RADIUS = 80
 const SEARCH_RESULT_LIMIT = 100
@@ -55,7 +57,13 @@ function conversationPath(id: string): string | null {
     console.warn(`Refusing unsafe conversation id: ${JSON.stringify(id)}`)
     return null
   }
-  return join(conversationsDir(), `${id}.json`)
+  return join(conversationsDir(), `${id}${RECORD_SUFFIX}`)
+}
+
+/** Sidecar holding the metadata for one record, next to its body. */
+function conversationMetaPath(id: string): string | null {
+  const filePath = conversationPath(id)
+  return filePath ? `${filePath.slice(0, -RECORD_SUFFIX.length)}${META_SUFFIX}` : null
 }
 
 async function ensureConversationsDir(): Promise<void> {
@@ -78,6 +86,30 @@ async function readRecordFile(
   }
 }
 
+/** Cached metadata for one record; `null` when the sidecar is missing or corrupt. */
+async function readConversationMeta(id: string): Promise<ConversationMeta | null> {
+  const metaPath = conversationMetaPath(id)
+  if (!metaPath) return null
+  let data: string
+  try {
+    data = await readFile(metaPath, 'utf-8')
+  } catch {
+    return null
+  }
+  try {
+    return JSON.parse(data) as ConversationMeta
+  } catch (err) {
+    console.warn(`Failed to read conversation metadata ${id}:`, err)
+    return null
+  }
+}
+
+async function writeConversationMeta(record: ConversationRecord): Promise<void> {
+  const metaPath = conversationMetaPath(record.id)
+  if (!metaPath) return
+  await writeFileAtomic(metaPath, JSON.stringify(toConversationMeta(record), null, 2))
+}
+
 async function writeConversation(
   record: ConversationRecord,
   preserveKbFed: boolean
@@ -93,6 +125,7 @@ async function writeConversation(
       )
     : record
   await writeFileAtomic(filePath, JSON.stringify(next, null, 2))
+  await writeConversationMeta(next)
   // Notify with what actually landed on disk, so a preserved `kbFed` is not
   // mistaken for a freshly unfed conversation.
   notifyConversationSaved(next)
@@ -101,19 +134,48 @@ async function writeConversation(
 /** Per-id save chains: overlapping autosaves can never finish out of order. */
 const saveChains = new Map<string, Promise<void>>()
 
+function enqueueConversationWrite<T>(id: string, task: () => Promise<T>): Promise<T> {
+  const previous = saveChains.get(id) ?? Promise.resolve()
+  const run = previous.then(task, task)
+  const chain = run.then(
+    () => undefined,
+    () => undefined
+  )
+  saveChains.set(id, chain)
+  void chain.then(() => {
+    if (saveChains.get(id) === chain) saveChains.delete(id)
+  })
+  return run
+}
+
 export function saveConversation(
   record: ConversationRecord,
   options?: { preserveKbFed?: boolean }
 ): Promise<void> {
-  const runWrite = (): Promise<void> => writeConversation(record, options?.preserveKbFed ?? false)
-  const previous = saveChains.get(record.id) ?? Promise.resolve()
-  const run = previous.then(runWrite, runWrite)
-  const chain = run.catch(() => undefined)
-  saveChains.set(record.id, chain)
-  void chain.then(() => {
-    if (saveChains.get(record.id) === chain) saveChains.delete(record.id)
+  return enqueueConversationWrite(record.id, () =>
+    writeConversation(record, options?.preserveKbFed ?? false)
+  )
+}
+
+/**
+ * Read-modify-write a conversation inside the same per-id chain as
+ * `saveConversation`, so a mutation can never overwrite a newer autosave with
+ * the body it read before that save landed. Returns `false` when the record is
+ * missing or the mutation asked to cancel by returning `false`.
+ */
+export function mutateConversation(
+  id: string,
+  mutate: (record: ConversationRecord) => boolean | void
+): Promise<boolean> {
+  return enqueueConversationWrite(id, async () => {
+    const filePath = conversationPath(id)
+    if (!filePath) return false
+    const record = await readRecordFile(filePath)
+    if (!record) return false
+    if (mutate(record) === false) return false
+    await writeConversation(record, false)
+    return true
   })
-  return run
 }
 
 export async function loadConversation(id: string): Promise<ConversationRecord | null> {
@@ -123,9 +185,7 @@ export async function loadConversation(id: string): Promise<ConversationRecord |
   return record ? migrateConversationRecord(record) : null
 }
 
-export async function deleteConversation(id: string): Promise<void> {
-  const filePath = conversationPath(id)
-  if (!filePath) return
+async function removeFile(filePath: string): Promise<void> {
   try {
     await unlink(filePath)
   } catch {
@@ -133,7 +193,15 @@ export async function deleteConversation(id: string): Promise<void> {
   }
 }
 
-async function readAllConversations(): Promise<ConversationRecord[]> {
+export async function deleteConversation(id: string): Promise<void> {
+  const filePath = conversationPath(id)
+  if (!filePath) return
+  await removeFile(filePath)
+  const metaPath = conversationMetaPath(id)
+  if (metaPath) await removeFile(metaPath)
+}
+
+async function listConversationIds(): Promise<string[]> {
   await ensureConversationsDir()
   let files: string[]
   try {
@@ -141,17 +209,40 @@ async function readAllConversations(): Promise<ConversationRecord[]> {
   } catch {
     return []
   }
-  const ids = files.filter((file) => file.endsWith('.json')).map((file) => file.slice(0, -5))
+  return files
+    .filter((file) => file.endsWith(RECORD_SUFFIX) && !file.endsWith(META_SUFFIX))
+    .map((file) => file.slice(0, -RECORD_SUFFIX.length))
+}
+
+async function readAllConversations(): Promise<ConversationRecord[]> {
+  const ids = await listConversationIds()
   const records = await Promise.all(ids.map((id) => loadConversation(id)))
   return records.filter((record): record is ConversationRecord => record !== null)
 }
 
+/** Metadata for one record, falling back to its body and backfilling the sidecar. */
+async function loadConversationMeta(id: string): Promise<ConversationMeta | null> {
+  const cached = await readConversationMeta(id)
+  if (cached) return cached
+  const record = await loadConversation(id)
+  if (!record) return null
+  // Backfill inside the save chain so it cannot overwrite a newer sidecar.
+  await enqueueConversationWrite(id, async () => {
+    if (await readConversationMeta(id)) return
+    const current = await loadConversation(id)
+    if (current) await writeConversationMeta(current)
+  })
+  return toConversationMeta(record)
+}
+
 export async function listConversations(source?: 'chat' | 'lookup'): Promise<ConversationMeta[]> {
-  const records = await readAllConversations()
+  const ids = await listConversationIds()
+  const metas = await Promise.all(ids.map((id) => loadConversationMeta(id)))
   const results: ConversationMeta[] = []
-  for (const record of records) {
-    if (source && record.source !== source) continue
-    results.push(toConversationMeta(record))
+  for (const meta of metas) {
+    if (!meta) continue
+    if (source && meta.source !== source) continue
+    results.push(meta)
   }
   results.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
   return results
@@ -182,23 +273,30 @@ export async function searchConversations(
   source: 'chat' | 'lookup' = 'chat'
 ): Promise<ConversationSearchResult[]> {
   const needle = query.trim().toLowerCase()
+  const metas = await listConversations(source)
   if (!needle) {
-    return (await listConversations(source)).map((meta) => ({ ...meta, matchedIn: 'title' }))
+    return metas.map((meta) => ({ ...meta, matchedIn: 'title' }))
   }
 
-  const records = await readAllConversations()
   const results: ConversationSearchResult[] = []
-  for (const record of records) {
-    if (record.source !== source) continue
-    const titleMatch = record.title.toLowerCase().includes(needle)
-    const snippet = titleMatch ? undefined : contentSnippet(record, needle)
-    if (!titleMatch && !snippet) continue
-    results.push({
-      ...toConversationMeta(record),
-      matchedIn: titleMatch ? 'title' : 'content',
-      ...(snippet ? { snippet } : {})
-    })
+  const contentCandidates: ConversationMeta[] = []
+  for (const meta of metas) {
+    if (meta.title.toLowerCase().includes(needle)) {
+      results.push({ ...meta, matchedIn: 'title' })
+    } else {
+      contentCandidates.push(meta)
+    }
   }
+
+  await Promise.all(
+    contentCandidates.map(async (meta) => {
+      const record = await loadConversation(meta.id)
+      if (!record) return
+      const snippet = contentSnippet(record, needle)
+      if (!snippet) return
+      results.push({ ...toConversationMeta(record), matchedIn: 'content', snippet })
+    })
+  )
 
   results.sort((a, b) =>
     a.matchedIn === b.matchedIn
@@ -211,14 +309,16 @@ export async function searchConversations(
 }
 
 export async function markConversationKbFed(id: string): Promise<void> {
-  const record = await loadConversation(id)
-  if (!record) return
-  if (record.source === 'lookup') {
-    await deleteConversation(id)
-    return
-  }
-  record.kbFed = true
-  await saveConversation(record)
+  let lookup = false
+  await mutateConversation(id, (record) => {
+    if (record.source === 'lookup') {
+      lookup = true
+      return false
+    }
+    record.kbFed = true
+    return true
+  })
+  if (lookup) await deleteConversation(id)
 }
 
 export async function listUnfedConversations(): Promise<ConversationMeta[]> {
@@ -233,11 +333,16 @@ export async function listUnfedConversations(): Promise<ConversationMeta[]> {
  */
 export async function resetKbFedFlags(): Promise<void> {
   const records = await readAllConversations()
-  const chats = records.filter((record) => record.source === 'chat' && record.kbFed)
+  const ids = records
+    .filter((record) => record.source === 'chat' && record.kbFed)
+    .map((record) => record.id)
   await Promise.all(
-    chats.map((record) => {
-      record.kbFed = false
-      return saveConversation(record)
-    })
+    ids.map((id) =>
+      mutateConversation(id, (record) => {
+        if (record.source !== 'chat' || !record.kbFed) return false
+        record.kbFed = false
+        return true
+      })
+    )
   )
 }

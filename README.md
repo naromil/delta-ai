@@ -14,7 +14,8 @@ Delta AI lives in two windows: a full **chat** interface and an **always-on-top 
 - **Multi-provider AI** — Bring your own key (BYOK) for Google AI Studio, OpenAI, OpenAI-compatible endpoints, Ollama, or OpenRouter. Each conversation role (chat, lookup) maps independently to a provider + model.
 - **Role-based model assignment** — Chat and Lookup use separate model connections so you can run lightweight models for lookups and heavier ones for deep conversations.
 - **Knowledge Base (KB) personalization** — Analyzes past conversations to build a learning-preference profile that gets injected into lookup queries, making responses adapt to your style over time.
-- **Conversation persistence & search** — All conversations are saved to disk automatically, survive restarts, and are searchable by title.
+- **Conversation persistence & search** — All conversations are saved to disk automatically (body + metadata sidecar), survive restarts, and are searchable by title and message content.
+- **Rename, regenerate, export** — Rename a conversation inline without reordering recents, regenerate any answer (confirming when later messages would be dropped), and export a conversation as markdown through the system save dialog.
 - **Wayland-first** — Built-in support for KDE Plasma Wayland via XDG Desktop Portals (GlobalShortcuts + Screenshot). Falls back to Electron's `globalShortcut` / `desktopCapturer` on X11, macOS, and Windows.
 - **Privacy-first** — All data stays on your machine except AI API calls. Only a summarized learning-preference paragraph is sent alongside lookup queries. No telemetry, no accounts.
 
@@ -22,8 +23,8 @@ Delta AI lives in two windows: a full **chat** interface and an **always-on-top 
 
 ## Screenshots
 
-| Chat window                                                                   | Lookup popup                                                                  |
-| ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Chat window                                                                                                                                                                                                       | Lookup popup                                                                                                                                                                                                     |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | <img width="1090" height="798" alt="image" src="https://github.com/user-attachments/assets/830f8d05-109a-48e2-94a6-f58505f8db45" /> Full chat with sidebar navigation, inline expansions, and conversation search | <img width="840" height="640" alt="image" src="https://github.com/user-attachments/assets/e5cc2347-1f91-4a56-ad19-ffa901c0d359" /> Always-on-top popup after screen capture, showing OCR context and AI response |
 
 ---
@@ -210,7 +211,7 @@ src/
     src/
       assets/     # CSS (base.css, chat.css, expand.css, lookup.css, settings.css)
       components/ # React components (Conversation, Turn, ExpansionFrame, Settings)
-      hooks/      # useChatStreaming, useExpansionContextMenu
+      hooks/      # useChatStreaming, useExpansionContextMenu, chat/ (requests, transport, persistence)
       views/      # Home, Knowledge, LookupGuide, Settings views
 tests/            # Vitest suites for pure modules
 docs/

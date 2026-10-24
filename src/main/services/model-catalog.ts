@@ -1,8 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
 import { app, ipcMain } from 'electron'
-import { buildModelCatalog, isCatalogFresh } from '../../shared/model-catalog'
-import type { ModelCatalog, ModelCatalogState } from '../../shared/model-catalog'
+import { buildModelCatalog, findCatalogModel, isCatalogFresh } from '../../shared/model-catalog'
+import type { CatalogModel, ModelCatalog, ModelCatalogState } from '../../shared/model-catalog'
+import type { ProviderType } from '../../shared/models'
 
 const CATALOG_URL = 'https://models.dev/api.json'
 const FETCH_TIMEOUT_MS = 20_000
@@ -45,6 +46,19 @@ export function writeCachedCatalog(cachePath: string, catalog: ModelCatalog): vo
     writeFileSync(cachePath, JSON.stringify(payload), 'utf-8')
   } catch (err) {
     console.warn(`Failed to write model catalog cache at ${cachePath}:`, err)
+  }
+}
+
+/**
+ * Synchronous, offline-only lookup for callers that cannot await a network
+ * refresh (context budgeting). Never throws; `null` when the model is unknown.
+ */
+export function getCachedModel(provider: ProviderType, modelId: string): CatalogModel | null {
+  try {
+    const catalog = memoryCache ?? readCachedCatalog(catalogCachePath())
+    return findCatalogModel(catalog, provider, modelId) ?? null
+  } catch {
+    return null
   }
 }
 

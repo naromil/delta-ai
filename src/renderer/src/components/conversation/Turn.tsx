@@ -1,5 +1,6 @@
-import { memo, useState } from 'react'
+import { memo, useCallback, useState } from 'react'
 import type { Turn as TurnType } from '../../../../shared/conversation'
+import type { ExpansionNode } from '../../../../shared/rich-text'
 import Markdown from './Markdown'
 import ExpansionFrame from './ExpansionFrame'
 
@@ -9,6 +10,7 @@ interface TurnProps {
   onFold: (id: number) => void
   onUnfold: (id: number) => void
   onRetry?: (turnId: number) => void
+  onRegenerate?: (turnId: number) => void
   onRetryExpansion?: (expansionId: number) => void
   onDismissExpansion?: (expansionId: number) => void
 }
@@ -19,6 +21,7 @@ function Turn({
   onFold,
   onUnfold,
   onRetry,
+  onRegenerate,
   onRetryExpansion,
   onDismissExpansion
 }: TurnProps): React.JSX.Element {
@@ -36,6 +39,20 @@ function Turn({
   }
 
   const isStreamingPlaceholder = turn.content === '' && loading && !isUser
+
+  // Stable across streamed chunks, so memoized nested frames are not invalidated.
+  const renderExpansion = useCallback(
+    (node: ExpansionNode) => (
+      <ExpansionFrame
+        node={node}
+        onFold={onFold}
+        onUnfold={onUnfold}
+        onRetry={onRetryExpansion}
+        onDismiss={onDismissExpansion}
+      />
+    ),
+    [onFold, onUnfold, onRetryExpansion, onDismissExpansion]
+  )
 
   return (
     <div
@@ -87,15 +104,7 @@ function Turn({
               expansions={turn.expansions}
               onFold={onFold}
               onUnfold={onUnfold}
-              renderExpansion={(node) => (
-                <ExpansionFrame
-                  node={node}
-                  onFold={onFold}
-                  onUnfold={onUnfold}
-                  onRetry={onRetryExpansion}
-                  onDismiss={onDismissExpansion}
-                />
-              )}
+              renderExpansion={renderExpansion}
             />
             {turn.error && onRetry && (
               <button className="message-retry" onClick={() => onRetry(turn.id)}>
@@ -126,6 +135,28 @@ function Turn({
               </svg>
               {copied ? 'Copied' : 'Copy'}
             </button>
+            {!isUser && onRegenerate && !isStreamingPlaceholder && (
+              <button
+                type="button"
+                className="message-regenerate"
+                onClick={() => onRegenerate(turn.id)}
+                title="Regenerate answer"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M20 11a8 8 0 1 0-2.34 5.66" />
+                  <path d="M20 4v7h-7" />
+                </svg>
+                Regenerate
+              </button>
+            )}
           </div>
         )}
       </div>

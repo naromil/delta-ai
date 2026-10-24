@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -14,6 +14,8 @@ import {
   deleteConversation,
   listConversations,
   loadConversation,
+  markConversationKbFed,
+  mutateConversation,
   resetKbFedFlags,
   saveConversation,
   searchConversations
@@ -125,6 +127,120 @@ describe('conversation store', () => {
     await saveConversation(record('chat_del'))
     await deleteConversation('chat_del')
     expect(await loadConversation('chat_del')).toBeNull()
+  })
+
+  it('writes a metadata sidecar for every save', async () => {
+    await saveConversation(record('chat_meta'))
+
+    const metaPath = join(paths.userData, 'conversations', 'chat_meta.meta.json')
+    const meta = JSON.parse(readFileSync(metaPath, 'utf-8')) as Record<string, unknown>
+    expect(meta).toEqual({
+      id: 'chat_meta',
+      title: 'Conversation chat_meta',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+      source: 'chat',
+      kbFed: false,
+      turnCount: 2
+    })
+    expect((await listConversations()).map((entry) => entry.id)).toEqual(['chat_meta'])
+  })
+
+  it('backfills a missing sidecar when listing', async () => {
+    await saveConversation(record('chat_side'))
+    const metaPath = join(paths.userData, 'conversations', 'chat_side.meta.json')
+    rmSync(metaPath)
+
+    const listed = await listConversations('chat')
+
+    expect(listed.map((entry) => entry.id)).toEqual(['chat_side'])
+    expect(existsSync(metaPath)).toBe(true)
+    expect(JSON.parse(readFileSync(metaPath, 'utf-8'))).toMatchObject({ turnCount: 2 })
+  })
+
+  it('falls back to the body and repairs a corrupt sidecar', async () => {
+    await saveConversation(record('chat_corrupt'))
+    const metaPath = join(paths.userData, 'conversations', 'chat_corrupt.meta.json')
+    writeFileSync(metaPath, '{ not json')
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const listed = await listConversations('chat')
+      expect(listed.map((entry) => entry.id)).toEqual(['chat_corrupt'])
+    } finally {
+      warn.mockRestore()
+    }
+    expect(JSON.parse(readFileSync(metaPath, 'utf-8'))).toMatchObject({ id: 'chat_corrupt' })
+  })
+
+  it('deletes the sidecar with the record', async () => {
+    await saveConversation(record('chat_both'))
+    const metaPath = join(paths.userData, 'conversations', 'chat_both.meta.json')
+    expect(existsSync(metaPath)).toBe(true)
+
+    await deleteConversation('chat_both')
+
+    expect(existsSync(metaPath)).toBe(false)
+    expect(await loadConversation('chat_both')).toBeNull()
+  })
+
+  it('runs mutations inside the same per-id chain as saves', async () => {
+    await saveConversation(record('chat_chain'))
+    const newer = record('chat_chain', {
+      updatedAt: '2026-03-01T00:00:00.000Z',
+      state: { turns: [{ id: 3, role: 'user', content: 'latest turn', expansions: [] }] }
+    })
+
+    await Promise.all([
+      saveConversation(newer),
+      mutateConversation('chat_chain', (draft) => {
+        draft.kbFed = true
+      })
+    ])
+
+    const loaded = await loadConversation('chat_chain')
+    expect(loaded?.updatedAt).toBe('2026-03-01T00:00:00.000Z')
+    expect(loaded?.kbFed).toBe(true)
+    expect(loaded?.state.turns.map((turn) => turn.content)).toEqual(['latest turn'])
+  })
+
+  it('cancels a mutation when it returns false and skips missing records', async () => {
+    await saveConversation(record('chat_cancel'))
+
+    expect(await mutateConversation('chat_cancel', () => false)).toBe(false)
+    expect(await mutateConversation('chat_missing', () => undefined)).toBe(false)
+    expect((await loadConversation('chat_cancel'))?.kbFed).toBe(false)
+  })
+
+  it('marks fed without reverting a concurrent autosave', async () => {
+    await saveConversation(record('chat_mark'))
+    const newer = record('chat_mark', {
+      updatedAt: '2026-04-01T00:00:00.000Z',
+      state: { turns: [{ id: 4, role: 'user', content: 'newer body', expansions: [] }] }
+    })
+
+    await Promise.all([saveConversation(newer), markConversationKbFed('chat_mark')])
+
+    const loaded = await loadConversation('chat_mark')
+    expect(loaded?.kbFed).toBe(true)
+    expect(loaded?.updatedAt).toBe('2026-04-01T00:00:00.000Z')
+    expect(loaded?.state.turns.map((turn) => turn.content)).toEqual(['newer body'])
+  })
+
+  it('clears kbFed on the newest body during a concurrent autosave', async () => {
+    await saveConversation(record('chat_reset_race', { kbFed: true }))
+    const newer = record('chat_reset_race', {
+      kbFed: false,
+      updatedAt: '2026-05-01T00:00:00.000Z',
+      state: { turns: [{ id: 5, role: 'user', content: 'brand new', expansions: [] }] }
+    })
+
+    await Promise.all([saveConversation(newer, { preserveKbFed: true }), resetKbFedFlags()])
+
+    const loaded = await loadConversation('chat_reset_race')
+    expect(loaded?.kbFed).toBe(false)
+    expect(loaded?.updatedAt).toBe('2026-05-01T00:00:00.000Z')
+    expect(loaded?.state.turns.map((turn) => turn.content)).toEqual(['brand new'])
   })
 
   it('ranks title matches first and returns a snippet for content matches', async () => {

@@ -148,6 +148,10 @@ const api = {
   listUnfedConversations: () => ipcRenderer.invoke('conversation-list-unfed'),
   markConversationKbFed: (id: string): Promise<void> =>
     ipcRenderer.invoke('conversation-kb-fed', id),
+  exportConversation: (
+    id: string
+  ): Promise<{ ok: true; path: string } | { ok: false; error: string }> =>
+    ipcRenderer.invoke('conversation-export', id),
 
   kbLoadPrompt: (): Promise<{ prompt: string; keywords: CategorizedKeyword[] }> =>
     ipcRenderer.invoke('kb-load-prompt'),
