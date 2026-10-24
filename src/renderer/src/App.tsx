@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState } from 'react'
 import Settings from './views/settings/Settings'
 import Conversation from './components/conversation/Conversation'
 import HomeView from './views/home/HomeView'
@@ -113,15 +113,6 @@ function App(): React.JSX.Element {
       setTransferKey((k) => k + 1)
     }
   })
-
-  const initialLoadRef = useRef(false)
-  useEffect(() => {
-    if (initialLoadRef.current) return
-    initialLoadRef.current = true
-    window.api.loadMostRecentChat().then((record) => {
-      if (record) loadConversation(record.id)
-    })
-  }, [loadConversation])
 
   return (
     <div className="app">

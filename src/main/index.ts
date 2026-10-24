@@ -33,7 +33,6 @@ import {
   loadConversation,
   deleteConversation,
   listConversations,
-  loadMostRecentChat,
   markConversationKbFed,
   listUnfedConversations,
   searchConversations
@@ -211,9 +210,6 @@ if (!hasSingleInstanceLock) {
     })
     ipcMain.handle('conversation-search', async (_event, query: string) => {
       return await searchConversations(typeof query === 'string' ? query : '')
-    })
-    ipcMain.handle('conversation-load-most-recent', async () => {
-      return await loadMostRecentChat()
     })
     ipcMain.handle('conversation-list-unfed', async () => {
       return await listUnfedConversations()

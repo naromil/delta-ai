@@ -210,12 +210,6 @@ export async function searchConversations(
   return results.slice(0, SEARCH_RESULT_LIMIT)
 }
 
-export async function loadMostRecentChat(): Promise<ConversationRecord | null> {
-  const metas = await listConversations('chat')
-  if (metas.length === 0) return null
-  return await loadConversation(metas[0].id)
-}
-
 export async function markConversationKbFed(id: string): Promise<void> {
   const record = await loadConversation(id)
   if (!record) return

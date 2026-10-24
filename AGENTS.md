@@ -76,7 +76,6 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | `conversation-save` / `-load` / `-delete` | Renderer → Main | Conversation CRUD to `{userData}/conversations/` (atomic writes)                 |
 | `conversation-list`                       | Renderer → Main | List chat-source conversations (metadata sorted by updatedAt desc)               |
 | `conversation-search`                     | Renderer → Main | Search chat titles/content; results extend meta with `matchedIn`/`snippet`       |
-| `conversation-load-most-recent`           | Renderer → Main | Load most recently updated chat conversation (startup auto-load)                 |
 | `conversation-list-unfed` / `-kb-fed`     | Renderer → Main | KB model integration: list unfed; mark fed (+ auto-delete lookup source)         |
 | `kb-load-prompt` / `kb-save-prompt`       | Renderer → Main | Read the learned prompt; save an edited prompt (+ return keywords)               |
 | `kb-reset`                                | Renderer → Main | Delete prompt + keywords + run state; clears `kbFed`; auto rebuilds when enabled |
@@ -271,7 +270,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   conversations with no persistable turns. Saves are serialised per id in main, transient
   `loading` expansions are finalised into errors before writing, and the record carries
   `meta.updatedAt` (last _content_ change) — fold/dismiss never bump content recency, so they
-  cannot reorder recents or change what `loadMostRecentChat` picks. `createdAt` is set once on
+  cannot reorder recents. `createdAt` is set once on
   the first send and renderer autosaves preserve `kbFed` (main merges it from the existing file). A stop after output keeps the partial text and saves it; a stop
   before the first token saves only the user turn. Empty conversations (no turns, or all
   remaining turns blank) are never saved. Error turns are persisted for Retry.

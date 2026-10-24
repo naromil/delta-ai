@@ -91,7 +91,6 @@ declare global {
       deleteConversation: (id: string) => Promise<void>
       listConversations: () => Promise<ConversationMeta[]>
       searchConversations: (query: string) => Promise<ConversationSearchResult[]>
-      loadMostRecentChat: () => Promise<ConversationRecord | null>
       listUnfedConversations: () => Promise<ConversationMeta[]>
       markConversationKbFed: (id: string) => Promise<void>
 

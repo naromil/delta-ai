@@ -188,7 +188,7 @@ hook seeds its conversation metadata from that `createdAt` so later saves update
 | `lookup-transfer`                                           | L → M        | Send the popup conversation to the chat window                  |
 | `conversation-save` / `-load` / `-delete` / `-list`         | R ↔ M        | Conversation CRUD (atomic writes)                               |
 | `conversation-search`                                       | R → M        | Search titles/content; adds `matchedIn`/`snippet`               |
-| `conversation-load-most-recent` / `-list-unfed` / `-kb-fed` | R ↔ M        | Startup restore and KB integration                              |
+| `conversation-list-unfed` / `-kb-fed`                       | R ↔ M        | KB integration                                                  |
 | `load-settings` / `save-settings`                           | R ↔ M        | Save registers hotkey first (`{ success, hotkeyMode, error? }`) |
 | `load-model-config` / `save-model-config`                   | R ↔ M        | Connections and role assignments                                |
 | `load-model-catalog`                                        | R ↔ M        | models.dev model catalog (cached, force-refresh)                |

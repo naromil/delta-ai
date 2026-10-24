@@ -145,8 +145,6 @@ const api = {
   listConversations: () => ipcRenderer.invoke('conversation-list'),
   searchConversations: (query: string): Promise<ConversationSearchResult[]> =>
     ipcRenderer.invoke('conversation-search', query),
-  loadMostRecentChat: (): Promise<ConversationRecord | null> =>
-    ipcRenderer.invoke('conversation-load-most-recent'),
   listUnfedConversations: () => ipcRenderer.invoke('conversation-list-unfed'),
   markConversationKbFed: (id: string): Promise<void> =>
     ipcRenderer.invoke('conversation-kb-fed', id),
