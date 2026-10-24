@@ -49,7 +49,7 @@ function KnowledgeView(): React.JSX.Element {
   const reanalyzeInputRef = useRef<HTMLInputElement>(null)
   const promptRef = useRef(prompt)
   const savedPromptRef = useRef(savedPrompt)
-  const statusRef = useRef<KbMaintenanceStatus | null>(null)
+  const statusVersionRef = useRef(0)
 
   useEffect(() => {
     promptRef.current = prompt
@@ -61,6 +61,7 @@ function KnowledgeView(): React.JSX.Element {
 
   useEffect(() => {
     let cancelled = false
+    const version = statusVersionRef.current
     async function load(): Promise<void> {
       try {
         const [{ prompt: p }, all, kbStatus] = await Promise.all([
@@ -69,11 +70,13 @@ function KnowledgeView(): React.JSX.Element {
           window.api.kbGetStatus()
         ])
         if (cancelled) return
+        setTotalCount(all.length)
+        // A pushed status (and its prompt read) landed while this snapshot was
+        // in flight; the subscription owns the display from now on.
+        if (statusVersionRef.current !== version) return
         setPrompt(p)
         setSavedPrompt(p)
-        setTotalCount(all.length)
         setStatus(kbStatus)
-        statusRef.current = kbStatus
       } catch {
         // ignore
       }
@@ -86,24 +89,29 @@ function KnowledgeView(): React.JSX.Element {
 
   /* Follow the background loop: it can finish a pass while this view is open. */
   useEffect(() => {
+    let cancelled = false
     const unsubscribe = window.api.kbOnStatus((next) => {
-      const previous = statusRef.current
-      statusRef.current = next
+      if (cancelled) return
+      statusVersionRef.current += 1
       setStatus(next)
 
-      // A finished pass rewrote prompt.txt. Adopt it unless the user is editing.
-      if (next.lastLearnedAt && next.lastLearnedAt !== previous?.lastLearnedAt) {
-        if (promptRef.current !== savedPromptRef.current) return
-        window.api
-          .kbLoadPrompt()
-          .then(({ prompt: learned }) => {
-            setPrompt(learned)
-            setSavedPrompt(learned)
-          })
-          .catch(() => undefined)
-      }
+      // A pass rewrites prompt.txt. Adopt it unless the user is editing; re-check
+      // after the read, since typing may start while it is in flight.
+      if (promptRef.current !== savedPromptRef.current) return
+      window.api
+        .kbLoadPrompt()
+        .then(({ prompt: learned }) => {
+          if (cancelled) return
+          if (promptRef.current !== savedPromptRef.current) return
+          setPrompt(learned)
+          setSavedPrompt(learned)
+        })
+        .catch(() => undefined)
     })
-    return () => unsubscribe()
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
   }, [])
 
   const refreshCounts = async (): Promise<void> => {
@@ -112,7 +120,6 @@ function KnowledgeView(): React.JSX.Element {
       window.api.kbGetStatus()
     ])
     setStatus(kbStatus)
-    statusRef.current = kbStatus
     setTotalCount(all.length)
   }
 
