@@ -127,24 +127,25 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 
 ##### Renderer (`src/renderer/src/`)
 
-| Module         | Path                                                     | Role                                                                                                                |
-| -------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| Entry point    | `main.tsx`                                               | createRoot, imports CSS, mounts Root                                                                                |
-| Root router    | `Root.tsx`                                               | Routes App (main window) vs LookupApp (popup) by `?role=lookup`                                                     |
-| App shell      | `App.tsx`                                                | Sidebar + 5-view routing                                                                                            |
-| Lookup popup   | `LookupApp.tsx`                                          | Header, context panel, ask input, paste handling, grow transitions                                                  |
-| Chat hook      | `hooks/useChatStreaming.ts`                              | Owns ConversationState, stop/retry/regenerate/rename, routes requests via `hooks/chat/*`, auto-saves                |
-| Chat requests  | `hooks/chat/{requests,persistence,transport}.ts`         | Pure request book (pending ids, `activeSendId`, drain helpers), autosave effect, IPC subscriptions + stale-id drops |
-| Conversation   | `components/conversation/Conversation.tsx`               | Message list, composer + Stop button, search overlay, context menu                                                  |
-| Turn           | `components/conversation/Turn.tsx`                       | Single message (user/assistant) with avatar, markdown body, retry                                                   |
-| Markdown       | `components/conversation/Markdown.tsx`                   | remark → mdast → hast → React; block mode for turns, inline mode+`md-*` spans for frames; `data-src` text anchors   |
-| Markdown core  | `lib/markdown.ts`                                        | Pure parse/splice/anchor helpers (`prepareMarkdownTree`, `isAnchoredRange`, `collectTextNodeSpans`)                 |
-| ExpansionFrame | `components/conversation/ExpansionFrame.tsx`             | Inline expandable frames, folded pills, nested children                                                             |
-| ContextMenu    | `components/conversation/ContextMenu.tsx`                | Right-click Expand / Expand on… / Copy / Select All                                                                 |
-| ExpandPrompt   | `components/conversation/ExpandPrompt.tsx`               | Floating inline input for custom expand direction ("Expand on…")                                                    |
-| Search         | `components/conversation/ConversationSearch.tsx`         | Ctrl/Cmd+K modal: search titles + messages, snippet, load/delete, errors                                            |
-| Settings       | `views/settings/Settings.tsx`                            | 3-tab settings orchestrator                                                                                         |
-| Views          | `views/home/`, `views/knowledge/`, `views/lookup-guide/` | Dashboard and placeholder views                                                                                     |
+| Module           | Path                                                     | Role                                                                                                                |
+| ---------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Entry point      | `main.tsx`                                               | createRoot, imports CSS, mounts Root                                                                                |
+| Root router      | `Root.tsx`                                               | Routes App (main window) vs LookupApp (popup) by `?role=lookup`                                                     |
+| App shell        | `App.tsx`                                                | Sidebar + 5-view routing                                                                                            |
+| Lookup popup     | `LookupApp.tsx`                                          | Header, context panel, ask input, paste handling, grow transitions                                                  |
+| Chat hook        | `hooks/useChatStreaming.ts`                              | Owns ConversationState, stop/retry/regenerate/rename, routes requests via `hooks/chat/*`, auto-saves                |
+| Chat requests    | `hooks/chat/{requests,persistence,transport}.ts`         | Pure request book (pending ids, `activeSendId`, drain helpers), autosave effect, IPC subscriptions + stale-id drops |
+| Scroll following | `hooks/useStickToBottom.ts`                              | Pins chat/popup views to the bottom while a response streams; an upward scroll unpins                               |
+| Conversation     | `components/conversation/Conversation.tsx`               | Message list, composer + Stop button, search overlay, context menu                                                  |
+| Turn             | `components/conversation/Turn.tsx`                       | Single message (user/assistant) with avatar, markdown body, retry                                                   |
+| Markdown         | `components/conversation/Markdown.tsx`                   | remark → mdast → hast → React; block mode for turns, inline mode+`md-*` spans for frames; `data-src` text anchors   |
+| Markdown core    | `lib/markdown.ts`                                        | Pure parse/splice/anchor helpers (`prepareMarkdownTree`, `isAnchoredRange`, `collectTextNodeSpans`)                 |
+| ExpansionFrame   | `components/conversation/ExpansionFrame.tsx`             | Inline expandable frames, folded pills, nested children                                                             |
+| ContextMenu      | `components/conversation/ContextMenu.tsx`                | Right-click Expand / Expand on… / Copy / Select All                                                                 |
+| ExpandPrompt     | `components/conversation/ExpandPrompt.tsx`               | Floating inline input for custom expand direction ("Expand on…")                                                    |
+| Search           | `components/conversation/ConversationSearch.tsx`         | Ctrl/Cmd+K modal: search titles + messages, snippet, load/delete, errors                                            |
+| Settings         | `views/settings/Settings.tsx`                            | 3-tab settings orchestrator                                                                                         |
+| Views            | `views/home/`, `views/knowledge/`, `views/lookup-guide/` | Dashboard and placeholder views                                                                                     |
 
 #### What to touch when
 
@@ -175,6 +176,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | Automatic learning pacing              | `kb/schedule.ts` (pure) + `kb/maintenance.ts` (timers, queue, status)                                 |
 | What gets folded into the profile      | `kb/run.ts` (`runKbAnalysis`) + `kb/analysis.ts` (material/messages)                                  |
 | Stop/retry generation                  | `useChatStreaming.ts` (`stop`/`retry`) + `Conversation.tsx`, `Turn.tsx`                               |
+| Change chat auto-scroll                | `hooks/useStickToBottom.ts`                                                                           |
 | Renderer chat UI                       | `App.tsx`, `Conversation.tsx`, `Turn.tsx`, `ConversationSearch.tsx`                                   |
 | Provider config form                   | `components/settings/models/ModelsTab.tsx` (+ `RoleRow.tsx`, `ConnectionCard.tsx`)                    |
 | Model picker / catalog                 | `shared/model-catalog.ts` (pure), `services/model-catalog.ts` (fetch+cache)                           |
@@ -311,6 +313,10 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   `serializeForChat` omits assistant turns that are `error: true` or have blank/whitespace
   content (in-flight/legacy placeholders), so neither error text nor empty placeholders are
   replayed to the model; error turns stay on disk so Retry survives a reload.
+- **Auto-scroll is a pin, not a proximity check.** `hooks/useStickToBottom.ts` follows new
+  chunks only while the reader is at the bottom. Scrolling up unpins the view immediately, so
+  streaming can never drag the reader back down; returning to the bottom, clicking Latest, or
+  sending a message re-pins. The main chat and the lookup popup share the hook.
 - **Every navigation action drops its in-flight requests.** `stop`, `newChat`, `loadConversation`
   and conversation replacement cancel all pending ids, while `retry`/`regenerate` cancel only
   expands attached to the turns they drop. The request book (`hooks/chat/requests.ts`) is

@@ -1,6 +1,7 @@
 import { useRef, useState, useEffect, useCallback } from 'react'
 import { useChatStreaming } from './hooks/useChatStreaming'
 import { useExpansionContextMenu } from './hooks/useExpansionContextMenu'
+import { useStickToBottom } from './hooks/useStickToBottom'
 import Turn from './components/conversation/Turn'
 import ContextMenu from './components/conversation/ContextMenu'
 import { LOOKUP_DEFAULT_QUERY } from '../../shared/prompts'
@@ -27,7 +28,6 @@ function LookupApp(): React.JSX.Element {
   const [flash, setFlash] = useState(false)
   const [ocrProcessing, setOcrProcessing] = useState(false)
   const [input, setInput] = useState('')
-  const scrollRef = useRef<HTMLDivElement>(null)
   const flashTimerRef = useRef<number | null>(null)
   const askRef = useRef<HTMLInputElement>(null)
 
@@ -125,13 +125,8 @@ function LookupApp(): React.JSX.Element {
     }
   }, [grown])
 
-  /* ---- Auto-scroll (near-bottom only, so expand/fold doesn't jump) ---- */
-  useEffect(() => {
-    const el = scrollRef.current
-    if (!el) return
-    const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100
-    if (isNearBottom) el.scrollTop = el.scrollHeight
-  }, [state.turns])
+  /* ---- Auto-scroll (follows the stream until the reader scrolls up) ---- */
+  const { scrollRef, pin } = useStickToBottom(state.turns)
 
   /* ---- Keyboard ---- */
   useEffect(() => {
@@ -241,9 +236,10 @@ function LookupApp(): React.JSX.Element {
       return
     }
     const text = trimmed || LOOKUP_DEFAULT_QUERY
+    pin()
     setInput('')
     send(text)
-  }, [input, loading, contextReady, send, flashHint])
+  }, [input, loading, contextReady, send, flashHint, pin])
 
   /* ---- Transfer to chat ---- */
   const handleTransfer = useCallback((): void => {

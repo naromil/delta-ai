@@ -3,6 +3,7 @@ import type { ConversationState } from '../../../../shared/conversation'
 import { CONVERSATION_TITLE_MAX_LENGTH } from '../../../../shared/conversation'
 import { useExpansionContextMenu } from '../../hooks/useExpansionContextMenu'
 import type { ExpandRequest } from '../../hooks/useExpansionContextMenu'
+import { useStickToBottom } from '../../hooks/useStickToBottom'
 import Turn from './Turn'
 import ContextMenu from './ContextMenu'
 import ExpandPrompt from './ExpandPrompt'
@@ -56,8 +57,7 @@ function Conversation({
   conversationTitle
 }: ConversationProps): React.JSX.Element {
   const [input, setInput] = useState('')
-  const [atBottom, setAtBottom] = useState(true)
-  const scrollRef = useRef<HTMLDivElement>(null)
+  const { scrollRef, atBottom, pin, jumpToLatest } = useStickToBottom(state.turns)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [showSearch, setShowSearch] = useState(false)
   const [exporting, setExporting] = useState(false)
@@ -83,14 +83,6 @@ function Conversation({
   } = useExpansionContextMenu({ turns: state.turns, onExpand })
 
   useEffect(() => {
-    const el = scrollRef.current
-    if (!el) return
-    const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100
-    if (isNearBottom) el.scrollTop = el.scrollHeight
-    setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 40)
-  }, [state.turns])
-
-  useEffect(() => {
     textareaRef.current?.focus()
   }, [])
 
@@ -100,35 +92,18 @@ function Conversation({
     }
   }, [])
 
-  const handleScroll = (): void => {
-    const el = scrollRef.current
-    if (!el) return
-    setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 40)
-  }
-
-  const jumpToLatest = (): void => {
-    const el = scrollRef.current
-    if (!el) return
-    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
-    setAtBottom(true)
-  }
-
   const fillComposer = (text: string): void => {
     setInput(text)
     textareaRef.current?.focus()
   }
 
   useEffect(() => {
-    const el = scrollRef.current
-    if (!el) return
-    el.scrollTop = el.scrollHeight
-  }, [transferKey])
+    pin()
+  }, [transferKey, pin])
 
   useEffect(() => {
-    const el = scrollRef.current
-    if (!el) return
-    el.scrollTop = el.scrollHeight
-  }, [conversationId])
+    pin()
+  }, [conversationId, pin])
 
   useEffect(() => {
     const el = textareaRef.current
@@ -168,6 +143,7 @@ function Conversation({
   const handleSend = (): void => {
     const trimmed = input.trim()
     if (trimmed === '' || loading) return
+    pin()
     setInput('')
     onSend(trimmed)
   }
@@ -336,7 +312,7 @@ function Conversation({
       <div className="sr-only" role="status" aria-live="polite">
         {loading ? 'Delta AI is responding' : ''}
       </div>
-      <div className="chat-scroll" ref={scrollRef} onScroll={handleScroll}>
+      <div className="chat-scroll" ref={scrollRef}>
         {visibleTurns.length === 0 ? (
           <div className="empty-state">
             <div className="empty-state-inner">
