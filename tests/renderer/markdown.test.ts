@@ -49,8 +49,13 @@ function expansion(overrides: Partial<ExpansionNode> & Pick<ExpansionNode, 'id'>
   }
 }
 
-/** Opening block-level tags that must never appear inside an expansion frame. */
-const BLOCK_TAG = /<(div|p|ul|ol|li|pre|table|thead|tbody|tfoot|tr|td|th|h[1-6])(\s|>)/
+/**
+ * Opening flow-content tags that would be invalid inside the frame `<span>`.
+ * Phrasing content (`span`, `code`, `strong`, `em`, `del`, `a`, `input`,
+ * `button`, `br`) is intentionally allowed.
+ */
+const BLOCK_TAG =
+  /<(div|p|ul|ol|li|pre|table|thead|tbody|tfoot|tr|td|th|h[1-6]|blockquote|section|article|aside|header|footer|main|nav|figure|figcaption|dl|dt|dd|details|summary|hr|form|fieldset|iframe|video|audio|canvas|svg)(\s|>)/
 
 describe('Markdown renderer', () => {
   it('renders headings, emphasis, code, lists, quotes, tables and rules', () => {
@@ -107,7 +112,29 @@ describe('Markdown renderer', () => {
   })
 
   it('renders an expansion frame with only inline-safe tags inside it', () => {
-    const answer = '**bold** tail\n\n- item one\n- item two\n\n```\ncode line\n```'
+    const answer = [
+      '**bold** tail',
+      '',
+      '- item one',
+      '- item two',
+      '- [ ] task',
+      '',
+      '```',
+      'code line',
+      '```',
+      '',
+      '> outer',
+      '>',
+      '> > inner',
+      '',
+      '![alt text](https://example.com/x.png)',
+      '',
+      '| a | b |',
+      '| - | - |',
+      '| 1 | 2 |',
+      '',
+      '---'
+    ].join('\n')
     const source = 'Before alpha after'
     const markup = renderMarkdown(source, [
       expansion({ id: 7, start: 7, end: 12, originalText: 'alpha', answer })
@@ -121,6 +148,12 @@ describe('Markdown renderer', () => {
     expect(frame).toContain('<strong')
     expect(frame).toContain('md-li')
     expect(frame).toContain('md-pre')
+    expect(frame).toContain('md-quote')
+    expect(frame).toContain('md-hr')
+    expect(frame).toContain('md-table')
+    expect(frame).toContain('md-img')
+    expect(frame).toContain('checkbox')
+    expect(frame).not.toContain('<img')
     // Frame text offsets are relative to the expansion answer (`bold` starts at 2).
     expect(frame).toContain('data-src="2"')
     expect(frame).toContain('data-src="17"')

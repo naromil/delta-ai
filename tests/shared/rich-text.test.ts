@@ -16,7 +16,6 @@ import {
   maxExpansionId,
   migrateLegacySegments,
   migrateLegacyTurn,
-  plainTextOf,
   removeExpansionInTurns,
   setExpansionFolded,
   updateExpansion,
@@ -340,26 +339,6 @@ describe('expansionMessageInput', () => {
     expect(expansionMessageInput(turns[0], 42, { start: 0, end: 1 })).toBeNull()
     expect(expansionMessageInput(turns[0], undefined, { start: 0, end: 99 })).toBeNull()
     expect(expansionMessageInput(turns[0], undefined, { start: 4, end: 4 })).toBeNull()
-  })
-})
-
-describe('plainTextOf', () => {
-  it('flattens markdown when there are no expansions', () => {
-    expect(plainTextOf('Some **bold** and `code`', [])).toBe('Some bold and code')
-  })
-
-  it('keeps the expanded term in place', () => {
-    const content = 'Some **bold** text'
-    const start = content.indexOf('bold')
-    const expansions = [node(1, { start, end: start + 4, originalText: 'bold' })]
-    expect(plainTextOf(content, expansions)).toBe('Some bold text')
-  })
-
-  it('falls back to the stored term when the range no longer matches', () => {
-    const content = 'Some bold text'
-    const start = content.indexOf('bold')
-    const expansions = [node(1, { start, end: start + 4, originalText: 'BOLD' })]
-    expect(plainTextOf(content, expansions)).toBe('Some BOLD text')
   })
 })
 

@@ -86,36 +86,37 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 
 ##### Shared (`src/shared/`)
 
-| Module             | Role                                                                                                                                                                                                                                         |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `models.ts`        | Shared types + registries (ProviderType, RoleId, Connection, etc.)                                                                                                                                                                           |
-| `conversation.ts`  | `ConversationState` / `Turn` (markdown `content` + offset-anchored `expansions`), `persistableTurns`, `serializeForChat`, `buildConversationTitle`, `migrateConversationRecord`                                                              |
-| `rich-text.ts`     | Pure rich-text model: `ExpansionNode`, `validateInsertion` / `insertExpansion(InTurns)` / `updateExpansion` / `setExpansionFolded` / `findExpansionIn*` / `maxExpansionId`, `flattenMarkdown`, `plainTextOf`, legacy `migrateLegacySegments` |
-| `expand-prompt.ts` | `buildExpandMessages({answer, selection, prompt?})` — constructs API messages for expand requests                                                                                                                                            |
-| `prompts.ts`       | All LLM-facing prompt/instruction strings: system prompts, context template, lookup default, expand instructions                                                                                                                             |
+| Module             | Role                                                                                                                                                                                                                          |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `models.ts`        | Shared types + registries (ProviderType, RoleId, Connection, etc.)                                                                                                                                                            |
+| `conversation.ts`  | `ConversationState` / `Turn` (markdown `content` + offset-anchored `expansions`), `persistableTurns`, `serializeForChat`, `buildConversationTitle`, `migrateConversationRecord`                                               |
+| `rich-text.ts`     | Pure rich-text model: `ExpansionNode`, `validateInsertion` / `insertExpansion(InTurns)` / `updateExpansion` / `setExpansionFolded` / `findExpansionIn*` / `maxExpansionId`, `flattenMarkdown`, legacy `migrateLegacySegments` |
+| `expand-prompt.ts` | `buildExpandMessages({answer, selection, prompt?})` — constructs API messages for expand requests                                                                                                                             |
+| `prompts.ts`       | All LLM-facing prompt/instruction strings: system prompts, context template, lookup default, expand instructions                                                                                                              |
 
 ##### Main process (`src/main/`)
 
-| Module              | Path                          | Role                                                                                               |
-| ------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------- |
-| App lifecycle       | `index.ts`                    | Main window, tray, streaming IPC (chat-send/expand/cancel), lookup transfer, conversation IPC      |
-| Conversation store  | `conversations.ts`            | Persistence: CRUD on `{userData}/conversations/{id}.json`; title+content search, KB-fed mark/reset |
-| Main window ref     | `main-window.ts`              | Module-scoped getter/setter for BrowserWindow ref (used by transfer handler)                       |
-| Config              | `config.ts`                   | Settings/config I/O (atomic), hotkey registry (register-first save, startup fallback), Wayland     |
-| Atomic writes       | `services/atomic-file.ts`     | Temp-file + rename writes (`writeFileAtomic[Sync]`) for config, KB and conversation files          |
-| Provider dispatch   | `provider.ts`                 | `callProvider` + `callProviderStream(…, signal?)` (resolves role → connection → backend)           |
-| Model re-exports    | `models/registries.ts`        | Re-exports shared types/registries so main imports stay stable without crossing renderer boundary  |
-| Config schema       | `models/config-schema.ts`     | Zod schema, v1→v2 migration, repair of dangling roles/unknown providers                            |
-| Model catalog       | `services/model-catalog.ts`   | models.dev fetch + 24h disk cache (`{userData}/cache/models-dev.json`) + `load-model-catalog` IPC  |
-| KB handlers         | `kb/handlers.ts`              | `kb-*` handlers; `kb-reset` also clears chat `kbFed` via `resetKbFedFlags`                         |
-| KB store            | `kb/store.ts`                 | `{userData}/kb/prompt.txt` + `keywords.json` I/O (atomic); `resetKb` deletes both                  |
-| Lookup orchestrator | `lookup/lookup.ts`            | Hotkey entry point (capture + OCR + create popup)                                                  |
-| Lookup popup window | `lookup/window.ts`            | BrowserWindow + grow animation + ref-counted ocr-image handler                                     |
-| Capture + OCR       | `lookup/capture.ts`           | Screen capture + tesseract.js worker                                                               |
-| Handlers            | `lookup/handlers.ts`          | Paste-text and paste-image handlers only (Ask/Expand moved to streaming IPC)                       |
-| Session state       | `lookup/state.ts`             | LookupSession interface + helpers (sendToSession, notifySessionState, isSessionAlive)              |
-| Wayland shortcut    | `services/global-shortcut.ts` | XDG GlobalShortcuts portal                                                                         |
-| KDE screenshot      | `services/screen-capture.ts`  | Screenshot portal (silent)                                                                         |
+| Module              | Path                          | Role                                                                                                                 |
+| ------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| App lifecycle       | `index.ts`                    | Main window, tray, streaming IPC (chat-send/expand/cancel), lookup transfer, conversation IPC                        |
+| Conversation store  | `conversations.ts`            | Persistence: CRUD on `{userData}/conversations/{id}.json`; title+content search, KB-fed mark/reset                   |
+| Lookup transfer     | `transfer.ts`                 | `prepareTransferredState`: finalizes in-flight frames + folds screen context into a user turn before persist/forward |
+| Main window ref     | `main-window.ts`              | Module-scoped getter/setter for BrowserWindow ref (used by transfer handler)                                         |
+| Config              | `config.ts`                   | Settings/config I/O (atomic), hotkey registry (register-first save, startup fallback), Wayland                       |
+| Atomic writes       | `services/atomic-file.ts`     | Temp-file + rename writes (`writeFileAtomic[Sync]`) for config, KB and conversation files                            |
+| Provider dispatch   | `provider.ts`                 | `callProvider` + `callProviderStream(…, signal?)` (resolves role → connection → backend)                             |
+| Model re-exports    | `models/registries.ts`        | Re-exports shared types/registries so main imports stay stable without crossing renderer boundary                    |
+| Config schema       | `models/config-schema.ts`     | Zod schema, v1→v2 migration, repair of dangling roles/unknown providers                                              |
+| Model catalog       | `services/model-catalog.ts`   | models.dev fetch + 24h disk cache (`{userData}/cache/models-dev.json`) + `load-model-catalog` IPC                    |
+| KB handlers         | `kb/handlers.ts`              | `kb-*` handlers; `kb-reset` also clears chat `kbFed` via `resetKbFedFlags`                                           |
+| KB store            | `kb/store.ts`                 | `{userData}/kb/prompt.txt` + `keywords.json` I/O (atomic); `resetKb` deletes both                                    |
+| Lookup orchestrator | `lookup/lookup.ts`            | Hotkey entry point (capture + OCR + create popup)                                                                    |
+| Lookup popup window | `lookup/window.ts`            | BrowserWindow + grow animation + ref-counted ocr-image handler                                                       |
+| Capture + OCR       | `lookup/capture.ts`           | Screen capture + tesseract.js worker                                                                                 |
+| Handlers            | `lookup/handlers.ts`          | Paste-text and paste-image handlers only (Ask/Expand moved to streaming IPC)                                         |
+| Session state       | `lookup/state.ts`             | LookupSession interface + helpers (sendToSession, notifySessionState, isSessionAlive)                                |
+| Wayland shortcut    | `services/global-shortcut.ts` | XDG GlobalShortcuts portal                                                                                           |
+| KDE screenshot      | `services/screen-capture.ts`  | Screenshot portal (silent)                                                                                           |
 
 ##### Renderer (`src/renderer/src/`)
 

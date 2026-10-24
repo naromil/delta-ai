@@ -334,6 +334,9 @@ export function useExpansionContextMenu(options: UseExpansionContextMenuOptions)
         const anchors = anchorsFromRange(range)
         const resolved = anchors ? resolveTarget(turn, anchors, selectedText) : null
         const target = resolved?.ok ? resolved.target : null
+        const hint = target
+          ? undefined
+          : refusalMessage(resolved && !resolved.ok ? resolved.reason : 'not-anchored')
         pendingRef.current = {
           turnId,
           range: range.cloneRange(),
@@ -345,6 +348,7 @@ export function useExpansionContextMenu(options: UseExpansionContextMenuOptions)
           x: e.clientX,
           y: e.clientY,
           canExpand: target !== null,
+          hint,
           onExpand: () => submit(),
           onExpandPrompted: () => {
             if (!target) return
@@ -382,6 +386,9 @@ export function useExpansionContextMenu(options: UseExpansionContextMenuOptions)
           const anchors = anchorsFromRange(wordRange)
           const resolved = anchors ? resolveTarget(turn, anchors, wordText) : null
           const target = resolved?.ok ? resolved.target : null
+          const hint = target
+            ? undefined
+            : refusalMessage(resolved && !resolved.ok ? resolved.reason : 'not-anchored')
           pendingRef.current = {
             turnId,
             range: wordRange.cloneRange(),
@@ -397,6 +404,7 @@ export function useExpansionContextMenu(options: UseExpansionContextMenuOptions)
             x: e.clientX,
             y: e.clientY,
             canExpand: target !== null,
+            hint,
             onExpand: () => submit(),
             onExpandPrompted: () => {
               if (!target) return

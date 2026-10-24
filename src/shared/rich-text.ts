@@ -116,30 +116,6 @@ export function flattenMarkdown(text: string): string {
   return flat
 }
 
-/**
- * The plain text a turn reads as. Expansions are inline annotations that do
- * not add text to `content`, so the flat content is authoritative; the stored
- * `originalText` is used only when a range no longer matches its source.
- */
-export function plainTextOf(content: string, expansions: ExpansionNode[]): string {
-  if (expansions.length === 0) return flattenMarkdown(content)
-  const ordered = [...expansions].sort((a, b) => a.start - b.start)
-  const aligned = ordered.every(
-    (node) => node.start <= node.end && content.slice(node.start, node.end) === node.originalText
-  )
-  if (aligned) return flattenMarkdown(content)
-
-  let out = ''
-  let cursor = 0
-  for (const node of ordered) {
-    if (node.start < cursor || node.end > content.length) continue
-    out += flattenMarkdown(content.slice(cursor, node.start))
-    out += flattenMarkdown(node.originalText)
-    cursor = node.end
-  }
-  return out + flattenMarkdown(content.slice(cursor))
-}
-
 /* ---- Block boundaries ---- */
 
 const BLOCK_LINE = /^ {0,3}(?:#{1,6}(?:[ \t]|$)|>|[-*+][ \t]|\d{1,9}[.)][ \t]|\||```|~~~| {4}\S)/

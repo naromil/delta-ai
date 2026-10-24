@@ -34,10 +34,6 @@
   font-size: 13px;
 }
 
-.frame.error .fold-toggle {
-  display: none;
-}
-
 .frame-inner {
   display: block;
   /* Inherit typography so a frame never shifts the surrounding line box. */
@@ -174,14 +170,24 @@
   color: var(--text-1);
 }
 
-#ctxMenu .item.disabled {
+#ctxMenu .item:disabled {
   color: var(--text-3);
   cursor: default;
+  opacity: 1;
 }
 
-#ctxMenu .item.disabled:hover {
+#ctxMenu .item:disabled:hover {
   background: transparent;
   color: var(--text-3);
+}
+
+#ctxMenu .hint {
+  max-width: 260px;
+  padding: 2px 14px 6px;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.35;
+  cursor: default;
 }
 
 #ctxMenu .sep {

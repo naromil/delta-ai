@@ -4,6 +4,8 @@ interface ContextMenuState {
   x: number
   y: number
   canExpand: boolean
+  /** Why Expand is disabled when a selection exists but cannot be used. */
+  hint?: string
   onExpand: () => void
   onExpandPrompted: () => void
   onCopy: () => void
@@ -129,6 +131,11 @@ function ContextMenu({ state, onClose }: ContextMenuProps): React.JSX.Element | 
       >
         Expand on…
       </button>
+      {state.hint ? (
+        <div className="hint" role="presentation">
+          {state.hint}
+        </div>
+      ) : null}
       <div className="sep" role="separator" />
       <button
         ref={(el) => {
