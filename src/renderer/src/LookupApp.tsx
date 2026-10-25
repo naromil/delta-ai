@@ -235,11 +235,12 @@ function LookupApp(): React.JSX.Element {
       flashHint('Context is still being prepared…')
       return
     }
-    const text = trimmed || LOOKUP_DEFAULT_QUERY
+    const text = trimmed || (state.context ? LOOKUP_DEFAULT_QUERY : '')
+    if (text === '') return
     pin()
     setInput('')
     send(text)
-  }, [input, loading, contextReady, send, flashHint, pin])
+  }, [input, loading, contextReady, state.context, send, flashHint, pin])
 
   /* ---- Transfer to chat ---- */
   const handleTransfer = useCallback((): void => {

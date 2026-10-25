@@ -78,9 +78,10 @@ Both windows talk to the same main process. Everything the app knows about the u
 
 1. `Conversation` composer → `useChatStreaming.send(text)`.
 2. `serializeForChat(state, role)` builds the provider messages: the system prompt always, the
-   screen-context preamble when a context exists or `role === 'lookup'`, then every turn —
-   assistant turns flagged `error: true` or containing only blank/whitespace are omitted, so
-   neither error text nor in-flight placeholders are replayed.
+   screen-context preamble when `state.context` is non-empty, then every turn — assistant turns
+   flagged `error: true` or containing only blank/whitespace are omitted, so neither error text
+   nor in-flight placeholders are replayed. The look-up context source (`none` by default)
+   decides whether a context is captured at all.
 3. `window.api.chatSend({ messages, requestId, role })` → `chat-send` in `index.ts`.
 4. For `role: 'lookup'` the main process appends the KB personalization prompt to the system
    message (`withKbPrompt`) before dispatch.
@@ -134,13 +135,18 @@ Both windows talk to the same main process. Everything the app knows about the u
 ### Look-up hotkey
 
 1. `registerHotkey` fires `handleHotkeyPressed` (portal signal on Wayland, `globalShortcut` on X11).
-2. In `clipboard` mode: `wl-paste` text → clipboard image → OCR; anything found becomes the
+2. In `none` mode (the default): create the popup without capturing anything and publish an
+   empty ready state, so the Ask field is immediately usable.
+3. In `clipboard` mode: `wl-paste` text → clipboard image → OCR; anything found becomes the
    context. An empty clipboard falls back to the fullscreen capture path.
-3. In `fullscreen-ocr` mode: capture the display under the cursor, run OCR, publish the text.
-4. Every result goes through `applyOcrResult`, which drops stale jobs by `ocrToken` and a dead
+4. In `fullscreen-ocr` mode: capture the display under the cursor, run OCR, publish the text.
+5. Every result goes through `applyOcrResult`, which drops stale jobs by `ocrToken` and a dead
    window by `isSessionAlive`. `notifySessionState` also stores `pendingState`, so a popup whose
    renderer was not listening yet can replay the latest context via the `lookup-ready`
    handshake.
+6. `serializeForChat` prepends the captured context only when it is non-empty, so `none` mode
+   (and an empty clipboard/OCR result) sends just the system prompt and turns. The `summarize`
+   default applies only when a context exists; Ctrl+V can still fill the panel manually.
 
 ### Look-up → chat transfer
 

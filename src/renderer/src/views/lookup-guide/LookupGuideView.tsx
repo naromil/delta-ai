@@ -13,7 +13,8 @@ const GUIDE_SECTIONS = [
   {
     title: 'Context Panel',
     description: [
-      'The context panel at the top shows what the AI will see alongside your question.',
+      'The context panel at the top shows what was captured from your screen or clipboard.',
+      'In None mode nothing is captured automatically; paste text or an image with Ctrl+V when you need context.',
       'In Clipboard mode, text or images from your clipboard are used as context.',
       'In Fullscreen OCR mode, your screen is captured and OCR extracts text from it.',
       'You can also paste text or images manually with Ctrl+V to replace the context.'
@@ -23,7 +24,7 @@ const GUIDE_SECTIONS = [
     title: 'Asking Questions',
     description: [
       'Type your question in the Ask field and press Enter.',
-      'If the field is empty, pressing Enter sends "summarize" as a default query.',
+      'If the field is empty and context exists, pressing Enter sends "summarize" as a default query.',
       'The first question triggers a window expansion to show the conversation.',
       'Once expanded, the window stays open on blur so you can keep consulting it.'
     ]
@@ -48,24 +49,27 @@ const GUIDE_SECTIONS = [
 ]
 
 const MODE_LABELS: Record<LookupContextMode, string> = {
+  none: 'None',
   clipboard: 'Clipboard',
   'fullscreen-ocr': 'Fullscreen OCR'
 }
 
 const MODE_DESCRIPTIONS: Record<LookupContextMode, string> = {
+  none: 'Open without capturing anything. Paste text or an image manually when needed.',
   clipboard:
     'Use clipboard content as context. Falls back to fullscreen OCR if the clipboard is empty.',
   'fullscreen-ocr': 'Capture the entire screen and run OCR on it every time.'
 }
 
 function LookupGuideView(): React.JSX.Element {
-  const [contextMode, setContextMode] = useState<LookupContextMode>('clipboard')
+  const [contextMode, setContextMode] = useState<LookupContextMode>('none')
   const [modesLoaded, setModesLoaded] = useState(false)
 
   useEffect(() => {
     window.api.loadSettings().then((s) => {
       const settings = s as { lookupContextMode?: string } | null
       if (
+        settings?.lookupContextMode === 'none' ||
         settings?.lookupContextMode === 'clipboard' ||
         settings?.lookupContextMode === 'fullscreen-ocr'
       ) {
@@ -77,12 +81,7 @@ function LookupGuideView(): React.JSX.Element {
 
   const handleModeChange = useCallback(async (mode: LookupContextMode) => {
     setContextMode(mode)
-    const settings = (await window.api.loadSettings()) as {
-      hotkey: string
-      closeToTray: boolean
-      lookupContextMode: string
-      kbAutoMaintain: boolean
-    }
+    const settings = await window.api.loadSettings()
     await window.api.saveSettings({ ...settings, lookupContextMode: mode })
   }, [])
 
@@ -91,8 +90,8 @@ function LookupGuideView(): React.JSX.Element {
       <div className="view-shell-header">
         <h1>Look-Up Guide</h1>
         <p className="view-shell-subtitle">
-          Press the hotkey anywhere to capture what is on screen and ask about it, without leaving
-          what you are doing.
+          Press the hotkey anywhere for a floating assistant. Choose how it captures context, or
+          start with none and paste text manually when you need it.
         </p>
       </div>
       <div className="view-shell-content">
@@ -120,7 +119,7 @@ function LookupGuideView(): React.JSX.Element {
             Choose how the Look-Up popup acquires its context when the hotkey is pressed.
           </p>
           <div className="lookup-guide-mode-toggle">
-            {(['clipboard', 'fullscreen-ocr'] as LookupContextMode[]).map((mode) => (
+            {(['none', 'clipboard', 'fullscreen-ocr'] as LookupContextMode[]).map((mode) => (
               <button
                 key={mode}
                 className={`lookup-guide-mode-option${contextMode === mode ? ' active' : ''}`}

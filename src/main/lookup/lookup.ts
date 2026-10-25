@@ -132,6 +132,13 @@ async function tryClipboardContext(cursorX: number, cursorY: number): Promise<bo
 export async function handleHotkeyPressed(): Promise<void> {
   const cursorPos = screen.getCursorScreenPoint()
 
+  if (currentLookupContextMode === 'none') {
+    const session = createSession(cursorPos.x, cursorPos.y)
+    // No capture: publish an empty ready state so the popup can be asked immediately.
+    applyOcrResult(session, session.ocrToken, '', 'Context is off in Settings.')
+    return
+  }
+
   if (currentLookupContextMode === 'clipboard') {
     const handled = await tryClipboardContext(cursorPos.x, cursorPos.y)
     if (handled) return

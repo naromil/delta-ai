@@ -154,6 +154,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | Add an AI provider                     | `provider.ts` (`ROUTES` row: name + base URL, nothing else)                                           |
 | Change the OCR/capture pipeline        | `lookup/capture.ts`                                                                                   |
 | Change the hotkey response flow        | `lookup/lookup.ts` (`handleHotkeyPressed`)                                                            |
+| Change the look-up context source      | `lookup/lookup.ts` (`handleHotkeyPressed`) + `config.ts` + `shared/conversation.ts`                   |
 | Reposition / restyle the lookup popup  | `lookup/window.ts` + CSS in `lookup.css`, `LookupApp.tsx`                                             |
 | Change the expand prompt               | `shared/expand-prompt.ts` (`buildExpandMessages`)                                                     |
 | Change the expand instruction text     | `shared/prompts.ts` (`buildExpandUserInstruction`, `buildExpandPromptedInstruction`)                  |
@@ -203,6 +204,13 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 - **Lookup blur behaviour:** a window closes on blur only when the user has never focused it,
   is not grown, and the Ask field is empty (`!session.hasText`). Once grown, the window stays
   open on blur so the user can keep consulting it while triggering new lookups.
+- **Look-Up Context Source `none` is the default.** `handleHotkeyPressed` creates the popup
+  without capturing anything and publishes an empty ready state (`applyOcrResult`), so the Ask
+  field works immediately. `clipboard` and `fullscreen-ocr` capture and inject as before.
+  `serializeForChat` prepends the screen-context preamble only when `state.context` is
+  non-empty, so an empty source (or an empty OCR/clipboard result) sends no context message.
+  The `summarize` default applies only when a context exists; manual Ctrl+V still fills it.
+  Transfer to chat folds any captured context into the first user turn.
 - **Lookup context replay (`lookup-ready`).** `LookupApp.tsx` sends `lookup-ready` after its
   `lookup-context` listener is registered; the per-window handler in `lookup/window.ts` re-sends
   `session.pendingState` if OCR finished before the renderer was listening.
@@ -213,7 +221,8 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   `isKdeWaylandSession()` gate it. Keep `desktopCapturer` as default for
   X11/macOS/Windows and non-KDE Wayland.
 - **Config files** live under `{userData}/config/` (`providers.json`, `settings.json`).
-  `settings.json` holds `hotkey`, `closeToTray`, `lookupContextMode` and `kbAutoMaintain`
+  `settings.json` holds `hotkey`, `closeToTray`, `lookupContextMode`
+  (default `'none'`) and `kbAutoMaintain`
   (default `true`); `save-settings` normalizes the whole payload, so a new field must be
   preserved by every `saveSettings` caller (Settings view, Look-Up Guide).
   Always go through `config.ts` helpers; call `ensureConfigDir()` before writing. Writes use

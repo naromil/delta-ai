@@ -37,12 +37,14 @@ function GeneralTab({
           value={lookupContextMode}
           onChange={(e) => onLookupContextModeChange(e.target.value as LookupContextMode)}
         >
+          <option value="none">None (no automatic context)</option>
           <option value="clipboard">Clipboard (fallback to full-screen OCR)</option>
           <option value="fullscreen-ocr">Full-screen OCR</option>
         </select>
         <p className="settings-hint">
-          Clipboard mode uses copied text or an image as context. Full-screen OCR captures the
-          screen every time the look-up hotkey is pressed.
+          None opens the look-up without capturing anything; paste text or an image manually with
+          Ctrl+V if needed. Clipboard mode uses copied text or an image as context. Full-screen OCR
+          captures the screen every time the hotkey is pressed.
         </p>
       </div>
       <div className="settings-section">

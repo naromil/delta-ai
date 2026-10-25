@@ -78,9 +78,9 @@ export function migrateConversationRecord(record: ConversationRecord): Conversat
  * Serialize a conversation into provider messages.
  *
  * The system prompt is always sent; the screen-context preamble is prepended
- * only when a context exists (or the caller is the lookup window, which always
- * introduces itself as screen-aware). Expansions are UI annotations and are
- * never added to the model context.
+ * only when a context exists (the lookup's context source can be off, and
+ * capture/OCR can come up empty). Expansions are UI annotations and are never
+ * added to the model context.
  */
 export function serializeForChat(
   state: ConversationState,
@@ -88,10 +88,10 @@ export function serializeForChat(
 ): ProviderMessage[] {
   const messages: ProviderMessage[] = [{ role: 'system', content: getSystemPrompt(role) }]
 
-  if (role === 'lookup' || state.context) {
+  if (state.context) {
     messages.push({
       role: 'user',
-      content: buildScreenContextMessage(state.context ?? '')
+      content: buildScreenContextMessage(state.context)
     })
   }
 

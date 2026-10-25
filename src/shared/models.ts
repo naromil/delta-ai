@@ -7,7 +7,7 @@ export type PrivacyTier = 'local' | 'cloud-zdr' | 'cloud'
 
 export type RoleId = 'chat' | 'lookup' | 'kb-maintenance'
 
-export type LookupContextMode = 'clipboard' | 'fullscreen-ocr'
+export type LookupContextMode = 'none' | 'clipboard' | 'fullscreen-ocr'
 
 /** One message in the provider-agnostic request shape used by every backend. */
 export interface ProviderMessage {

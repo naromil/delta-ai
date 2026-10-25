@@ -34,7 +34,7 @@ vi.mock('../../src/main/services/local-shortcut', () => ({
 const DEFAULTS = {
   hotkey: 'Ctrl+Shift+D',
   closeToTray: true,
-  lookupContextMode: 'clipboard',
+  lookupContextMode: 'none',
   kbAutoMaintain: true
 }
 
@@ -46,16 +46,19 @@ describe('normalizeAppSettings', () => {
   })
 
   it('keeps a valid lookup context mode and rejects unknown ones', () => {
+    expect(normalizeAppSettings({ lookupContextMode: 'none' }).lookupContextMode).toBe('none')
     expect(normalizeAppSettings({ lookupContextMode: 'fullscreen-ocr' }).lookupContextMode).toBe(
       'fullscreen-ocr'
     )
     expect(normalizeAppSettings({ lookupContextMode: 'clipboard' }).lookupContextMode).toBe(
       'clipboard'
     )
-    expect(normalizeAppSettings({ lookupContextMode: 'telepathy' }).lookupContextMode).toBe(
-      'clipboard'
-    )
-    expect(normalizeAppSettings({ lookupContextMode: null }).lookupContextMode).toBe('clipboard')
+    expect(normalizeAppSettings({ lookupContextMode: 'telepathy' }).lookupContextMode).toBe('none')
+    expect(normalizeAppSettings({ lookupContextMode: null }).lookupContextMode).toBe('none')
+  })
+
+  it('defaults look-up context capture to none', () => {
+    expect(normalizeAppSettings({}).lookupContextMode).toBe('none')
   })
 
   it('trims a hotkey and replaces blank or non-string values with the default', () => {

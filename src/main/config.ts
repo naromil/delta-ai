@@ -169,14 +169,14 @@ export function getHotkeyStatus(): HotkeyStatus {
 }
 
 export let currentCloseToTray = true
-export let currentLookupContextMode: LookupContextMode = 'clipboard'
+export let currentLookupContextMode: LookupContextMode = 'none'
 
 /* ---- App general settings management -- */
 
 const DEFAULT_SETTINGS: AppSettings = {
   hotkey: DEFAULT_HOTKEY,
   closeToTray: true,
-  lookupContextMode: 'clipboard',
+  lookupContextMode: 'none',
   kbAutoMaintain: true
 }
 
@@ -193,8 +193,10 @@ export function normalizeAppSettings(raw: unknown): AppSettings {
     closeToTray:
       typeof record.closeToTray === 'boolean' ? record.closeToTray : DEFAULT_SETTINGS.closeToTray,
     lookupContextMode:
+      record.lookupContextMode === 'none' ||
+      record.lookupContextMode === 'clipboard' ||
       record.lookupContextMode === 'fullscreen-ocr'
-        ? 'fullscreen-ocr'
+        ? record.lookupContextMode
         : DEFAULT_SETTINGS.lookupContextMode,
     kbAutoMaintain:
       typeof record.kbAutoMaintain === 'boolean'

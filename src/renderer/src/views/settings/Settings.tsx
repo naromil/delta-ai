@@ -58,7 +58,7 @@ function Settings(): React.JSX.Element {
   const [hotkey, setHotkey] = useState('Ctrl+Shift+D')
   const [hotkeyMode, setHotkeyMode] = useState<'global' | 'local'>('global')
   const [closeToTray, setCloseToTray] = useState(true)
-  const [lookupContextMode, setLookupContextMode] = useState<LookupContextMode>('clipboard')
+  const [lookupContextMode, setLookupContextMode] = useState<LookupContextMode>('none')
   const [kbAutoMaintain, setKbAutoMaintain] = useState(true)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -106,7 +106,11 @@ function Settings(): React.JSX.Element {
       const nextHotkey = settings?.hotkey || 'Ctrl+Shift+D'
       const nextTray = settings?.closeToTray ?? true
       const nextMode: LookupContextMode =
-        settings?.lookupContextMode === 'fullscreen-ocr' ? 'fullscreen-ocr' : 'clipboard'
+        settings?.lookupContextMode === 'clipboard' ||
+        settings?.lookupContextMode === 'fullscreen-ocr' ||
+        settings?.lookupContextMode === 'none'
+          ? settings.lookupContextMode
+          : 'none'
       const nextKbAutoMaintain = settings?.kbAutoMaintain ?? true
 
       // Seed both baselines before flipping `hydrated`, so loading never writes back.

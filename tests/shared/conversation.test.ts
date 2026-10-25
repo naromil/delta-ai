@@ -61,6 +61,14 @@ describe('serializeForChat', () => {
     expect(messages[0]).toEqual({ role: 'system', content: LOOKUP_SYSTEM_PROMPT })
   })
 
+  it('omits the preamble for a lookup with no captured context', () => {
+    const messages = serializeForChat({ turns }, 'lookup')
+    expect(messages).toEqual([
+      { role: 'system', content: LOOKUP_SYSTEM_PROMPT },
+      { role: 'user', content: 'hello' }
+    ])
+  })
+
   it('omits failed assistant turns so an error string is never replayed as an answer', () => {
     const messages = serializeForChat({
       turns: [

@@ -67,7 +67,7 @@ import {
 const DEFAULT_SETTINGS = {
   hotkey: 'Ctrl+Shift+D',
   closeToTray: true,
-  lookupContextMode: 'clipboard',
+  lookupContextMode: 'none',
   kbAutoMaintain: true
 }
 
