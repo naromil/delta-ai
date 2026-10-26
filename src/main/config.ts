@@ -5,6 +5,7 @@ import { registerGlobalShortcutPortal } from './services/global-shortcut'
 import { configureLocalShortcut, setHotkeyCaptureActive } from './services/local-shortcut'
 import { handleHotkeyPressed } from './lookup/lookup'
 import { writeFileAtomicSync } from './services/atomic-file'
+import { isSealedSecret, openSecret, sealSecret } from './services/secret-store'
 import {
   type RoleId,
   type ModelConfig,
@@ -205,6 +206,15 @@ export function normalizeAppSettings(raw: unknown): AppSettings {
   }
 }
 
+/**
+ * Applies a partial update over the stored settings, so a caller that only
+ * knows one field (the Look-Up Guide) cannot reset the others.
+ */
+export function mergeAppSettings(current: AppSettings, patch: unknown): AppSettings {
+  const fields = typeof patch === 'object' && patch !== null && !Array.isArray(patch) ? patch : {}
+  return normalizeAppSettings({ ...current, ...fields })
+}
+
 export function loadAppSettings(): AppSettings {
   const settingsPath = join(app.getPath('userData'), 'config', 'settings.json')
   try {
@@ -246,14 +256,28 @@ function modelConfigPath(): string {
   return join(app.getPath('userData'), 'config', 'providers.json')
 }
 
+function mapConnections(
+  config: ModelConfig,
+  map: (connection: Connection) => Connection
+): ModelConfig {
+  const connections: Record<string, Connection> = {}
+  for (const [id, connection] of Object.entries(config.connections)) {
+    connections[id] = map(connection)
+  }
+  return { ...config, connections }
+}
+
 export function saveModelConfig(config: ModelConfig): { ok: boolean; error?: string } {
   const { config: normalized, ok, notes } = migrateModelConfig(config)
   if (!ok) {
     return { ok: false, error: notes.join('; ') || 'invalid model config' }
   }
+  const sealed = mapConnections(normalized, (connection) =>
+    connection.apiKey ? { ...connection, apiKey: sealSecret(connection.apiKey) } : connection
+  )
   try {
     const configDir = ensureConfigDir()
-    writeFileAtomicSync(join(configDir, 'providers.json'), JSON.stringify(normalized, null, 2))
+    writeFileAtomicSync(join(configDir, 'providers.json'), JSON.stringify(sealed, null, 2))
     return { ok: true }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) }
@@ -262,7 +286,8 @@ export function saveModelConfig(config: ModelConfig): { ok: boolean; error?: str
 
 /**
  * Loads `providers.json`, migrating older schema versions and repairing dangling
- * role references. A repaired file is written back immediately so the fix sticks.
+ * role references, and decrypts the API keys. A repaired file (or one still
+ * holding plaintext keys) is written back immediately so the fix sticks.
  */
 export function loadModelConfig(): ModelConfig {
   const configPath = modelConfigPath()
@@ -271,12 +296,51 @@ export function loadModelConfig(): ModelConfig {
     const parsed = JSON.parse(readFileSync(configPath, 'utf-8')) as unknown
     const { config, changed, notes } = migrateModelConfig(parsed)
     if (notes.length > 0) console.log(`Model config: ${notes.join('; ')}`)
-    if (changed) saveModelConfig(config)
-    return config
+
+    let hasPlaintextKey = false
+    let hasUnreadableKey = false
+    const opened = mapConnections(config, (connection) => {
+      if (!connection.apiKey) return connection
+      if (!isSealedSecret(connection.apiKey)) hasPlaintextKey = true
+      const apiKey = openSecret(connection.apiKey)
+      if (apiKey !== null) return { ...connection, apiKey }
+      hasUnreadableKey = true
+      const rest = { ...connection }
+      delete rest.apiKey
+      return rest
+    })
+
+    if (hasUnreadableKey) {
+      // The keychain may simply be locked; never write back, or the key is lost.
+      console.warn('Model config: an API key could not be decrypted; re-enter it in Settings.')
+    } else if (changed || hasPlaintextKey) {
+      saveModelConfig(opened)
+    }
+    return opened
   } catch (err) {
     console.warn(`Failed to load model config from ${configPath}:`, err)
     return createDefaultModelConfig()
   }
+}
+
+/** What the renderer may see: whether a key is stored, never the key itself. */
+export function redactModelConfig(config: ModelConfig): ModelConfig {
+  return mapConnections(config, ({ apiKey, ...connection }) => ({
+    ...connection,
+    hasApiKey: !!apiKey
+  }))
+}
+
+/**
+ * Fills in the stored key for a connection the renderer sent without one: the
+ * renderer only carries a key the user has just typed.
+ */
+export function withStoredApiKey(connection: Connection, stored: ModelConfig): Connection {
+  const rest = { ...connection }
+  delete rest.hasApiKey
+  if (rest.apiKey !== undefined) return rest
+  const apiKey = stored.connections[rest.id]?.apiKey
+  return apiKey ? { ...rest, apiKey } : rest
 }
 
 export function resolveRole(roleId: RoleId): { connection: Connection; model: string } | null {
@@ -324,10 +388,10 @@ export function registerConfigIpcHandlers(): void {
     'save-settings',
     async (
       _event,
-      settings: AppSettings
+      patch: Partial<AppSettings>
     ): Promise<{ success: boolean; hotkeyMode: 'global' | 'local'; error?: string }> => {
-      const normalized = normalizeAppSettings(settings)
       const previous = loadAppSettings()
+      const normalized = mergeAppSettings(previous, patch)
 
       let registered: boolean
       try {
@@ -382,13 +446,23 @@ export function registerConfigIpcHandlers(): void {
 
   /* v2 model config IPC */
   ipcMain.handle('load-model-config', (): ModelConfig => {
-    return loadModelConfig()
+    return redactModelConfig(loadModelConfig())
   })
 
   ipcMain.handle(
     'save-model-config',
     (_event, config: ModelConfig): { success: boolean; error?: string } => {
-      const result = saveModelConfig(config)
+      if (
+        typeof config !== 'object' ||
+        config === null ||
+        typeof config.connections !== 'object' ||
+        config.connections === null
+      ) {
+        return { success: false, error: 'Invalid model config.' }
+      }
+      const stored = loadModelConfig()
+      const merged = mapConnections(config, (connection) => withStoredApiKey(connection, stored))
+      const result = saveModelConfig(merged)
       if (!result.ok) console.warn(`Failed to save model config: ${result.error}`)
       if (result.ok) notifyAppConfigChanged()
       return result.ok ? { success: true } : { success: false, error: result.error }
@@ -397,12 +471,12 @@ export function registerConfigIpcHandlers(): void {
 
   /* Provider discovery + connection test (accept the renderer's current, unsaved connection) */
   ipcMain.handle('provider-models', (_event, connection: Connection): Promise<DiscoveredModels> =>
-    discoverConnectionModels(connection)
+    discoverConnectionModels(withStoredApiKey(connection, loadModelConfig()))
   )
 
   ipcMain.handle(
     'provider-test',
     (_event, connection: Connection, probeModel?: string): Promise<ConnectionTestResult> =>
-      testConnection(connection, probeModel)
+      testConnection(withStoredApiKey(connection, loadModelConfig()), probeModel)
   )
 }

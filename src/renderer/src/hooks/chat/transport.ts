@@ -43,7 +43,7 @@ export function subscribeChatTransport(handlers: ChatTransportHandlers): () => v
         const turns = [...prev.turns]
         const turnIdx = turns.findIndex((t) => t.id === pending.turnId)
         if (turnIdx < 0) return prev
-        turns[turnIdx] = { ...turns[turnIdx], content: data.text }
+        turns[turnIdx] = { ...turns[turnIdx], content: turns[turnIdx].content + data.delta }
         return { ...prev, turns }
       })
     })
@@ -100,6 +100,7 @@ export function subscribeChatTransport(handlers: ChatTransportHandlers): () => v
       if (expansionId === undefined) return
 
       const chunk: ExpansionChunk = {
+        ...(data.delta !== undefined ? { delta: data.delta } : {}),
         ...(data.text !== undefined ? { text: data.text } : {}),
         ...(data.done !== undefined ? { done: data.done } : {}),
         ...(data.error !== undefined ? { error: data.error } : {})

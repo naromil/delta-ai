@@ -83,18 +83,21 @@ Both windows talk to the same main process. Everything the app knows about the u
    nor in-flight placeholders are replayed. The look-up context source (`none` by default)
    decides whether a context is captured at all.
 3. `window.api.chatSend({ messages, requestId, role })` → `chat-send` in `index.ts`.
-4. For `role: 'lookup'` the main process appends the KB personalization prompt to the system
-   message (`withKbPrompt`) before dispatch.
+4. Main validates the payload (`streaming.ts`: `parseProviderMessages`, `parseStreamRole` —
+   only `chat`/`lookup` are reachable) and, for both roles, appends the KB personalization
+   prompt to the system message (`withKbPrompt`) before dispatch.
 5. For `role: 'chat'` only, `applyContextBudget(messages, 'chat')` drops the oldest non-system
    messages (never the last) until a 4-chars-per-token estimate fits `budgetFor` of the cached
    model's `contextWindow`/`maxOutput`. The catalog is read from the memory/disk cache only, and
    every missing input fails open — trimming never drops a request.
 6. `callProviderStream(messages, roleId, controller.signal)` resolves the role assignment and
    streams deltas. Main keeps `{controller, senderId}` in `activeStreams`, keyed by `requestId`.
-7. Each delta is sent back as `chat-chunk` with the **cumulative** text through `safeSend` (a
-   destroyed sender is a no-op); the renderer assigns it to `turn.content` and re-renders markdown
-   live (`components/conversation/Markdown.tsx`). `chat-response` closes the turn and the
-   conversation is saved. There is no tokenize step: `content` is the only copy of the text.
+7. Tokens are coalesced by `createChunkBatcher` (one message per 32 ms) and sent as
+   `chat-chunk { requestId, delta }` through `safeSend` (a destroyed sender is a no-op); the
+   renderer appends the delta to `turn.content` and re-renders markdown live
+   (`components/conversation/Markdown.tsx`). `chat-response` carries the **full** text, replaces
+   whatever was streamed, closes the turn, and the conversation is saved. Expand streams the same
+   way (`chat-expand-chunk { delta }`, then `{ text, done }`). There is no tokenize step: `content` is the only copy of the text.
 8. The chat composer's Stop button sends `chat-cancel(requestId)`. Only the webContents that
    started the request may cancel it; main aborts the provider request and closes with
    `chat-response { text: partial, cancelled: true }`. The renderer drops the id from its request
@@ -281,7 +284,7 @@ Config, KB and conversation files are written atomically (sibling temp file + re
       "id": "conn_…",
       "label": "My Google key",
       "providerType": "google-ai-studio",
-      "apiKey": "AIza…",
+      "apiKey": "enc:v1:…",
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta"
     }
   },
@@ -292,6 +295,14 @@ Config, KB and conversation files are written atomically (sibling temp file + re
   }
 }
 ```
+
+API keys are sealed with Electron `safeStorage` (OS keychain) behind an `enc:v1:` prefix by
+`services/secret-store.ts`; a legacy plaintext key is read and resealed on the next load, and a
+key that cannot be decrypted (locked keychain) is treated as missing without rewriting the file.
+Without a keychain the key is stored as plaintext, as before. The renderer never receives a
+stored key: `load-model-config` returns `hasApiKey` instead (`redactModelConfig`), and
+`save-model-config` / `provider-test` / `provider-models` fill in the stored key for any
+connection sent without one (`withStoredApiKey`). An explicit empty key removes it.
 
 Provider types: `google-ai-studio`, `openai`, `openai-compatible`, `openrouter`, `ollama`.
 `ollama` is the only provider that works without an API key.
@@ -445,7 +456,6 @@ These are load-bearing; breaking one causes a bug that is hard to trace:
 - No tests for the IPC handlers, the chat hook itself, or the OCR pipeline. Renderer tests
   cover pure modules (`chat-requests`) and `react-dom/server` markdown; the acceptance gate is
   typecheck + lint + unit tests + format.
-- The KB personalization prompt is only injected into lookup requests, not chat requests.
 - `kb-reanalyze` has no progress reporting and an automatic pass reports only its start/finish
   through `kb-status`; a long run shows no per-conversation progress.
 - No auto-update path; releases are manual downloads.

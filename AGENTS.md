@@ -21,7 +21,10 @@ The build will fail on typecheck errors, so fix them before committing.
 
 - Don't import Electron main APIs into the renderer; use the preload bridge.
 - Don't bypass `registerHotkey` for global shortcuts — the portal path won't fire on Wayland.
-- Don't commit secrets. API keys live only in `{userData}/config/providers.json`.
+- Don't commit secrets. API keys live only in `{userData}/config/providers.json`, sealed with
+  `safeStorage` (`services/secret-store.ts`). Never send a stored key to the renderer.
+- Every `BrowserWindow` is `sandbox: true` and must call `guardWindowNavigation` (`window-guards.ts`)
+  so no remote page can load next to the preload bridge. The preload exposes only `window.api`.
 - No native (node-gyp) addons in the main process. Electron 39 runs a V8 sandbox, so any addon built
   against the host Node ABI aborts the process on first use (`v8_ArrayBuffer_NewBackingStore` →
   SIGSEGV → a multi-GB systemd-coredump that fills the disk). `dbus-next`'s optional `usocket` is
@@ -49,39 +52,39 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 
 #### IPC channels
 
-| Channel                                   | Direction       | Purpose                                                                                      |
-| ----------------------------------------- | --------------- | -------------------------------------------------------------------------------------------- |
-| `chat-send`                               | Renderer → Main | Send a streaming chat message (role payload discriminates 'chat' vs 'lookup')                |
-| `chat-chunk`                              | Main → Renderer | Streaming chunk for a chat-send request (keyed by `requestId`)                               |
-| `chat-response`                           | Main → Renderer | Final response for a chat-send (`cancelled: true` + partial text after stop)                 |
-| `chat-error`                              | Main → Renderer | Error for a chat-send                                                                        |
-| `chat-cancel`                             | Renderer → Main | Abort an in-flight `chat-send`/`chat-expand` by `requestId`                                  |
-| `chat-expand`                             | Renderer → Main | Request an inline word-expansion stream                                                      |
-| `chat-expand-chunk`                       | Main → Renderer | Expand chunks (`done`; `cancelled: true` + partial text after stop)                          |
-| `chat-replace-conversation`               | Main → Renderer | Hydrate transferred state + id/title/createdAt into the chat window                          |
-| `lookup-trigger-grow`                     | Lookup → Main   | On first ask, signal main to animate window growth                                           |
-| `lookup-transfer`                         | Lookup → Main   | Send `{state, conversationId?}` to chat; main transforms context, persists                   |
-| `ai-error`                                | Main → Lookup   | Capture or OCR error message (sent from lookup.ts & window.ts)                               |
-| `lookup-context`                          | Main → Lookup   | OCR context state (`{status, text, hint}`)                                                   |
-| `lookup-grow`                             | Main → Lookup   | (`width, height`) signal grow animation on the renderer side                                 |
-| `lookup-paste-text`                       | Lookup → Main   | Pasted text replaces OCR context                                                             |
-| `lookup-paste-image`                      | Lookup → Main   | Pasted image → OCR → context                                                                 |
-| `lookup-ocr-image`                        | Lookup → Main   | Invoke OCR on an image (returns `{text, error?}`)                                            |
-| `lookup-input-changed`                    | Lookup → Main   | Whether Ask field has text (guards blur-to-close)                                            |
-| `lookup-close`                            | Lookup → Main   | Close the lookup window                                                                      |
-| `lookup-ready`                            | Lookup → Main   | Listener-ready handshake; main replays `pendingState` via `lookup-context`                   |
-| `load-model-config` / `save-model-config` | Renderer ↔ Main | Model config CRUD (migrated + validated in main)                                             |
-| `load-model-catalog`                      | Renderer ↔ Main | models.dev catalog (`force` arg refreshes; cached 24h, offline fallback)                     |
-| `load-settings` / `save-settings`         | Renderer ↔ Main | Settings; save registers hotkey first, returns `{ success, hotkeyMode, error? }`             |
-| `conversation-save` / `-load` / `-delete` | Renderer → Main | Conversation CRUD to `{userData}/conversations/` (atomic writes)                             |
-| `conversation-list`                       | Renderer → Main | List chat-source conversations (metadata sorted by updatedAt desc)                           |
-| `conversation-search`                     | Renderer → Main | Search chat titles/content; results extend meta with `matchedIn`/`snippet`                   |
-| `conversation-list-unfed` / `-kb-fed`     | Renderer → Main | KB model integration: list unfed; mark fed (+ auto-delete lookup source)                     |
-| `conversation-export`                     | Renderer → Main | Save a conversation as markdown (`{ok,path}` or `{ok:false,error}`; cancel is `'Canceled.'`) |
-| `kb-load-prompt` / `kb-save-prompt`       | Renderer → Main | Read the learned prompt; save an edited prompt (+ return keywords)                           |
-| `kb-reset`                                | Renderer → Main | Delete prompt + keywords + run state; clears `kbFed`; auto rebuilds when enabled             |
-| `kb-analyze` / `kb-reanalyze`             | Renderer → Main | Manual maintenance over unfed conversations / the last N                                     |
-| `kb-get-status` / `kb-status`             | Renderer ↔ Main | Automatic learning status: invoke a snapshot; main pushes every change                       |
+| Channel                                   | Direction       | Purpose                                                                                         |
+| ----------------------------------------- | --------------- | ----------------------------------------------------------------------------------------------- |
+| `chat-send`                               | Renderer → Main | Send a streaming chat message (role payload discriminates 'chat' vs 'lookup')                   |
+| `chat-chunk`                              | Main → Renderer | Batched `delta` for a chat-send request (keyed by `requestId`); final text is in response       |
+| `chat-response`                           | Main → Renderer | Final response for a chat-send (`cancelled: true` + partial text after stop)                    |
+| `chat-error`                              | Main → Renderer | Error for a chat-send                                                                           |
+| `chat-cancel`                             | Renderer → Main | Abort an in-flight `chat-send`/`chat-expand` by `requestId`                                     |
+| `chat-expand`                             | Renderer → Main | Request an inline word-expansion stream                                                         |
+| `chat-expand-chunk`                       | Main → Renderer | Expand chunks (`done`; `cancelled: true` + partial text after stop)                             |
+| `chat-replace-conversation`               | Main → Renderer | Hydrate transferred state + id/title/createdAt into the chat window                             |
+| `lookup-trigger-grow`                     | Lookup → Main   | On first ask, signal main to animate window growth                                              |
+| `lookup-transfer`                         | Lookup → Main   | Send `{state, conversationId?}` to chat; main transforms context, persists                      |
+| `ai-error`                                | Main → Lookup   | Capture or OCR error message (sent from lookup.ts & window.ts)                                  |
+| `lookup-context`                          | Main → Lookup   | OCR context state (`{status, text, hint}`)                                                      |
+| `lookup-grow`                             | Main → Lookup   | (`width, height`) signal grow animation on the renderer side                                    |
+| `lookup-paste-text`                       | Lookup → Main   | Pasted text replaces OCR context                                                                |
+| `lookup-paste-image`                      | Lookup → Main   | Pasted image → OCR → context                                                                    |
+| `lookup-ocr-image`                        | Lookup → Main   | Invoke OCR on an image (returns `{text, error?}`)                                               |
+| `lookup-input-changed`                    | Lookup → Main   | Whether Ask field has text (guards blur-to-close)                                               |
+| `lookup-close`                            | Lookup → Main   | Close the lookup window                                                                         |
+| `lookup-ready`                            | Lookup → Main   | Listener-ready handshake; main replays `pendingState` via `lookup-context`                      |
+| `load-model-config` / `save-model-config` | Renderer ↔ Main | Model config CRUD (migrated + validated in main)                                                |
+| `load-model-catalog`                      | Renderer ↔ Main | models.dev catalog (`force` arg refreshes; cached 24h, offline fallback)                        |
+| `load-settings` / `save-settings`         | Renderer ↔ Main | Settings; save takes a partial patch, registers hotkey first, `{ success, hotkeyMode, error? }` |
+| `conversation-save` / `-load` / `-delete` | Renderer → Main | Conversation CRUD to `{userData}/conversations/` (atomic writes)                                |
+| `conversation-list`                       | Renderer → Main | List chat-source conversations (metadata sorted by updatedAt desc)                              |
+| `conversation-search`                     | Renderer → Main | Search chat titles/content; results extend meta with `matchedIn`/`snippet`                      |
+| `conversation-list-unfed` / `-kb-fed`     | Renderer → Main | KB model integration: list unfed; mark fed (+ auto-delete lookup source)                        |
+| `conversation-export`                     | Renderer → Main | Save a conversation as markdown (`{ok,path}` or `{ok:false,error}`; cancel is `'Canceled.'`)    |
+| `kb-load-prompt` / `kb-save-prompt`       | Renderer → Main | Read the learned prompt; save an edited prompt (+ return keywords)                              |
+| `kb-reset`                                | Renderer → Main | Delete prompt + keywords + run state; clears `kbFed`; auto rebuilds when enabled                |
+| `kb-analyze` / `kb-reanalyze`             | Renderer → Main | Manual maintenance over unfed conversations / the last N                                        |
+| `kb-get-status` / `kb-status`             | Renderer ↔ Main | Automatic learning status: invoke a snapshot; main pushes every change                          |
 
 #### Module map
 
@@ -104,6 +107,9 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | Conversation store  | `conversations.ts`            | CRUD on `{userData}/conversations/{id}.json` + `{id}.meta.json` sidecars; per-id write chain (`saveConversation`, `mutateConversation`); title+content search, KB-fed mark/reset |
 | Conversation export | `conversation-export.ts`      | `renderConversationMarkdown` (expansions quoted inline) + `exportConversationToFile` (save dialog, atomic write)                                                                 |
 | Context budget      | `context-budget.ts`           | `applyContextBudget(messages, role)`: trims chat sends to the cached model's window; fail-open on any missing input                                                              |
+| Streaming helpers   | `streaming.ts`                | IPC payload validation, `withKbPrompt`, `createChunkBatcher` (32 ms token deltas)                                                                                                |
+| Window guards       | `window-guards.ts`            | `guardWindowNavigation`: deny window.open / navigation, hand http(s) links to the browser                                                                                        |
+| Secret store        | `services/secret-store.ts`    | `sealSecret` / `openSecret` for API keys (`safeStorage`, `enc:v1:` prefix, plaintext fallback)                                                                                   |
 | Lookup transfer     | `transfer.ts`                 | `prepareTransferredState`: finalizes in-flight frames + folds screen context into a user turn                                                                                    |
 | Main window ref     | `main-window.ts`              | Module-scoped getter/setter for BrowserWindow ref; `clearMainWindow()` on `closed` (used by transfer)                                                                            |
 | Config              | `config.ts`                   | Settings/config I/O (atomic), hotkey registry (register-first save, startup fallback), Wayland                                                                                   |
@@ -119,7 +125,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | KB store            | `kb/store.ts`                 | `prompt.txt` + `keywords.json` + `state.json` I/O (atomic); `resetKb` deletes all three                                                                                          |
 | Lookup orchestrator | `lookup/lookup.ts`            | Hotkey entry point (capture + OCR + create popup)                                                                                                                                |
 | Lookup popup window | `lookup/window.ts`            | BrowserWindow + grow animation + ref-counted ocr-image handler                                                                                                                   |
-| Capture + OCR       | `lookup/capture.ts`           | Screen capture + tesseract.js worker                                                                                                                                             |
+| Capture + OCR       | `lookup/capture.ts`           | Screen capture + tesseract.js worker (bundled `eng` traineddata, never downloaded)                                                                                               |
 | Handlers            | `lookup/handlers.ts`          | Paste-text and paste-image handlers only (Ask/Expand moved to streaming IPC)                                                                                                     |
 | Session state       | `lookup/state.ts`             | LookupSession interface + helpers (sendToSession, notifySessionState, isSessionAlive)                                                                                            |
 | Wayland shortcut    | `services/global-shortcut.ts` | XDG GlobalShortcuts portal                                                                                                                                                       |
@@ -223,8 +229,8 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 - **Config files** live under `{userData}/config/` (`providers.json`, `settings.json`).
   `settings.json` holds `hotkey`, `closeToTray`, `lookupContextMode`
   (default `'none'`) and `kbAutoMaintain`
-  (default `true`); `save-settings` normalizes the whole payload, so a new field must be
-  preserved by every `saveSettings` caller (Settings view, Look-Up Guide).
+  (default `true`); `save-settings` merges a **partial** patch over the stored settings
+  (`mergeAppSettings`), so a caller sends only the fields it changes.
   Always go through `config.ts` helpers; call `ensureConfigDir()` before writing. Writes use
   `services/atomic-file.ts` (sibling temp file + rename), so a crash can't truncate them.
   `save-settings` normalizes the payload and registers the requested hotkey **before**
@@ -236,7 +242,9 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   500 ms debounce (baseline seeded after load, flushed on unmount) and shows a failed save inline.
 - **`providers.json` is never trusted as-is.** `loadModelConfig` runs it through
   `migrateModelConfig` (zod + migrations + repairs) and writes the repaired file back;
-  `saveModelConfig` validates before writing and returns `{ ok, error }`. An empty
+  `saveModelConfig` validates before writing and returns `{ ok, error }`. Keys are sealed on
+  write and opened on load; the renderer gets `redactModelConfig` output (`hasApiKey`, no key)
+  and main restores the stored key via `withStoredApiKey`. An empty
   `connectionId` is normalized to `null` (unassigned) instead of discarding the config. Any
   new schema version needs a step in `MIGRATIONS` in `models/config-schema.ts`.
 - **Model lists come from models.dev, not `knownModels`.** `services/model-catalog.ts`
@@ -278,10 +286,14 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   webContents — safe for both windows to use the same channel family. `activeStreams` stores
   `{controller, senderId}` per `requestId`; a destroyed sender aborts its stream, and only the
   webContents that started a request may cancel it. The `role` payload field routes to the
-  correct roleId (`'chat'` or `'lookup'`) for `callProviderStream`. A cancelled send ends with
+  correct roleId (`'chat'` or `'lookup'`; anything else falls back to chat) for
+  `callProviderStream`. Payloads are validated in `streaming.ts`. Chunks are batched deltas; the
+  terminal message carries the full text. A cancelled send ends with
   `chat-response { text: partial, cancelled: true }`, a cancelled expand with
   `chat-expand-chunk { text: partial, done: true, cancelled: true }`. The renderer leaves a
   settled request out of its request book, so late chunks for it are no-ops.
+- **Both roles get the KB prompt.** `chat-send` appends the learned profile (`withKbPrompt`) to
+  the system message for chat and lookup alike; `kb-maintenance` calls are untouched.
 - **Chat sends are context-budgeted; lookup sends are not.** After the KB prompt is inserted,
   `applyContextBudget(messages, 'chat')` drops the oldest non-system messages until the estimate
   fits 85% of the model's context window minus its output reserve. It is fail-open: an unassigned

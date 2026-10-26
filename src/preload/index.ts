@@ -1,5 +1,4 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { electronAPI } from '@electron-toolkit/preload'
 import type {
   ConversationState,
   ConversationRecord,
@@ -29,10 +28,10 @@ const api = {
     kbAutoMaintain: boolean
   }> => ipcRenderer.invoke('load-settings'),
   saveSettings: (settings: {
-    hotkey: string
-    closeToTray: boolean
-    lookupContextMode: string
-    kbAutoMaintain: boolean
+    hotkey?: string
+    closeToTray?: boolean
+    lookupContextMode?: string
+    kbAutoMaintain?: boolean
   }): Promise<{ success: boolean; hotkeyMode: 'global' | 'local'; error?: string }> =>
     ipcRenderer.invoke('save-settings', settings),
   getHotkeyStatus: (): Promise<{ accelerator: string; mode: 'global' | 'local' }> =>
@@ -68,10 +67,10 @@ const api = {
     role?: string
   }) => ipcRenderer.send('chat-expand', payload),
   chatCancel: (requestId: string) => ipcRenderer.send('chat-cancel', requestId),
-  chatOnChunk: (cb: (data: { requestId: string; text: string }) => void) => {
+  chatOnChunk: (cb: (data: { requestId: string; delta: string }) => void) => {
     const handler = (
       _e: Electron.IpcRendererEvent,
-      data: { requestId: string; text: string }
+      data: { requestId: string; delta: string }
     ): void => cb(data)
     ipcRenderer.on('chat-chunk', handler)
     return () => ipcRenderer.removeListener('chat-chunk', handler)
@@ -97,6 +96,7 @@ const api = {
   chatOnExpandChunk: (
     cb: (data: {
       requestId: string
+      delta?: string
       text?: string
       error?: string
       done?: boolean
@@ -107,6 +107,7 @@ const api = {
       _e: Electron.IpcRendererEvent,
       data: {
         requestId: string
+        delta?: string
         text?: string
         error?: string
         done?: boolean
@@ -179,16 +180,6 @@ const api = {
   }
 }
 
-if (process.contextIsolated) {
-  try {
-    contextBridge.exposeInMainWorld('electron', electronAPI)
-    contextBridge.exposeInMainWorld('api', api)
-  } catch (error) {
-    console.error(error)
-  }
-} else {
-  // @ts-ignore (define in dts)
-  window.electron = electronAPI
-  // @ts-ignore (define in dts)
-  window.api = api
-}
+// Both windows are sandboxed and context-isolated; only the typed bridge is
+// exposed, never a raw ipcRenderer.
+contextBridge.exposeInMainWorld('api', api)

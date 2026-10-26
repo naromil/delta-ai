@@ -10,6 +10,12 @@ files:
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json,vitest.config.ts}'
   - '!tests/*'
+  - '!node_modules/@tesseract.js-data/**'
+extraResources:
+  - from: node_modules/@tesseract.js-data/eng/4.0.0_best_int
+    to: tessdata
+    filter:
+      - eng.traineddata.gz
 asarUnpack:
   - resources/**
 win:

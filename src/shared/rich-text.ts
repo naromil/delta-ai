@@ -93,6 +93,9 @@ export interface ExpansionMessageInput {
 
 /** One `chat-expand-chunk` payload (`text` is cumulative). */
 export interface ExpansionChunk {
+  /** Streamed text since the previous chunk. */
+  delta?: string
+  /** The full answer; sent with `done`. */
   text?: string
   done?: boolean
   error?: string
@@ -385,6 +388,8 @@ export function applyExpansionChunk<T extends RichTextTurn>(
   let next = turns
   if (chunk.text !== undefined && chunk.text !== '') {
     next = updateExpansion(next, id, { answer: chunk.text })
+  } else if (chunk.delta) {
+    next = updateExpansion(next, id, { answer: location.node.answer + chunk.delta })
   }
   if (chunk.done) {
     const text = chunk.text ?? location.node.answer

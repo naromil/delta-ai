@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain, globalShortcut, Tray, Menu } from 'electron'
+import { app, BrowserWindow, ipcMain, globalShortcut, Tray, Menu } from 'electron'
 import type { WebContents } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -14,6 +14,7 @@ import {
   DEFAULT_HOTKEY
 } from './config'
 import { handleHotkeyPressed } from './lookup/lookup'
+import { cancelOCR } from './lookup/capture'
 import { callProviderStream } from './provider'
 import type { ProviderMessage } from './provider'
 import type { RoleId } from '../shared/models'
@@ -31,6 +32,15 @@ import { exportConversationToFile } from './conversation-export'
 import type { ConversationRecord, ConversationState } from '../shared/conversation'
 import { buildConversationTitle } from '../shared/conversation'
 import { prepareTransferredState } from './transfer'
+import { guardWindowNavigation } from './window-guards'
+import {
+  createChunkBatcher,
+  isConversationRecord,
+  isConversationState,
+  parseProviderMessages,
+  parseStreamRole,
+  withKbPrompt
+} from './streaming'
 import {
   saveConversation,
   loadConversation,
@@ -79,85 +89,38 @@ if (!hasSingleInstanceLock) {
     })
 
     /* Chat streaming: send a message */
-    ipcMain.on(
-      'chat-send',
-      async (event, payload: { messages: ProviderMessage[]; requestId: string; role?: string }) => {
-        const { requestId } = payload
-        const role: RoleId = (payload.role as RoleId) ?? 'chat'
-        const messages =
-          role === 'lookup' ? withKbPrompt(payload.messages, loadKbPrompt()) : payload.messages
-        // Chat sends are trimmed after any KB prompt insertion; lookup keeps its
-        // full screen context.
-        const finalMessages = role === 'chat' ? applyContextBudget(messages, role) : messages
-        const sender = event.sender
-        const controller = new AbortController()
-        // A closed popup must stop the request instead of throwing on every send.
-        const onDestroyed = (): void => controller.abort()
-        sender.once('destroyed', onDestroyed)
-        activeStreams.set(requestId, { controller, senderId: sender.id })
-        let fullResponse = ''
-        try {
-          for await (const chunk of callProviderStream(finalMessages, role, controller.signal)) {
-            fullResponse += chunk
-            safeSend(sender, 'chat-chunk', { requestId, text: fullResponse })
-          }
-          safeSend(sender, 'chat-response', { requestId, text: fullResponse })
-        } catch (err) {
-          if (controller.signal.aborted) {
-            safeSend(sender, 'chat-response', { requestId, text: fullResponse, cancelled: true })
-          } else {
-            safeSend(sender, 'chat-error', { requestId, error: formatStreamError(err) })
-          }
-        } finally {
-          sender.removeListener('destroyed', onDestroyed)
-          if (activeStreams.get(requestId)?.controller === controller) {
-            activeStreams.delete(requestId)
-          }
-        }
-      }
-    )
+    ipcMain.on('chat-send', (event, payload: unknown) => {
+      const request = parseStreamPayload(payload)
+      if (!request) return
+      const { requestId, role } = request
+      // Both windows get the learned profile. Chat sends are then trimmed to the
+      // model's window; lookup keeps its full screen context.
+      const messages = withKbPrompt(request.messages, loadKbPrompt())
+      const finalMessages = role === 'chat' ? applyContextBudget(messages, role) : messages
+      const sender = event.sender
+      void streamToSender(sender, requestId, finalMessages, role, {
+        chunk: (delta) => safeSend(sender, 'chat-chunk', { requestId, delta }),
+        done: (text) => safeSend(sender, 'chat-response', { requestId, text }),
+        cancelled: (text) =>
+          safeSend(sender, 'chat-response', { requestId, text, cancelled: true }),
+        failed: (error) => safeSend(sender, 'chat-error', { requestId, error })
+      })
+    })
 
     /* Chat streaming: expand a word/excerpt */
-    ipcMain.on(
-      'chat-expand',
-      async (
-        event,
-        payload: {
-          messages: ProviderMessage[]
-          requestId: string
-          role?: string
-        }
-      ) => {
-        const { messages, requestId } = payload
-        const role: RoleId = (payload.role as RoleId) ?? 'chat'
-        const sender = event.sender
-        const controller = new AbortController()
-        const onDestroyed = (): void => controller.abort()
-        sender.once('destroyed', onDestroyed)
-        activeStreams.set(requestId, { controller, senderId: sender.id })
-        let fullResponse = ''
-        try {
-          for await (const chunk of callProviderStream(messages, role, controller.signal)) {
-            fullResponse += chunk
-            safeSend(sender, 'chat-expand-chunk', { requestId, text: fullResponse })
-          }
-          safeSend(sender, 'chat-expand-chunk', { requestId, text: fullResponse, done: true })
-        } catch (err) {
-          safeSend(
-            sender,
-            'chat-expand-chunk',
-            controller.signal.aborted
-              ? { requestId, text: fullResponse, done: true, cancelled: true }
-              : { requestId, error: formatStreamError(err) }
-          )
-        } finally {
-          sender.removeListener('destroyed', onDestroyed)
-          if (activeStreams.get(requestId)?.controller === controller) {
-            activeStreams.delete(requestId)
-          }
-        }
-      }
-    )
+    ipcMain.on('chat-expand', (event, payload: unknown) => {
+      const request = parseStreamPayload(payload)
+      if (!request) return
+      const { requestId } = request
+      const sender = event.sender
+      void streamToSender(sender, requestId, request.messages, request.role, {
+        chunk: (delta) => safeSend(sender, 'chat-expand-chunk', { requestId, delta }),
+        done: (text) => safeSend(sender, 'chat-expand-chunk', { requestId, text, done: true }),
+        cancelled: (text) =>
+          safeSend(sender, 'chat-expand-chunk', { requestId, text, done: true, cancelled: true }),
+        failed: (error) => safeSend(sender, 'chat-expand-chunk', { requestId, error })
+      })
+    })
 
     /** Stop a provider stream started by chat-send/chat-expand. */
     ipcMain.on('chat-cancel', (event, requestId: string) => {
@@ -180,8 +143,14 @@ if (!hasSingleInstanceLock) {
     ipcMain.on(
       'lookup-transfer',
       async (event, payload: { state: ConversationState; conversationId?: string }) => {
-        const { state, conversationId } = payload
         const session = lookupSessions.find((s) => s.window.webContents.id === event.sender.id)
+        if (!isConversationState(payload?.state)) {
+          if (session) sendToSession(session, 'ai-error', 'Could not transfer this conversation.')
+          return
+        }
+        const { state } = payload
+        const conversationId =
+          typeof payload.conversationId === 'string' ? payload.conversationId : undefined
 
         // Single boundary: finalise in-flight frames before persisting or
         // forwarding, and fold the screen context into a user turn.
@@ -225,7 +194,8 @@ if (!hasSingleInstanceLock) {
     )
 
     /* Conversation persistence */
-    ipcMain.handle('conversation-save', async (_event, record) => {
+    ipcMain.handle('conversation-save', async (_event, record: unknown) => {
+      if (!isConversationRecord(record)) throw new Error('Invalid conversation record.')
       // Renderer autosaves must not clobber the KB-fed flag owned by main.
       await saveConversation(record, { preserveKbFed: true })
     })
@@ -285,10 +255,23 @@ if (!hasSingleInstanceLock) {
   })
 }
 
-app.on('will-quit', async () => {
+const QUIT_CLEANUP_TIMEOUT_MS = 2000
+let quitCleanupDone = false
+
+// Electron does not await async listeners, so hold the quit until the portal
+// binding is released and the OCR worker thread has exited.
+app.on('will-quit', (event) => {
+  if (quitCleanupDone) return
+  event.preventDefault()
   stopKbAutoMaintenance()
   globalShortcut.unregisterAll()
-  await unregisterGlobalShortcutPortal()
+  const cleanup = Promise.allSettled([unregisterGlobalShortcutPortal(), cancelOCR()])
+  // A hung D-Bus call or a long OCR job must never keep the app from quitting.
+  const deadline = new Promise((resolve) => setTimeout(resolve, QUIT_CLEANUP_TIMEOUT_MS))
+  void Promise.race([cleanup, deadline]).then(() => {
+    quitCleanupDone = true
+    app.quit()
+  })
 })
 
 app.on('window-all-closed', () => {
@@ -310,13 +293,63 @@ function safeSend(sender: WebContents, channel: string, payload: unknown): void 
   sender.send(channel, payload)
 }
 
-function withKbPrompt(messages: ProviderMessage[], kbPrompt: string): ProviderMessage[] {
-  if (!kbPrompt) return messages
-  const systemIndex = messages.findIndex((msg) => msg.role === 'system')
-  if (systemIndex === -1) return [{ role: 'system', content: kbPrompt }, ...messages]
-  return messages.map((msg, index) =>
-    index === systemIndex ? { ...msg, content: msg.content + '\n\n' + kbPrompt } : msg
-  )
+interface StreamPayload {
+  requestId: string
+  messages: ProviderMessage[]
+  role: 'chat' | 'lookup'
+}
+
+function parseStreamPayload(payload: unknown): StreamPayload | null {
+  if (typeof payload !== 'object' || payload === null) return null
+  const raw = payload as Record<string, unknown>
+  const messages = parseProviderMessages(raw.messages)
+  if (typeof raw.requestId !== 'string' || raw.requestId === '' || !messages) return null
+  return { requestId: raw.requestId, messages, role: parseStreamRole(raw.role) }
+}
+
+interface StreamEvents {
+  chunk: (delta: string) => void
+  done: (text: string) => void
+  cancelled: (partialText: string) => void
+  failed: (error: string) => void
+}
+
+/**
+ * Runs one cancellable provider stream for `sender`. Tokens are batched into
+ * deltas; the final event always carries the full text, so a dropped or
+ * discarded batch can never leave the renderer with a truncated answer.
+ */
+async function streamToSender(
+  sender: WebContents,
+  requestId: string,
+  messages: ProviderMessage[],
+  role: RoleId,
+  events: StreamEvents
+): Promise<void> {
+  const controller = new AbortController()
+  // A closed popup must stop the request instead of throwing on every send.
+  const onDestroyed = (): void => controller.abort()
+  sender.once('destroyed', onDestroyed)
+  activeStreams.set(requestId, { controller, senderId: sender.id })
+  const batcher = createChunkBatcher(events.chunk)
+  let fullResponse = ''
+  try {
+    for await (const chunk of callProviderStream(messages, role, controller.signal)) {
+      fullResponse += chunk
+      batcher.push(chunk)
+    }
+    batcher.stop()
+    events.done(fullResponse)
+  } catch (err) {
+    batcher.stop()
+    if (controller.signal.aborted) events.cancelled(fullResponse)
+    else events.failed(formatStreamError(err))
+  } finally {
+    sender.removeListener('destroyed', onDestroyed)
+    if (activeStreams.get(requestId)?.controller === controller) {
+      activeStreams.delete(requestId)
+    }
+  }
 }
 
 /* ---- Tray ---- */
@@ -379,7 +412,7 @@ function createWindow(): BrowserWindow {
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false,
+      sandbox: true,
       devTools: is.dev
     }
   })
@@ -406,17 +439,7 @@ function createWindow(): BrowserWindow {
     clearMainWindow()
   })
 
-  mainWindow.webContents.setWindowOpenHandler((details) => {
-    if (isSafeExternalUrl(details.url)) void shell.openExternal(details.url)
-    return { action: 'deny' }
-  })
-
-  // Never let renderer content navigate the app shell away from the bundle.
-  mainWindow.webContents.on('will-navigate', (event, url) => {
-    if (url === mainWindow.webContents.getURL()) return
-    event.preventDefault()
-    if (isSafeExternalUrl(url)) void shell.openExternal(url)
-  })
+  guardWindowNavigation(mainWindow)
 
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
@@ -456,14 +479,5 @@ function deliverConversation(payload: ConversationDelivery): void {
     win.webContents.once('did-finish-load', deliver)
   } else {
     deliver()
-  }
-}
-
-function isSafeExternalUrl(rawUrl: string): boolean {
-  try {
-    const { protocol } = new URL(rawUrl)
-    return protocol === 'http:' || protocol === 'https:'
-  } catch {
-    return false
   }
 }

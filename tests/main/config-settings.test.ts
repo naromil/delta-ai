@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { normalizeAppSettings } from '../../src/main/config'
+import { mergeAppSettings, normalizeAppSettings } from '../../src/main/config'
 
 // config.ts pulls in Electron, the portal and the lookup orchestrator. Everything
 // under test (settings normalization) is pure, so replace the heavy edges.
@@ -78,5 +78,33 @@ describe('normalizeAppSettings', () => {
     expect(normalizeAppSettings({ kbAutoMaintain: false }).kbAutoMaintain).toBe(false)
     expect(normalizeAppSettings({ kbAutoMaintain: 'false' }).kbAutoMaintain).toBe(true)
     expect(normalizeAppSettings({ kbAutoMaintain: null }).kbAutoMaintain).toBe(true)
+  })
+})
+
+describe('mergeAppSettings', () => {
+  const current = {
+    hotkey: 'Ctrl+Space',
+    closeToTray: false,
+    lookupContextMode: 'clipboard' as const,
+    kbAutoMaintain: false
+  }
+
+  it('changes only the fields in the patch', () => {
+    expect(mergeAppSettings(current, { lookupContextMode: 'fullscreen-ocr' })).toEqual({
+      ...current,
+      lookupContextMode: 'fullscreen-ocr'
+    })
+  })
+
+  it('keeps the stored settings for an empty or non-object patch', () => {
+    expect(mergeAppSettings(current, {})).toEqual(current)
+    expect(mergeAppSettings(current, null)).toEqual(current)
+    expect(mergeAppSettings(current, ['x'])).toEqual(current)
+  })
+
+  it('still normalizes invalid patched values', () => {
+    expect(mergeAppSettings(current, { lookupContextMode: 'telepathy' }).lookupContextMode).toBe(
+      'none'
+    )
   })
 })

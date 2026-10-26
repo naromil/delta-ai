@@ -33,7 +33,10 @@ export interface Connection {
   id: string
   label: string
   providerType: ProviderType
+  /** Only present in main, or in the renderer while the user types a new key. */
   apiKey?: string
+  /** Renderer-only: a key is stored for this connection (see `redactModelConfig`). */
+  hasApiKey?: boolean
   baseUrl?: string
   host?: string
 }

@@ -46,7 +46,10 @@ function ConnectionCard({
       baseUrl: newDef.defaultBaseUrl ?? undefined,
       host: providerType === 'ollama' ? 'http://localhost:11434' : undefined
     }
-    if (newDef.authShape !== 'apiKey') updates.apiKey = ''
+    if (newDef.authShape !== 'apiKey') {
+      updates.apiKey = ''
+      updates.hasApiKey = false
+    }
     if (newDef.authShape !== 'host') updates.host = ''
     updateConnection(updates)
   }
@@ -110,13 +113,31 @@ function ConnectionCard({
       {def.authShape === 'apiKey' && (
         <div className="settings-field">
           <label className="settings-label settings-label--sm">API Key</label>
-          <input
-            type="password"
-            className="settings-input"
-            value={connection.apiKey ?? ''}
-            onChange={(e) => updateConnection({ apiKey: e.target.value })}
-            placeholder="Enter your API key…"
-          />
+          <div className="settings-inline">
+            {/* The stored key never reaches the renderer: an empty field over a
+                saved key means "keep it", and only typing replaces it. */}
+            <input
+              type="password"
+              className="settings-input"
+              value={connection.apiKey ?? ''}
+              onChange={(e) =>
+                updateConnection({
+                  apiKey: e.target.value === '' && connection.hasApiKey ? undefined : e.target.value
+                })
+              }
+              placeholder={
+                connection.hasApiKey ? 'Key saved. Type to replace it.' : 'Enter your API key…'
+              }
+            />
+            {connection.hasApiKey && !connection.apiKey && (
+              <button
+                className="btn btn--sm"
+                onClick={() => updateConnection({ apiKey: '', hasApiKey: false })}
+              >
+                Remove
+              </button>
+            )}
+          </div>
         </div>
       )}
 

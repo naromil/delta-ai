@@ -19,6 +19,16 @@ function enqueue<T>(task: () => Promise<T>): Promise<T> {
 }
 
 /**
+ * Directory holding `eng.traineddata.gz`. Packaged builds ship it as an extra
+ * resource (see `electron-builder.yml`); dev reads it from node_modules. Either
+ * way OCR never downloads the model, so the first look-up works offline.
+ */
+function tessdataDir(): string {
+  if (app.isPackaged) return join(process.resourcesPath, 'tessdata')
+  return join(app.getAppPath(), 'node_modules/@tesseract.js-data/eng/4.0.0_best_int')
+}
+
+/**
  * Lazily create the shared tesseract worker. Only call from inside a queued task.
  * tesseract.js is imported dynamically so its WASM glue is not loaded at startup.
  */
@@ -26,6 +36,7 @@ async function ensureWorker(): Promise<Worker> {
   if (!tesseractWorker) {
     const { createWorker } = await import('tesseract.js')
     tesseractWorker = await createWorker('eng', 1, {
+      langPath: tessdataDir(),
       cachePath: join(app.getPath('userData'), 'tesseract-cache'),
       logger: () => {}
     })

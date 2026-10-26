@@ -4,6 +4,7 @@ import { is } from '@electron-toolkit/utils'
 import { clamp, type LookupSession } from './state'
 import { handlePasteText, handlePasteImage } from './handlers'
 import { ocrImageBuffer } from './capture'
+import { guardWindowNavigation } from '../window-guards'
 
 /* ---- Constants ---- */
 export const LOOKUP_WINDOW_WIDTH = 420
@@ -55,11 +56,12 @@ export function createLookupSession(cursorX: number, cursorY: number): LookupSes
     show: false,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false,
+      sandbox: true,
       devTools: false,
       contextIsolation: true
     }
   })
+  guardWindowNavigation(window)
 
   const session: LookupSession = {
     window,

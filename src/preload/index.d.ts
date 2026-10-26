@@ -1,4 +1,3 @@
-import { ElectronAPI } from '@electron-toolkit/preload'
 import type {
   ConversationState,
   ConversationRecord,
@@ -12,7 +11,6 @@ import type { ConnectionTestResult, DiscoveredModels } from '../main/services/mo
 
 declare global {
   interface Window {
-    electron: ElectronAPI
     api: {
       loadModelConfig: () => Promise<unknown>
       saveModelConfig: (config: unknown) => Promise<{ success: boolean; error?: string }>
@@ -28,11 +26,12 @@ declare global {
         lookupContextMode: string
         kbAutoMaintain: boolean
       }>
+      /** A partial update: omitted fields keep their stored value. */
       saveSettings: (settings: {
-        hotkey: string
-        closeToTray: boolean
-        lookupContextMode: string
-        kbAutoMaintain: boolean
+        hotkey?: string
+        closeToTray?: boolean
+        lookupContextMode?: string
+        kbAutoMaintain?: boolean
       }) => Promise<{ success: boolean; hotkeyMode: 'global' | 'local'; error?: string }>
       getHotkeyStatus: () => Promise<{ accelerator: string; mode: 'global' | 'local' }>
       setHotkeyCaptureActive: (active: boolean) => void
@@ -62,7 +61,7 @@ declare global {
         role?: string
       }) => void
       chatCancel: (requestId: string) => void
-      chatOnChunk: (cb: (data: { requestId: string; text: string }) => void) => () => void
+      chatOnChunk: (cb: (data: { requestId: string; delta: string }) => void) => () => void
       chatOnResponse: (
         cb: (data: { requestId: string; text: string; cancelled?: boolean }) => void
       ) => () => void
@@ -70,6 +69,7 @@ declare global {
       chatOnExpandChunk: (
         cb: (data: {
           requestId: string
+          delta?: string
           text?: string
           error?: string
           done?: boolean

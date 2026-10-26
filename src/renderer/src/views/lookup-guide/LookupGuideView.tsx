@@ -81,8 +81,7 @@ function LookupGuideView(): React.JSX.Element {
 
   const handleModeChange = useCallback(async (mode: LookupContextMode) => {
     setContextMode(mode)
-    const settings = await window.api.loadSettings()
-    await window.api.saveSettings({ ...settings, lookupContextMode: mode })
+    await window.api.saveSettings({ lookupContextMode: mode })
   }, [])
 
   return (

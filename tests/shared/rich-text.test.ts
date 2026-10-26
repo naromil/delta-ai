@@ -435,6 +435,20 @@ describe('applyExpansionChunk', () => {
     expect(next[0].expansions[0].answer).toBe('partial')
   })
 
+  it('appends streamed deltas to the answer', () => {
+    let next = applyExpansionChunk(turns, 1, { delta: 'str' })
+    next = applyExpansionChunk(next, 1, { delta: 'eamed' })
+    expect(next[0].expansions[0].answer).toBe('streamed')
+    expect(next[0].expansions[0].status).toBe('loading')
+  })
+
+  it('lets the full text on completion replace the streamed deltas', () => {
+    let next = applyExpansionChunk(turns, 1, { delta: 'partial' })
+    next = applyExpansionChunk(next, 1, { text: 'partial and final', done: true })
+    expect(next[0].expansions[0].answer).toBe('partial and final')
+    expect(next[0].expansions[0].status).toBe('done')
+  })
+
   it('ignores chunks for unknown ids', () => {
     expect(applyExpansionChunk(turns, 99, { text: 'x' })).toBe(turns)
   })
