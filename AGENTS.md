@@ -137,13 +137,13 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | ---------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | Entry point      | `main.tsx`                                               | createRoot, imports CSS, mounts Root                                                                                |
 | Root router      | `Root.tsx`                                               | Routes App (main window) vs LookupApp (popup) by `?role=lookup`                                                     |
-| App shell        | `App.tsx`                                                | Sidebar + 5-view routing                                                                                            |
+| App shell        | `App.tsx`                                                | Sidebar + 5-view routing, global Ctrl+N/Ctrl+K, search modal, composer draft                                        |
 | Lookup popup     | `LookupApp.tsx`                                          | Header, context panel, ask input, paste handling, grow transitions                                                  |
 | Chat hook        | `hooks/useChatStreaming.ts`                              | Owns ConversationState, stop/retry/regenerate/rename, routes requests via `hooks/chat/*`, auto-saves                |
 | Chat requests    | `hooks/chat/{requests,persistence,transport}.ts`         | Pure request book (pending ids, `activeSendId`, drain helpers), autosave effect, IPC subscriptions + stale-id drops |
 | Scroll following | `hooks/useStickToBottom.ts`                              | Pins chat/popup views to the bottom while a response streams; an upward scroll unpins                               |
-| Conversation     | `components/conversation/Conversation.tsx`               | Message list, composer + Stop button, search overlay, context menu                                                  |
-| Turn             | `components/conversation/Turn.tsx`                       | Single message (user/assistant) with avatar, markdown body, retry                                                   |
+| Conversation     | `components/conversation/Conversation.tsx`               | Message list, composer + Stop button (Esc), toolbar (export/delete), context menu                                   |
+| Turn             | `components/conversation/Turn.tsx`                       | Single message (user/assistant) with avatar, markdown body, retry, inline edit-and-resend                           |
 | Markdown         | `components/conversation/Markdown.tsx`                   | remark → mdast → hast → React; block mode for turns, inline mode+`md-*` spans for frames; `data-src` text anchors   |
 | Markdown core    | `lib/markdown.ts`                                        | Pure parse/splice/anchor helpers (`prepareMarkdownTree`, `isAnchoredRange`, `collectTextNodeSpans`)                 |
 | ExpansionFrame   | `components/conversation/ExpansionFrame.tsx`             | Inline expandable frames, folded pills, nested children                                                             |
@@ -151,7 +151,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | ExpandPrompt     | `components/conversation/ExpandPrompt.tsx`               | Floating inline input for custom expand direction ("Expand on…")                                                    |
 | Search           | `components/conversation/ConversationSearch.tsx`         | Ctrl/Cmd+K modal: search titles + messages, snippet, load/delete, errors                                            |
 | Settings         | `views/settings/Settings.tsx`                            | 3-tab settings orchestrator                                                                                         |
-| Views            | `views/home/`, `views/knowledge/`, `views/lookup-guide/` | Dashboard and placeholder views                                                                                     |
+| Views            | `views/home/`, `views/knowledge/`, `views/lookup-guide/` | Dashboard (recent conversations + learned tags) and placeholder views                                               |
 
 #### What to touch when
 
@@ -183,6 +183,9 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | Automatic learning pacing              | `kb/schedule.ts` (pure) + `kb/maintenance.ts` (timers, queue, status)                                 |
 | What gets folded into the profile      | `kb/run.ts` (`runKbAnalysis`) + `kb/analysis.ts` (material/messages)                                  |
 | Stop/retry generation                  | `useChatStreaming.ts` (`stop`/`retry`) + `Conversation.tsx`, `Turn.tsx`                               |
+| Edit and resend a user message         | `useChatStreaming.ts` (`editMessage` → `truncateAndResend`) + `Turn.tsx`, `Conversation.tsx`          |
+| Delete the open conversation           | `useChatStreaming.ts` (`deleteConversation`) + `Conversation.tsx` toolbar                             |
+| App-wide shortcuts / search modal      | `App.tsx` (Ctrl/Cmd+N, Ctrl/Cmd+K, `ConversationSearch` mount)                                        |
 | Change chat auto-scroll                | `hooks/useStickToBottom.ts`                                                                           |
 | Renderer chat UI                       | `App.tsx`, `Conversation.tsx`, `Turn.tsx`, `ConversationSearch.tsx`                                   |
 | Provider config form                   | `components/settings/models/ModelsTab.tsx` (+ `RoleRow.tsx`, `ConnectionCard.tsx`)                    |
@@ -256,7 +259,8 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   `{id}.meta.json` holds its `ConversationMeta` (id, title, timestamps, source, `kbFed`,
   `turnCount`). Always go through `conversations.ts` helpers; `ensureConversationsDir()` is called
   automatically by save/list operations. Every successful write updates the body and the sidecar
-  atomically (temp file + rename); `deleteConversation` removes both. `listConversations`,
+  atomically (temp file + rename); `deleteConversation` removes both inside the per-id write chain,
+  so an autosave queued before the delete cannot recreate the record. `listConversations`,
   `searchConversations` and `listUnfedConversations` read sidecars and **backfill** a missing or
   corrupt sidecar from the body inside the write chain. Ids are validated against
   `SAFE_CONVERSATION_ID` before touching the filesystem.
@@ -326,11 +330,15 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   before the first token saves only the user turn. Empty conversations are never saved. Error
   turns are persisted for Retry.
 - **Stop/retry/regenerate live in the chat window**: while loading, the composer send button
-  becomes a Stop button wired to `stop()`, which cancels in-flight expands first and then the
+  becomes a Stop button wired to `stop()` (Escape triggers it too, unless a menu, prompt, search
+  or editor claims the key first), which cancels in-flight expands first and then the
   active send. An assistant turn with `error: true` renders Retry; `retry(turnId)` and
   `regenerate(turnId)` share `replaceAssistantTurn`, dropping that answer and everything after
   it, keeping the preceding user turn, and re-sending the serialized conversation. Regenerate is
   also offered on successful answers and confirms when later turns would be dropped.
+  Editing a user message (`editMessage`) runs the same truncate-and-resend path
+  (`truncateAndResend`): the edited turn and everything after it are replaced by the new text and
+  a fresh answer; the UI confirms only when more than that one answer would be dropped.
   `serializeForChat` omits assistant turns that are `error: true` or have blank/whitespace
   content (in-flight/legacy placeholders), so neither error text nor empty placeholders are
   replayed to the model; error turns stay on disk so Retry survives a reload.
@@ -343,6 +351,12 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   expands attached to the turns they drop. The request book (`hooks/chat/requests.ts`) is
   updated before `chatCancel`, so late chunks for a dropped id are no-ops rather than writes to
   a turn that no longer exists.
+- **App-level chat chrome.** `App.tsx` owns the Ctrl/Cmd+N (new chat, switches to Chat) and
+  Ctrl/Cmd+K (search) listeners, the `ConversationSearch` modal and the composer draft, so they
+  work from every view and the draft survives `Conversation` unmounting. The Home view lists the
+  five most recent chats (`conversation-list`). Deleting the open conversation goes through the
+  chat toolbar (`deleteConversation` in the hook detaches the meta first so no autosave follows);
+  the search modal still refuses to delete the open chat.
 - **Rename is metadata-only.** `renameConversation(title)` trims to the title limit, updates the
   in-memory meta and saves with `touchContent: false`: the body's `title` changes but
   `updatedAt` does not, so the recents list keeps its order. Inline editing in

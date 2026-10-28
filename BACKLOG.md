@@ -2,15 +2,15 @@
 
 ## Routine (Claude may build these without asking)
 
-- [ ] Recent conversations on the Home view — past chats are reachable only through the Ctrl+K search modal; `conversation-list` already returns them sorted
-- [ ] Delete the open conversation from the chat toolbar — the search modal refuses to delete the open chat, so there is no way to delete it at all
-- [ ] Edit and resend a user message — common in chat apps; reuses the `replaceAssistantTurn` truncate-and-resend path
-- [ ] Copy button on code blocks — copying a fenced block today means a manual selection that the context menu competes for
-- [ ] Esc stops generation in the chat window — the lookup popup handles Escape, but the chat window needs a mouse click on Stop
-- [ ] Keep the composer draft across view switches — `Conversation` unmounts on navigation and silently drops the typed text
-- [ ] Make Ctrl+N / Ctrl+K work from every view — the listener lives in `Conversation.tsx`, so the shortcuts do nothing on Home, Knowledge or Settings
-- [ ] Sync README with current behavior — it omits key sealing, says the KB prompt only reaches lookups, and lists `settings.json` as just hotkey + tray
-- [ ] Unit tests for `main/context-budget.ts` and `services/atomic-file.ts` — fail-open budgeting and crash-safe writes are untested
+- [x] Recent conversations on the Home view — past chats are reachable only through the Ctrl+K search modal; `conversation-list` already returns them sorted
+- [x] Delete the open conversation from the chat toolbar — the search modal refuses to delete the open chat, so there is no way to delete it at all
+- [x] Edit and resend a user message — common in chat apps; reuses the `replaceAssistantTurn` truncate-and-resend path
+- [x] Copy button on code blocks — copying a fenced block today means a manual selection that the context menu competes for
+- [x] Esc stops generation in the chat window — the lookup popup handles Escape, but the chat window needs a mouse click on Stop
+- [x] Keep the composer draft across view switches — `Conversation` unmounts on navigation and silently drops the typed text
+- [x] Make Ctrl+N / Ctrl+K work from every view — the listener lives in `Conversation.tsx`, so the shortcuts do nothing on Home, Knowledge or Settings
+- [x] Sync README with current behavior — it omits key sealing, says the KB prompt only reaches lookups, and lists `settings.json` as just hotkey + tray
+- [x] Unit tests for `main/context-budget.ts` and `services/atomic-file.ts` — fail-open budgeting and crash-safe writes are untested
 - [ ] Clear the Copy-label timer when a turn unmounts — `Turn.tsx` calls setState from a stray `setTimeout` after navigation
 
 - [ ] Open markdown links in the system browser — `Anchor` swallows every click today; needs the owner because it touches the navigation/`window-guards` security boundary
@@ -34,6 +34,6 @@
 ## Rejected (Claude won't re-propose these)
 
 Conversations are treated as learning materials only and the history can be exported in better forms in the future:
+
 - [ ] Pin or star conversations — changes the `ConversationMeta` sidecar format
 - [ ] Export all conversations / import from a file — needs new IPC channels and a bulk file format
-

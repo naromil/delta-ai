@@ -9,15 +9,17 @@ Delta AI lives in two windows: a full **chat** interface and an **always-on-top 
 
 ## Features
 
-- **Screen-aware lookup** — Press `Ctrl+Shift+D` (configurable) to capture the screen, OCR it with tesseract.js, and open a popup that can answer questions about what you see.
+- **Screen-aware lookup** — Press `Ctrl+Shift+D` (configurable) to open an always-on-top popup over any app. Its context source is configurable in Settings → General: none (the default — just ask), the clipboard, or a full-screen capture OCR'd locally with tesseract.js. Pasting text or an image into the popup also sets the context.
 - **Inline expansions** — Right-click any word or selection in an assistant response to get an instant definition or custom explanation. Expansions render inline as foldable frames; nested expansions are supported.
 - **Multi-provider AI** — Bring your own key (BYOK) for Google AI Studio, OpenAI, OpenAI-compatible endpoints, Ollama, or OpenRouter. Each conversation role (chat, lookup) maps independently to a provider + model.
 - **Role-based model assignment** — Chat and Lookup use separate model connections so you can run lightweight models for lookups and heavier ones for deep conversations.
-- **Knowledge Base (KB) personalization** — Analyzes past conversations to build a learning-preference profile that gets injected into lookup queries, making responses adapt to your style over time.
-- **Conversation persistence & search** — All conversations are saved to disk automatically (body + metadata sidecar), survive restarts, and are searchable by title and message content.
-- **Rename, regenerate, export** — Rename a conversation inline without reordering recents, regenerate any answer (confirming when later messages would be dropped), and export a conversation as markdown through the system save dialog.
+- **Knowledge Base (KB) personalization** — Automatically folds past chats into a learning-preference profile (needs a model on the Knowledge Base Maintenance role; can be turned off in Settings → General). The profile is appended to the system prompt of both chat and lookup requests, so answers adapt to your style over time.
+- **Conversation persistence & search** — All conversations are saved to disk automatically (body + metadata sidecar), survive restarts, and are searchable by title and message content with `Ctrl/Cmd+K` from any view. The Home view lists your most recent chats.
+- **Rename, edit, regenerate, export, delete** — Rename a conversation inline without reordering recents, edit and resend any of your messages, regenerate any answer (confirming when later messages would be dropped), export a conversation as markdown through the system save dialog, or delete the open conversation from the chat toolbar.
+- **Keyboard-friendly chat** — `Ctrl/Cmd+N` starts a new chat from anywhere, `Esc` stops a response mid-stream, the composer keeps your draft when you switch views, and code blocks have their own Copy button.
+- **Long chats stay within the model's window** — Chat requests drop the oldest messages when they would exceed the model's context window (as reported by models.dev); when the window is unknown nothing is trimmed.
 - **Wayland-first** — Built-in support for KDE Plasma Wayland via XDG Desktop Portals (GlobalShortcuts + Screenshot). Falls back to Electron's `globalShortcut` / `desktopCapturer` on X11, macOS, and Windows.
-- **Privacy-first** — All data stays on your machine except AI API calls. Only a summarized learning-preference paragraph is sent alongside lookup queries. No telemetry, no accounts.
+- **Privacy-first** — All data stays on your machine except AI API calls (and the public models.dev model list). API keys are encrypted at rest with the OS keychain and never reach the UI. No telemetry, no accounts.
 
 ---
 
@@ -84,7 +86,7 @@ Renderer (React 19)          Preload (contextBridge)        Main process (Node)
 | `src/renderer/src/hooks/useChatStreaming.ts`        | Shared streaming hook — owns `ConversationState`, dispatches `chat-send`/`chat-expand`, auto-saves                                                           |
 | `src/renderer/src/hooks/useExpansionContextMenu.ts` | Right-click → selection/word → Expand pipeline shared by both windows                                                                                        |
 | `src/renderer/src/components/conversation/`         | Conversation UI: message list (`Conversation.tsx`), turns (`Turn.tsx`), expansion frames (`ExpansionFrame.tsx`), context menu, expand prompt, search overlay |
-| `tests/`                                            | Vitest suites for pure modules (`shared/conversation`, `main/kb/keywords`, `main/provider`)                                                                  |
+| `tests/`                                            | Vitest suites: shared pure modules, main-process modules with Electron mocked, renderer helpers, provider acceptance gates                                   |
 
 ### IPC channels
 
@@ -99,7 +101,7 @@ Renderer (React 19)          Preload (contextBridge)        Main process (Node)
 | `lookup-input-changed` / `lookup-close`                                            | Lookup → Main   | Blur guard and close                             |
 | `conversation-*`                                                                   | Renderer ↔ Main | Conversation CRUD (save/load/delete/list/search) |
 | `load-model-config` / `save-model-config`                                          | Renderer ↔ Main | Provider config                                  |
-| `load-settings` / `save-settings`                                                  | Renderer ↔ Main | App settings (hotkey, tray, automatic learning)  |
+| `load-settings` / `save-settings`                                                  | Renderer ↔ Main | App settings (hotkey, tray, context, learning)   |
 | `kb-*`                                                                             | Renderer ↔ Main | Knowledge Base learning profile and analysis     |
 
 ---
@@ -125,9 +127,11 @@ Before pushing anything, run the full gate:
 npm run verify        # typecheck + lint + tests + formatting
 ```
 
-Unit tests cover the pure modules only — the conversation/expansion model, the KB keyword
-pipeline, and provider dispatch with a mocked config. There is no renderer or end-to-end
-harness yet, so UI changes still need a manual pass with `npm run dev`.
+Tests cover the shared pure modules (conversation/expansion model, context budgeting, markdown
+anchoring), the main process with Electron mocked (config and key sealing, conversation store,
+atomic writes, KB pipeline and scheduler, provider dispatch, streaming IPC) and a few renderer
+helpers. There is no component or end-to-end harness yet, so UI changes still need a manual pass
+with `npm run dev`.
 
 ### Commands
 
@@ -149,14 +153,15 @@ harness yet, so UI changes still need a manual pass with `npm run dev`.
 Delta AI requires **your own API keys** to function. Open Settings → Models to configure:
 
 1. **Add a connection** — pick a provider (Google AI Studio, OpenAI Compatible, OpenAI, Ollama, or OpenRouter) and enter your API key or host.
-2. **Assign roles** — map the Chat and Lookup roles to a connection + model. A lightweight model is recommended for the Lookup role since no heavy reasoning is needed.
+2. **Assign roles** — map the Chat, Lookup and Knowledge Base Maintenance roles to a connection + model. A lightweight model is recommended for the Lookup role since no heavy reasoning is needed; leaving Knowledge Base Maintenance unassigned disables automatic learning.
 
 Configuration files live in `{userData}/config/`:
 
-- `providers.json` — connections and role assignments
-- `settings.json` — hotkey and close-to-tray preference
+- `providers.json` — connections and role assignments; API keys are sealed with Electron `safeStorage`
+- `settings.json` — `hotkey`, `closeToTray`, `lookupContextMode` (`none` / `clipboard` / `fullscreen-ocr`, default `none`) and `kbAutoMaintain` (default `true`)
 
-Conversations are stored in `{userData}/conversations/{id}.json`.
+Conversations are stored in `{userData}/conversations/{id}.json` with a `{id}.meta.json` sidecar.
+The learned profile lives in `{userData}/kb/`.
 
 ---
 
@@ -176,9 +181,9 @@ On Wayland, Electron's `clipboard.readText()` reads from the XWayland clipboard 
 
 ## Privacy
 
-- **Bring your own key (BYOK)** — API keys are stored locally in `{userData}/config/providers.json`.
+- **Bring your own key (BYOK)** — API keys are stored locally in `{userData}/config/providers.json`, encrypted with the OS keychain via Electron `safeStorage` (plaintext only where the platform offers no keychain). Keys stay in the main process and are never sent to the UI.
 - **All data stays local** except the AI API requests themselves.
-- **KB personalization** sends only a condensed paragraph of inferred learning preferences — never raw conversation text — alongside lookup queries.
+- **KB personalization** appends a condensed learned profile to chat and lookup requests. Building that profile sends your chat history to the model you assign to the Knowledge Base Maintenance role; turn automatic learning off in Settings → General to stop it.
 - **No telemetry, no analytics, no accounts.**
 
 ---
