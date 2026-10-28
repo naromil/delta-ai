@@ -184,6 +184,13 @@ describe('conversation store', () => {
     expect(await loadConversation('chat_both')).toBeNull()
   })
 
+  it('deletes after an autosave that was queued before it', async () => {
+    await Promise.all([saveConversation(record('chat_race')), deleteConversation('chat_race')])
+
+    expect(await loadConversation('chat_race')).toBeNull()
+    expect(existsSync(join(paths.userData, 'conversations', 'chat_race.meta.json'))).toBe(false)
+  })
+
   it('runs mutations inside the same per-id chain as saves', async () => {
     await saveConversation(record('chat_chain'))
     const newer = record('chat_chain', {

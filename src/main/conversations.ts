@@ -193,12 +193,15 @@ async function removeFile(filePath: string): Promise<void> {
   }
 }
 
-export async function deleteConversation(id: string): Promise<void> {
-  const filePath = conversationPath(id)
-  if (!filePath) return
-  await removeFile(filePath)
-  const metaPath = conversationMetaPath(id)
-  if (metaPath) await removeFile(metaPath)
+/** Runs in the per-id chain, so an autosave queued before the delete cannot resurrect it. */
+export function deleteConversation(id: string): Promise<void> {
+  return enqueueConversationWrite(id, async () => {
+    const filePath = conversationPath(id)
+    if (!filePath) return
+    await removeFile(filePath)
+    const metaPath = conversationMetaPath(id)
+    if (metaPath) await removeFile(metaPath)
+  })
 }
 
 async function listConversationIds(): Promise<string[]> {
