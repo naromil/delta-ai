@@ -7,7 +7,6 @@ import { useStickToBottom } from '../../hooks/useStickToBottom'
 import Turn from './Turn'
 import ContextMenu from './ContextMenu'
 import ExpandPrompt from './ExpandPrompt'
-import ConversationSearch from './ConversationSearch'
 
 interface ConversationProps {
   state: ConversationState
@@ -16,9 +15,15 @@ interface ConversationProps {
   onStop: () => void
   onRetry: (turnId: number) => void
   onRegenerate?: (turnId: number) => void
+  onEditMessage?: (turnId: number, content: string) => void
   onRename?: (title: string) => void
+  onDelete?: () => Promise<void>
   onNewChat: () => void
-  onLoadConversation?: (id: string) => void
+  onOpenSearch?: () => void
+  searchOpen?: boolean
+  /** The composer draft is owned by the caller so it survives unmounting. */
+  input: string
+  onInputChange: (value: string) => void
   onExpand: ExpandRequest
   onFold: (id: number) => void
   onUnfold: (id: number) => void
@@ -43,26 +48,29 @@ function Conversation({
   onStop,
   onRetry,
   onRegenerate,
+  onEditMessage,
   onRename,
+  onDelete,
   onNewChat,
+  onOpenSearch,
+  searchOpen = false,
+  input,
+  onInputChange,
   onExpand,
   onFold,
   onUnfold,
   onRetryExpansion,
   onDismissExpansion,
-  onLoadConversation,
   hideToolbar = false,
   transferKey,
   conversationId,
   conversationTitle
 }: ConversationProps): React.JSX.Element {
-  const [input, setInput] = useState('')
   const { scrollRef, atBottom, pin, jumpToLatest } = useStickToBottom(state.turns)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const [showSearch, setShowSearch] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [exported, setExported] = useState(false)
-  const [exportError, setExportError] = useState<string | null>(null)
+  const [toolbarError, setToolbarError] = useState<string | null>(null)
   const exportSavedTimerRef = useRef<number | null>(null)
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
@@ -93,7 +101,7 @@ function Conversation({
   }, [])
 
   const fillComposer = (text: string): void => {
-    setInput(text)
+    onInputChange(text)
     textareaRef.current?.focus()
   }
 
@@ -113,24 +121,22 @@ function Conversation({
   }, [input])
 
   useEffect(() => {
-    const handleShortcut = (e: KeyboardEvent): void => {
-      if (!(e.ctrlKey || e.metaKey)) return
-      const key = e.key.toLowerCase()
-      if (key === 'k' && onLoadConversation) {
-        e.preventDefault()
-        setShowSearch(true)
-      } else if (key === 'n') {
-        e.preventDefault()
-        onNewChat()
-      }
-    }
-    window.addEventListener('keydown', handleShortcut)
-    return () => window.removeEventListener('keydown', handleShortcut)
-  }, [onLoadConversation, onNewChat])
+    if (searchOpen) closeContextMenu()
+  }, [searchOpen, closeContextMenu])
 
+  // Escape stops generation unless something on top of the chat claims it first
+  // (context menu, expand prompt, search, title editor, message editor).
   useEffect(() => {
-    if (showSearch) closeContextMenu()
-  }, [showSearch, closeContextMenu])
+    if (!loading) return
+    const handleEscape = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return
+      if (ctxMenu || expandPrompt || searchOpen) return
+      e.preventDefault()
+      onStop()
+    }
+    window.addEventListener('keydown', handleEscape)
+    return () => window.removeEventListener('keydown', handleEscape)
+  }, [loading, ctxMenu, expandPrompt, searchOpen, onStop])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -144,7 +150,7 @@ function Conversation({
     const trimmed = input.trim()
     if (trimmed === '' || loading) return
     pin()
-    setInput('')
+    onInputChange('')
     onSend(trimmed)
   }
 
@@ -155,7 +161,7 @@ function Conversation({
       exportSavedTimerRef.current = null
     }
     setExported(false)
-    setExportError(null)
+    setToolbarError(null)
     setExporting(true)
     try {
       const result = await window.api.exportConversation(conversationId)
@@ -166,12 +172,24 @@ function Conversation({
           setExported(false)
         }, 2000)
       } else if (result.error !== 'Canceled.') {
-        setExportError(result.error)
+        setToolbarError(result.error)
       }
     } catch (err) {
-      setExportError(err instanceof Error ? err.message : String(err))
+      setToolbarError(err instanceof Error ? err.message : String(err))
     } finally {
       setExporting(false)
+    }
+  }
+
+  const handleDelete = async (): Promise<void> => {
+    if (!onDelete || !conversationId) return
+    const label = conversationTitle ? `“${conversationTitle}”` : 'this conversation'
+    if (!window.confirm(`Delete ${label}? This cannot be undone.`)) return
+    setToolbarError(null)
+    try {
+      await onDelete()
+    } catch (err) {
+      setToolbarError(err instanceof Error ? err.message : 'Failed to delete conversation.')
     }
   }
 
@@ -212,6 +230,28 @@ function Conversation({
     [onRegenerate]
   )
 
+  const handleEditMessage = useCallback(
+    (turnId: number, content: string): boolean => {
+      if (!onEditMessage) return false
+      const turns = turnsRef.current
+      const index = turns.findIndex((turn) => turn.id === turnId)
+      if (index < 0) return false
+      // The answer right after the edited message is always replaced; only
+      // warn when the edit also drops a longer tail of the conversation.
+      const removed = turns.length - index - 1
+      if (removed > 1) {
+        const confirmed = window.confirm(
+          `Resend this message? ${removed} later messages will be removed.`
+        )
+        if (!confirmed) return false
+      }
+      pin()
+      onEditMessage(turnId, content)
+      return true
+    },
+    [onEditMessage, pin]
+  )
+
   const visibleTurns = state.turns.filter(
     (t) => t.content !== '' || (t.role === 'assistant' && loading)
   )
@@ -233,7 +273,7 @@ function Conversation({
           </button>
           <button
             className="new-chat-button"
-            onClick={() => setShowSearch(true)}
+            onClick={onOpenSearch}
             aria-label="Search conversations"
           >
             <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -267,9 +307,28 @@ function Conversation({
               {exporting ? 'Exporting…' : exported ? 'Saved' : 'Export'}
             </button>
           )}
-          {exportError && (
+          {conversationId && onDelete && (
+            <button
+              className="new-chat-button"
+              onClick={() => void handleDelete()}
+              aria-label="Delete conversation"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M4 7h16M10 11v6M14 11v6M5 7l1 12a2 2 0 002 2h8a2 2 0 002-2l1-12M9 7V4h6v3"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  fill="none"
+                />
+              </svg>
+              Delete
+            </button>
+          )}
+          {toolbarError && (
             <span className="chat-export-error" role="alert">
-              {exportError}
+              {toolbarError}
             </span>
           )}
           {conversationTitle &&
@@ -350,6 +409,7 @@ function Conversation({
                   onUnfold={onUnfold}
                   onRetry={onRetry}
                   onRegenerate={onRegenerate ? handleRegenerate : undefined}
+                  onEdit={onEditMessage ? handleEditMessage : undefined}
                   onRetryExpansion={onRetryExpansion}
                   onDismissExpansion={onDismissExpansion}
                 />
@@ -378,7 +438,7 @@ function Conversation({
             ref={textareaRef}
             className="composer-input"
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => onInputChange(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Message Delta AI..."
             aria-label="Message Delta AI"
@@ -427,13 +487,6 @@ function Conversation({
           {notice}
         </div>
       ) : null}
-      {showSearch && onLoadConversation && (
-        <ConversationSearch
-          onSelect={onLoadConversation}
-          onClose={() => setShowSearch(false)}
-          currentConversationId={conversationId}
-        />
-      )}
     </main>
   )
 }

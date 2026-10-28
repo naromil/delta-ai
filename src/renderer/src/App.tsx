@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import Settings from './views/settings/Settings'
 import Conversation from './components/conversation/Conversation'
+import ConversationSearch from './components/conversation/ConversationSearch'
 import HomeView from './views/home/HomeView'
 import KnowledgeView from './views/knowledge/KnowledgeView'
 import LookupGuideView from './views/lookup-guide/LookupGuideView'
@@ -92,6 +93,9 @@ const ICONS: Record<string, React.JSX.Element> = {
 function App(): React.JSX.Element {
   const [view, setView] = useState<View>('home')
   const [transferKey, setTransferKey] = useState(0)
+  const [showSearch, setShowSearch] = useState(false)
+  // Lives here, not in Conversation, so a view switch cannot drop the draft.
+  const [draft, setDraft] = useState('')
   const {
     state,
     loading,
@@ -99,6 +103,7 @@ function App(): React.JSX.Element {
     stop,
     retry,
     regenerate,
+    editMessage,
     expand,
     retryExpansion,
     dismissExpansion,
@@ -106,6 +111,7 @@ function App(): React.JSX.Element {
     unfold,
     renameConversation,
     newChat,
+    deleteConversation,
     loadConversation,
     conversationId,
     conversationTitle
@@ -115,6 +121,38 @@ function App(): React.JSX.Element {
       setTransferKey((k) => k + 1)
     }
   })
+
+  const startNewChat = useCallback(() => {
+    newChat()
+    setView('chat')
+  }, [newChat])
+
+  const openConversation = useCallback(
+    (id: string) => {
+      setView('chat')
+      void loadConversation(id)
+    },
+    [loadConversation]
+  )
+
+  const openSearch = useCallback(() => setShowSearch(true), [])
+  const closeSearch = useCallback(() => setShowSearch(false), [])
+
+  useEffect(() => {
+    const handleShortcut = (e: KeyboardEvent): void => {
+      if (!(e.ctrlKey || e.metaKey) || e.defaultPrevented) return
+      const key = e.key.toLowerCase()
+      if (key === 'k') {
+        e.preventDefault()
+        setShowSearch(true)
+      } else if (key === 'n') {
+        e.preventDefault()
+        startNewChat()
+      }
+    }
+    window.addEventListener('keydown', handleShortcut)
+    return () => window.removeEventListener('keydown', handleShortcut)
+  }, [startNewChat])
 
   return (
     <div className="app">
@@ -162,7 +200,7 @@ function App(): React.JSX.Element {
         </nav>
       </aside>
       <div className="app-main">
-        {view === 'home' && <HomeView onNavigate={setView} />}
+        {view === 'home' && <HomeView onNavigate={setView} onOpenConversation={openConversation} />}
         {view === 'chat' && (
           <Conversation
             state={state}
@@ -171,9 +209,14 @@ function App(): React.JSX.Element {
             onStop={stop}
             onRetry={retry}
             onRegenerate={regenerate}
+            onEditMessage={editMessage}
             onRename={renameConversation}
+            onDelete={deleteConversation}
             onNewChat={newChat}
-            onLoadConversation={loadConversation}
+            onOpenSearch={openSearch}
+            searchOpen={showSearch}
+            input={draft}
+            onInputChange={setDraft}
             conversationId={conversationId}
             conversationTitle={conversationTitle}
             onExpand={expand}
@@ -188,6 +231,13 @@ function App(): React.JSX.Element {
         {view === 'lookup-guide' && <LookupGuideView />}
         {view === 'settings' && <Settings />}
       </div>
+      {showSearch && (
+        <ConversationSearch
+          onSelect={openConversation}
+          onClose={closeSearch}
+          currentConversationId={conversationId}
+        />
+      )}
     </div>
   )
 }

@@ -55,6 +55,7 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
   stop: () => void
   retry: (turnId: number) => void
   regenerate: (turnId: number) => void
+  editMessage: (turnId: number, content: string) => void
   expand: (turnId: number, target: ExpansionTarget, prompt?: string) => ExpandOutcome
   retryExpansion: (expansionId: number) => void
   dismissExpansion: (expansionId: number) => void
@@ -62,6 +63,7 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
   unfold: (id: number) => void
   renameConversation: (title: string) => void
   newChat: () => void
+  deleteConversation: () => Promise<void>
   loadConversation: (id: string) => Promise<void>
   setState: React.Dispatch<React.SetStateAction<ConversationState>>
 } {
@@ -167,6 +169,36 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
     window.api.chatCancel(activeSendId)
   }, [])
 
+  /**
+   * Drops the turn at `cutIndex` and everything after it, optionally appends a
+   * replacement user turn, and re-sends the conversation for a fresh answer.
+   */
+  const truncateAndResend = useCallback(
+    (cutIndex: number, userTurn?: Turn) => {
+      const current = stateRef.current
+      // Anything after the cut is being replaced; expand streams attached to
+      // those turns must not keep running against state that no longer exists.
+      const droppedTurnIds = new Set(current.turns.slice(cutIndex).map((turn) => turn.id))
+      const expands = discardExpandsForTurns(requestsRef.current, droppedTurnIds)
+      requestsRef.current = expands.book
+      for (const requestId of expands.requestIds) window.api.chatCancel(requestId)
+
+      const baseTurns = [...current.turns.slice(0, cutIndex), ...(userTurn ? [userTurn] : [])]
+      const baseState: ConversationState = { ...current, turns: baseTurns }
+      const assistantTurnId = nextTurnId++
+      const messages = serializeForChat(baseState, role)
+      setState({
+        ...baseState,
+        turns: [
+          ...baseTurns,
+          { id: assistantTurnId, role: 'assistant', content: '', expansions: [] }
+        ]
+      })
+      requestCompletion(messages, assistantTurnId)
+    },
+    [role, requestCompletion]
+  )
+
   const replaceAssistantTurn = useCallback(
     (turnId: number, errorOnly: boolean) => {
       if (loading) return
@@ -185,27 +217,9 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
       }
       if (!hasUserTurn) return
 
-      // Anything after the target is being replaced; expand streams attached to
-      // those turns must not keep running against state that no longer exists.
-      const droppedTurnIds = new Set(current.turns.slice(turnIndex).map((turn) => turn.id))
-      const expands = discardExpandsForTurns(requestsRef.current, droppedTurnIds)
-      requestsRef.current = expands.book
-      for (const requestId of expands.requestIds) window.api.chatCancel(requestId)
-
-      const baseTurns = current.turns.slice(0, turnIndex)
-      const baseState: ConversationState = { ...current, turns: baseTurns }
-      const assistantTurnId = nextTurnId++
-      const messages = serializeForChat(baseState, role)
-      setState({
-        ...baseState,
-        turns: [
-          ...baseTurns,
-          { id: assistantTurnId, role: 'assistant', content: '', expansions: [] }
-        ]
-      })
-      requestCompletion(messages, assistantTurnId)
+      truncateAndResend(turnIndex)
     },
-    [loading, role, requestCompletion]
+    [loading, truncateAndResend]
   )
 
   const retry = useCallback(
@@ -220,6 +234,22 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
       replaceAssistantTurn(turnId, false)
     },
     [replaceAssistantTurn]
+  )
+
+  const editMessage = useCallback(
+    (turnId: number, content: string) => {
+      const trimmed = content.trim()
+      if (trimmed === '' || loading) return
+      const turnIndex = stateRef.current.turns.findIndex((turn) => turn.id === turnId)
+      if (turnIndex < 0 || stateRef.current.turns[turnIndex].role !== 'user') return
+      truncateAndResend(turnIndex, {
+        id: nextTurnId++,
+        role: 'user',
+        content: trimmed,
+        expansions: []
+      })
+    },
+    [loading, truncateAndResend]
   )
 
   const send = useCallback(
@@ -416,6 +446,19 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
     conversationMetaRef.current = null
   }, [cancelAllRequests, saveSnapshot])
 
+  const deleteConversation = useCallback(async (): Promise<void> => {
+    const meta = conversationMetaRef.current
+    if (!meta) return
+    cancelAllRequests()
+    // Detach before the delete so no later autosave can recreate the record.
+    conversationMetaRef.current = null
+    setState({ context: '', turns: [] })
+    setLoading(false)
+    setConversationId(null)
+    setConversationTitle('')
+    await window.api.deleteConversation(meta.id)
+  }, [cancelAllRequests])
+
   const loadConversation = useCallback(
     async (id: string) => {
       cancelAllRequests()
@@ -452,6 +495,7 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
     stop,
     retry,
     regenerate,
+    editMessage,
     expand,
     retryExpansion,
     dismissExpansion,
@@ -459,6 +503,7 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
     unfold,
     renameConversation,
     newChat,
+    deleteConversation,
     loadConversation,
     setState
   }

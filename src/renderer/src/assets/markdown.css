@@ -89,8 +89,45 @@
   border-radius: 4px;
 }
 
-.markdown-body pre {
+.markdown-body .md-codeblock {
+  position: relative;
   margin: 0.5em 0;
+}
+
+.markdown-body .md-codeblock pre {
+  padding-right: 64px;
+}
+
+.markdown-body .md-codeblock-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  user-select: none;
+  opacity: 0;
+  transition:
+    opacity var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
+}
+
+.markdown-body .md-codeblock:hover .md-codeblock-copy,
+.markdown-body .md-codeblock-copy:focus-visible {
+  opacity: 1;
+}
+
+.markdown-body .md-codeblock-copy:hover {
+  color: var(--text-1);
+}
+
+.markdown-body pre {
+  margin: 0;
   padding: 10px 12px;
   background: var(--surface-2);
   border: 1px solid var(--border);

@@ -291,7 +291,8 @@ body {
 }
 
 .message-copy,
-.message-regenerate {
+.message-regenerate,
+.message-edit-button {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -309,15 +310,55 @@ body {
 }
 
 .message-copy:hover,
-.message-regenerate:hover {
+.message-regenerate:hover,
+.message-edit-button:hover {
   background: var(--surface-2);
   color: var(--text-1);
 }
 
 .message-copy svg,
-.message-regenerate svg {
+.message-regenerate svg,
+.message-edit-button svg {
   width: 13px;
   height: 13px;
+}
+
+/* Inline editor for resending a user message */
+.chat .message-user .message-content.message-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 75%;
+}
+
+.message-edit-input {
+  width: 100%;
+  max-height: 240px;
+  padding: 0;
+  border: none;
+  outline: none;
+  resize: none;
+  overflow-y: auto;
+  background: transparent;
+  color: var(--text-1);
+  font-family: inherit;
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.message-edit-input::-webkit-scrollbar {
+  width: 6px;
+}
+
+.message-edit-input::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: var(--border-strong);
+}
+
+.message-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
 }
 
 /* Error messages */

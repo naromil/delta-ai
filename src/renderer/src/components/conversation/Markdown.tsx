@@ -11,7 +11,7 @@
  *   class, so an expansion answer can live inside the frame `<span>` without
  *   invalid nesting.
  */
-import { createContext, useContext, useMemo } from 'react'
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import * as jsxRuntime from 'react/jsx-runtime'
 import { toHast } from 'mdast-util-to-hast'
 import type { Handlers } from 'mdast-util-to-hast'
@@ -112,6 +112,53 @@ function Anchor({ href, title, children }: AnchorProps): React.JSX.Element {
   )
 }
 
+interface CodeBlockProps {
+  children?: React.ReactNode
+}
+
+/** Block-mode fenced code with its own Copy button, so copying needs no manual selection. */
+function CodeBlock({ children }: CodeBlockProps): React.JSX.Element {
+  const preRef = useRef<HTMLPreElement>(null)
+  const timerRef = useRef<number | null>(null)
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current !== null) window.clearTimeout(timerRef.current)
+    }
+  }, [])
+
+  const handleCopy = async (): Promise<void> => {
+    // mdast-util-to-hast appends one newline to every fenced block.
+    const text = (preRef.current?.textContent ?? '').replace(/\n$/, '')
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch {
+      return
+    }
+    setCopied(true)
+    if (timerRef.current !== null) window.clearTimeout(timerRef.current)
+    timerRef.current = window.setTimeout(() => {
+      timerRef.current = null
+      setCopied(false)
+    }, 1500)
+  }
+
+  return (
+    <div className="md-codeblock">
+      <pre ref={preRef}>{children}</pre>
+      <button
+        type="button"
+        className="md-codeblock-copy"
+        onClick={() => void handleCopy()}
+        aria-label="Copy code"
+      >
+        {copied ? 'Copied' : 'Copy'}
+      </button>
+    </div>
+  )
+}
+
 const INLINE_COMPONENTS: Record<string, React.ComponentType<never>> = {
   [EXPANSION_ELEMENT]: ExpansionSlot as React.ComponentType<never>,
   p: inlineElement('md-p') as React.ComponentType<never>,
@@ -141,6 +188,7 @@ const INLINE_COMPONENTS: Record<string, React.ComponentType<never>> = {
 
 const BLOCK_COMPONENTS: Record<string, React.ComponentType<never>> = {
   [EXPANSION_ELEMENT]: ExpansionSlot as React.ComponentType<never>,
+  pre: CodeBlock as React.ComponentType<never>,
   img: ImageFallback as React.ComponentType<never>,
   a: Anchor as React.ComponentType<never>
 }

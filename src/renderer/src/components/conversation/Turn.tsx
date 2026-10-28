@@ -1,4 +1,4 @@
-import { memo, useCallback, useState } from 'react'
+import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import type { Turn as TurnType } from '../../../../shared/conversation'
 import type { ExpansionNode } from '../../../../shared/rich-text'
 import Markdown from './Markdown'
@@ -11,6 +11,8 @@ interface TurnProps {
   onUnfold: (id: number) => void
   onRetry?: (turnId: number) => void
   onRegenerate?: (turnId: number) => void
+  /** Returns `false` when the edit was not sent (e.g. the user cancelled a confirm). */
+  onEdit?: (turnId: number, content: string) => boolean
   onRetryExpansion?: (expansionId: number) => void
   onDismissExpansion?: (expansionId: number) => void
 }
@@ -22,11 +24,43 @@ function Turn({
   onUnfold,
   onRetry,
   onRegenerate,
+  onEdit,
   onRetryExpansion,
   onDismissExpansion
 }: TurnProps): React.JSX.Element {
   const isUser = turn.role === 'user'
   const [copied, setCopied] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [editDraft, setEditDraft] = useState('')
+  const editRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    const el = editRef.current
+    if (!editing || !el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 240)}px`
+  }, [editing, editDraft])
+
+  const beginEdit = (): void => {
+    setEditDraft(turn.content)
+    setEditing(true)
+  }
+
+  const submitEdit = (): void => {
+    const trimmed = editDraft.trim()
+    if (trimmed === '' || loading || !onEdit) return
+    if (onEdit(turn.id, trimmed)) setEditing(false)
+  }
+
+  const handleEditKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      setEditing(false)
+    } else if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+      e.preventDefault()
+      submitEdit()
+    }
+  }
 
   const handleCopy = async (): Promise<void> => {
     try {
@@ -97,6 +131,31 @@ function Turn({
             </div>
             <span className="sr-only">Delta AI is responding</span>
           </div>
+        ) : editing ? (
+          <div className="message-content message-edit">
+            <textarea
+              ref={editRef}
+              className="message-edit-input"
+              value={editDraft}
+              autoFocus
+              aria-label="Edit message"
+              onChange={(e) => setEditDraft(e.target.value)}
+              onKeyDown={handleEditKeyDown}
+            />
+            <div className="message-edit-actions">
+              <button type="button" className="btn btn--sm" onClick={() => setEditing(false)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn--sm btn--primary"
+                onClick={submitEdit}
+                disabled={loading || editDraft.trim() === ''}
+              >
+                Send
+              </button>
+            </div>
+          </div>
         ) : (
           <div className={`message-content${turn.error ? ' error' : ''}`}>
             <Markdown
@@ -113,7 +172,7 @@ function Turn({
             )}
           </div>
         )}
-        {turn.content !== '' && (
+        {turn.content !== '' && !editing && (
           <div className="message-actions">
             <button
               type="button"
@@ -135,6 +194,28 @@ function Turn({
               </svg>
               {copied ? 'Copied' : 'Copy'}
             </button>
+            {isUser && onEdit && !loading && (
+              <button
+                type="button"
+                className="message-edit-button"
+                onClick={beginEdit}
+                title="Edit and resend"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M12 20h9" />
+                  <path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4z" />
+                </svg>
+                Edit
+              </button>
+            )}
             {!isUser && onRegenerate && !isStreamingPlaceholder && (
               <button
                 type="button"
