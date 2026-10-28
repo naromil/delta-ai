@@ -13,23 +13,27 @@
 - [ ] Unit tests for `main/context-budget.ts` and `services/atomic-file.ts` — fail-open budgeting and crash-safe writes are untested
 - [ ] Clear the Copy-label timer when a turn unmounts — `Turn.tsx` calls setState from a stray `setTimeout` after navigation
 
-## Proposed (needs the owner's OK — move to Routine to approve)
-
 - [ ] Open markdown links in the system browser — `Anchor` swallows every click today; needs the owner because it touches the navigation/`window-guards` security boundary
 - [ ] Syntax highlighting in code blocks — needs a new dependency (e.g. a highlighter) and must keep `data-src` offset anchors intact
 - [ ] Math (LaTeX) rendering — needs new dependencies (remark-math + a renderer) and changes the markdown → offset mapping
+- [ ] Light/dark theme setting — adds a field to the `settings.json` schema
+- Image attachments in chat (multimodal models) — new IPC payloads, provider capability checks
+
+## Proposed (needs the owner's OK — move to Routine to approve)
+
 - [ ] Conversation history sidebar in the chat view — a layout redesign of the chat screen
 - [ ] Per-message timestamps — requires adding a field to the stored `Turn` format
-- [ ] Light/dark theme setting — adds a field to the `settings.json` schema
-- [ ] Pin or star conversations — changes the `ConversationMeta` sidecar format
-- [ ] Export all conversations / import from a file — needs new IPC channels and a bulk file format
 
 ## Ideas for the owner to consider (never built automatically)
 
-- Image attachments in chat (multimodal models) — new IPC payloads, provider capability checks
 - Quiz / flashcard mode built from the KB profile and history, with spaced repetition
 - Per-conversation system prompt or persona
 - Voice input and read-aloud
 - Branching history: keep earlier answers when regenerating and let the user switch between them
 
 ## Rejected (Claude won't re-propose these)
+
+Conversations are treated as learning materials only and the history can be exported in better forms in the future:
+- [ ] Pin or star conversations — changes the `ConversationMeta` sidecar format
+- [ ] Export all conversations / import from a file — needs new IPC channels and a bulk file format
+
