@@ -152,6 +152,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | Search           | `components/conversation/ConversationSearch.tsx`         | Ctrl/Cmd+K modal: search titles + messages, snippet, load/delete, errors                                            |
 | Settings         | `views/settings/Settings.tsx`                            | 3-tab settings orchestrator                                                                                         |
 | Views            | `views/home/`, `views/knowledge/`, `views/lookup-guide/` | Dashboard and placeholder views                                                                                     |
+| Recent chats     | `lib/recent-conversations.ts`                            | Pure `pickRecentConversations` (Home view list, newest 5) + `formatRelativeTime` (shared with search)               |
 
 #### What to touch when
 

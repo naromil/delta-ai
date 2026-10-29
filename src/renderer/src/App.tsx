@@ -116,6 +116,11 @@ function App(): React.JSX.Element {
     }
   })
 
+  async function openConversation(id: string): Promise<void> {
+    await loadConversation(id)
+    setView('chat')
+  }
+
   return (
     <div className="app">
       <aside className="sidebar">
@@ -162,7 +167,16 @@ function App(): React.JSX.Element {
         </nav>
       </aside>
       <div className="app-main">
-        {view === 'home' && <HomeView onNavigate={setView} />}
+        {view === 'home' && (
+          <HomeView
+            onNavigate={setView}
+            onOpenConversation={(id) => {
+              openConversation(id).catch(() => {
+                // a failed load leaves the current chat untouched; stay on Home
+              })
+            }}
+          />
+        )}
         {view === 'chat' && (
           <Conversation
             state={state}

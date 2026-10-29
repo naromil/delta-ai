@@ -1,10 +1,13 @@
 import { useState, useEffect } from 'react'
+import type { ConversationMeta } from '../../../../shared/conversation'
 import type { CategorizedKeyword, KeywordCategory } from '../../../../shared/models'
+import { formatRelativeTime, pickRecentConversations } from '../../lib/recent-conversations'
 
 type HomeTarget = 'chat' | 'knowledge' | 'lookup-guide'
 
 interface HomeViewProps {
   onNavigate?: (view: HomeTarget) => void
+  onOpenConversation?: (id: string) => void
 }
 
 const CATEGORY_LABELS: Record<KeywordCategory, string> = {
@@ -66,9 +69,25 @@ function SearchIcon(): React.JSX.Element {
   )
 }
 
-function HomeView({ onNavigate }: HomeViewProps): React.JSX.Element {
+function HomeView({ onNavigate, onOpenConversation }: HomeViewProps): React.JSX.Element {
   const [keywords, setKeywords] = useState<CategorizedKeyword[]>([])
   const [hotkey, setHotkey] = useState<string | null>(null)
+  const [recent, setRecent] = useState<ConversationMeta[]>([])
+
+  useEffect(() => {
+    let cancelled = false
+    window.api
+      .listConversations()
+      .then((list) => {
+        if (!cancelled) setRecent(pickRecentConversations(list))
+      })
+      .catch(() => {
+        // the list is a shortcut; Ctrl+K search still reaches every chat
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -145,6 +164,24 @@ function HomeView({ onNavigate }: HomeViewProps): React.JSX.Element {
             </span>
           </button>
         </div>
+
+        {recent.length > 0 && onOpenConversation && (
+          <section className="home-recent">
+            <h2 className="home-section-title">Recent conversations</h2>
+            <ul className="home-recent-list">
+              {recent.map((meta) => (
+                <li key={meta.id}>
+                  <button className="home-recent-item" onClick={() => onOpenConversation(meta.id)}>
+                    <span className="home-recent-title">{meta.title || 'Untitled'}</span>
+                    <span className="home-recent-meta">
+                      {formatRelativeTime(meta.updatedAt)} · {meta.turnCount} turns
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
 
         {keywords.length === 0 ? (
           <div className="home-empty">

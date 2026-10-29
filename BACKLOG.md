@@ -2,7 +2,7 @@
 
 ## Routine (Claude may build these without asking)
 
-- [ ] Recent conversations on the Home view — past chats are reachable only through the Ctrl+K search modal; `conversation-list` already returns them sorted
+- [x] Recent conversations on the Home view — past chats are reachable only through the Ctrl+K search modal; `conversation-list` already returns them sorted
 - [ ] Delete the open conversation from the chat toolbar — the search modal refuses to delete the open chat, so there is no way to delete it at all
 - [ ] Edit and resend a user message — common in chat apps; reuses the `replaceAssistantTurn` truncate-and-resend path
 - [ ] Copy button on code blocks — copying a fenced block today means a manual selection that the context menu competes for
@@ -34,6 +34,6 @@
 ## Rejected (Claude won't re-propose these)
 
 Conversations are treated as learning materials only and the history can be exported in better forms in the future:
+
 - [ ] Pin or star conversations — changes the `ConversationMeta` sidecar format
 - [ ] Export all conversations / import from a file — needs new IPC channels and a bulk file format
-
