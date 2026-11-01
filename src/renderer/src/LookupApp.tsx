@@ -1,5 +1,6 @@
 import { useRef, useState, useEffect, useCallback } from 'react'
 import { useChatStreaming } from './hooks/useChatStreaming'
+import MemoryIndicator from './components/MemoryIndicator'
 import { useExpansionContextMenu } from './hooks/useExpansionContextMenu'
 import { useStickToBottom } from './hooks/useStickToBottom'
 import Turn from './components/conversation/Turn'
@@ -256,6 +257,7 @@ function LookupApp(): React.JSX.Element {
 
   return (
     <div className="lookup">
+      <MemoryIndicator />
       <div className="lookup-header">
         <span>Delta AI</span>
         <div className="lookup-header-actions">

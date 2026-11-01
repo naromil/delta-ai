@@ -16,7 +16,7 @@ import {
 import { handleHotkeyPressed } from './lookup/lookup'
 import { cancelOCR } from './lookup/capture'
 import { callProviderStream } from './provider'
-import type { ProviderMessage } from './provider'
+import type { AgentTools, ProviderMessage } from './provider'
 import { IMAGES_UNSUPPORTED_ERROR, fitImagesToSupport, modelImageSupport } from './image-support'
 import type { RoleId } from '../shared/models'
 import {
@@ -55,6 +55,7 @@ import { registerKbIpcHandlers } from './kb/handlers'
 import { startKbAutoMaintenance, stopKbAutoMaintenance } from './kb/maintenance'
 import { registerModelCatalogIpcHandlers } from './services/model-catalog'
 import { loadKbPrompt } from './kb/store'
+import { memoryAgentFor } from './memory/tools'
 
 interface ActiveStream {
   controller: AbortController
@@ -104,13 +105,20 @@ if (!hasSingleInstanceLock) {
       }
       const messages = withKbPrompt(fitted, loadKbPrompt())
       const finalMessages = role === 'chat' ? applyContextBudget(messages, role) : messages
-      void streamToSender(sender, requestId, finalMessages, role, {
-        chunk: (delta) => safeSend(sender, 'chat-chunk', { requestId, delta }),
-        done: (text) => safeSend(sender, 'chat-response', { requestId, text }),
-        cancelled: (text) =>
-          safeSend(sender, 'chat-response', { requestId, text, cancelled: true }),
-        failed: (error) => safeSend(sender, 'chat-error', { requestId, error })
-      })
+      void streamToSender(
+        sender,
+        requestId,
+        finalMessages,
+        role,
+        {
+          chunk: (delta) => safeSend(sender, 'chat-chunk', { requestId, delta }),
+          done: (text) => safeSend(sender, 'chat-response', { requestId, text }),
+          cancelled: (text) =>
+            safeSend(sender, 'chat-response', { requestId, text, cancelled: true }),
+          failed: (error) => safeSend(sender, 'chat-error', { requestId, error })
+        },
+        memoryAgentFor(role)
+      )
     })
 
     /* Whether the model behind a role reads images; the composer asks before attaching. */
@@ -335,7 +343,8 @@ async function streamToSender(
   requestId: string,
   messages: ProviderMessage[],
   role: RoleId,
-  events: StreamEvents
+  events: StreamEvents,
+  agent?: AgentTools
 ): Promise<void> {
   const controller = new AbortController()
   // A closed popup must stop the request instead of throwing on every send.
@@ -345,7 +354,7 @@ async function streamToSender(
   const batcher = createChunkBatcher(events.chunk)
   let fullResponse = ''
   try {
-    for await (const chunk of callProviderStream(messages, role, controller.signal)) {
+    for await (const chunk of callProviderStream(messages, role, controller.signal, agent)) {
       fullResponse += chunk
       batcher.push(chunk)
     }

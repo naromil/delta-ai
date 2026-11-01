@@ -2,7 +2,13 @@ import type { ConversationMeta, ConversationRecord } from '../../shared/conversa
 import type { KbRunResult } from '../../shared/kb'
 import { callProvider } from '../provider'
 import { loadConversation, markConversationKbFed } from '../conversations'
-import { buildKbAnalysisMessages, buildKbKeywordMessages, buildSingleMaterial } from './analysis'
+import { memoryAgentFor } from '../memory/tools'
+import {
+  buildKbAnalysisMessages,
+  buildKbKeywordMessages,
+  buildKbMemoryMessages,
+  buildSingleMaterial
+} from './analysis'
 import { mergeKeywords, parseKeywords, trimByCategory } from './keywords'
 import { loadKbKeywords, loadKbPrompt, saveKbKeywords, saveKbPrompt } from './store'
 
@@ -22,9 +28,16 @@ function hasLearningMaterial(record: ConversationRecord): boolean {
   return record.state.turns.some((turn) => turn.content.trim() !== '' || turn.expansions.length > 0)
 }
 
+/** The model's reply is only a status line; what matters is what its tools wrote. */
+async function updateMemories(material: string, signal?: AbortSignal): Promise<void> {
+  const agent = memoryAgentFor('kb-maintenance')
+  if (!agent) return
+  await callProvider(buildKbMemoryMessages(material), 'kb-maintenance', signal, agent)
+}
+
 /**
- * Folds conversation material into the learned prompt one conversation at a
- * time, persisting after each step so an interrupted run keeps its progress.
+ * Folds conversation material into the document base and the learned prompt one
+ * conversation at a time, persisting after each step so an interrupted run keeps its progress.
  *
  * Conversations that carry no learning signal — standalone look-ups and empty
  * records — are marked fed and skipped rather than being retried forever.
@@ -49,7 +62,11 @@ export async function runKbAnalysis(
       continue
     }
 
-    const messages = buildKbAnalysisMessages(currentPrompt, buildSingleMaterial(record))
+    // Curating first means a failure here leaves the conversation unfed with the
+    // prompt untouched, so the retry cannot fold it into the prompt twice.
+    const material = buildSingleMaterial(record)
+    await updateMemories(material, options.signal)
+    const messages = buildKbAnalysisMessages(currentPrompt, material)
     currentPrompt = await callProvider(messages, 'kb-maintenance', options.signal)
     saveKbPrompt(currentPrompt)
     if (options.markFed) await markConversationKbFed(meta.id)

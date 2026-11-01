@@ -368,3 +368,23 @@ button,
     scroll-behavior: auto !important;
   }
 }
+
+/* ---- Memory updated indicator ---- */
+.memory-indicator-region {
+  position: fixed;
+  /* Below the chat toolbar and the lookup header, whose right side holds the title and buttons. */
+  top: 60px;
+  right: 16px;
+  z-index: 1000;
+  pointer-events: none;
+}
+
+.memory-indicator {
+  padding: 4px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 12px;
+  animation: fadeIn 0.2s ease;
+}

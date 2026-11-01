@@ -1,4 +1,8 @@
-import { KB_ANALYSIS_SYSTEM_PROMPT, KB_KEYWORD_SYSTEM_PROMPT } from '../../shared/prompts'
+import {
+  KB_ANALYSIS_SYSTEM_PROMPT,
+  KB_KEYWORD_SYSTEM_PROMPT,
+  KB_MEMORY_SYSTEM_PROMPT
+} from '../../shared/prompts'
 import type { ConversationRecord } from '../../shared/conversation'
 import type { ExpansionNode } from '../../shared/rich-text'
 import type { CategorizedKeyword } from '../../shared/models'
@@ -110,6 +114,16 @@ export function buildKbAnalysisMessages(
             '',
             materialsText
           ].join('\n')
+    }
+  ]
+}
+
+export function buildKbMemoryMessages(materialsText: string): ProviderMessage[] {
+  return [
+    { role: 'system', content: KB_MEMORY_SYSTEM_PROMPT },
+    {
+      role: 'user',
+      content: `Update the document base from this conversation:\n\n${materialsText}`
     }
   ]
 }

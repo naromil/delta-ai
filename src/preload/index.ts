@@ -185,6 +185,11 @@ const api = {
     const handler = (_e: Electron.IpcRendererEvent, status: KbMaintenanceStatus): void => cb(status)
     ipcRenderer.on('kb-status', handler)
     return () => ipcRenderer.removeListener('kb-status', handler)
+  },
+  onMemoryUpdated: (cb: () => void) => {
+    const handler = (): void => cb()
+    ipcRenderer.on('memory-updated', handler)
+    return () => ipcRenderer.removeListener('memory-updated', handler)
   }
 }
 

@@ -6,6 +6,7 @@ import HomeView from './views/home/HomeView'
 import KnowledgeView from './views/knowledge/KnowledgeView'
 import LookupGuideView from './views/lookup-guide/LookupGuideView'
 import { useChatStreaming } from './hooks/useChatStreaming'
+import MemoryIndicator from './components/MemoryIndicator'
 import type { ImageAttachment } from '../../shared/attachments'
 
 type View = 'home' | 'chat' | 'knowledge' | 'lookup-guide' | 'settings'
@@ -242,6 +243,7 @@ function App(): React.JSX.Element {
           currentConversationId={conversationId}
         />
       )}
+      <MemoryIndicator />
     </div>
   )
 }

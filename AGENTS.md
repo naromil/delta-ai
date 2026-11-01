@@ -86,6 +86,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | `kb-reset`                                | Renderer → Main | Delete prompt + keywords + run state; clears `kbFed`; auto rebuilds when enabled                |
 | `kb-analyze` / `kb-reanalyze`             | Renderer → Main | Manual maintenance over unfed conversations / the last N                                        |
 | `kb-get-status` / `kb-status`             | Renderer ↔ Main | Automatic learning status: invoke a snapshot; main pushes every change                          |
+| `memory-updated`                          | Main → Renderer | The document base changed (any writer); every window shows a transient indicator                |
 
 #### Module map
 
@@ -109,6 +110,8 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | Conversation store  | `conversations.ts`            | CRUD on `{userData}/conversations/{id}.json` + `{id}.meta.json` sidecars; per-id write chain (`saveConversation`, `mutateConversation`); title+content search, KB-fed mark/reset |
 | Image support       | `image-support.ts`            | `modelImageSupport(role)` (catalog modalities, fail-open) + `fitImagesToSupport` (refuse current, drop history images)                                                           |
 | Conversation export | `conversation-export.ts`      | `renderConversationMarkdown` (expansions quoted inline) + `exportConversationToFile` (save dialog, atomic write)                                                                 |
+| Memory store        | `memory/store.ts`             | Shell-like ops confined to `{userData}/memories/` (`listMemories`, `readMemory`, `readMemoryIndex`, `grepMemories`, `writeMemory`, `editMemory`, `moveMemory`, `removeMemory`)   |
+| Memory tools        | `memory/tools.ts`             | `memory_*` AI SDK tools + `memoryAgentFor(role)` (assistant vs curator prompt, catalog gate, fail-open) + `memory-updated` broadcast                                             |
 | Context budget      | `context-budget.ts`           | `applyContextBudget(messages, role)`: trims chat sends to the cached model's window; fail-open on any missing input                                                              |
 | Streaming helpers   | `streaming.ts`                | IPC payload validation, `withKbPrompt`, `createChunkBatcher` (32 ms token deltas)                                                                                                |
 | Window guards       | `window-guards.ts`            | `guardWindowNavigation`: deny window.open / navigation, hand http(s) links to the browser                                                                                        |
@@ -156,6 +159,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | ExpandPrompt     | `components/conversation/ExpandPrompt.tsx`                 | Floating inline input for custom expand direction ("Expand on…")                                                     |
 | Search           | `components/conversation/ConversationSearch.tsx`           | Ctrl/Cmd+K modal: search titles + messages, snippet, load/delete, errors                                             |
 | Settings         | `views/settings/Settings.tsx`                              | 3-tab settings orchestrator                                                                                          |
+| Memory indicator | `components/MemoryIndicator.tsx`                           | Transient "Memory updated" pill in both windows, driven by `memory-updated`                                          |
 | Views            | `views/home/`, `views/knowledge/`, `views/lookup-guide/`   | Dashboard (recent conversations + learned tags) and placeholder views                                                |
 
 #### What to touch when
@@ -197,6 +201,9 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | App-wide shortcuts / search modal      | `App.tsx` (Ctrl/Cmd+N, Ctrl/Cmd+K, `ConversationSearch` mount)                                         |
 | Change chat auto-scroll                | `hooks/useStickToBottom.ts`                                                                            |
 | Renderer chat UI                       | `App.tsx`, `Conversation.tsx`, `Turn.tsx`, `ConversationSearch.tsx`                                    |
+| Agent memory tools / document base     | `memory/store.ts` (ops + confinement), `memory/tools.ts` (tool set), `shared/prompts.ts` (rules)       |
+| What the curator saves                 | `shared/prompts.ts` (`KB_MEMORY_SYSTEM_PROMPT`), `kb/run.ts` (`updateMemories`)                        |
+| Memory updated indicator               | `components/MemoryIndicator.tsx`, `memory/tools.ts` (`broadcastMemoryUpdated`)                         |
 | Provider config form                   | `components/settings/models/ModelsTab.tsx` (+ `RoleRow.tsx`, `ConnectionCard.tsx`)                     |
 | Model picker / catalog                 | `shared/model-catalog.ts` (pure), `services/model-catalog.ts` (fetch+cache)                            |
 | Change the model-config schema         | `models/config-schema.ts` — add a vN→vN+1 step, bump `MODEL_CONFIG_VERSION`                            |
@@ -307,6 +314,27 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   settled request out of its request book, so late chunks for it are no-ops.
 - **Both roles get the KB prompt.** `chat-send` appends the learned profile (`withKbPrompt`) to
   the system message for chat and lookup alike; `kb-maintenance` calls are untouched.
+- **A document base about the user lives in `{userData}/memories/`** (`~/.config/delta-ai/memories/` on Linux). It is a nested tree of
+  markdown files managed through the `memory_*` function tools (ls, cat, grep, write, edit, mkdir, mv,
+  rm). These are not a real shell and must not become one: the model can receive untrusted screen
+  text, so `memory/store.ts` implements each command in JS, confines every path to the root, refuses
+  `..`, absolute paths and symlinks, and only touches `.md` files.
+  - **Writers.** The background curator is the primary writer: `runKbAnalysis` runs one tool pass per
+    conversation through the `kb-maintenance` role (`KB_MEMORY_SYSTEM_PROMPT`, deliberately
+    aggressive) _before_ folding `prompt.txt`, so a failed pass leaves the conversation unfed without
+    double-folding the prompt. Chat and lookup hold the same tools, but their prompt limits writes to
+    explicit requests. Expand gets no tools.
+  - **`index.md`.** The root `index.md` is injected into every memory prompt (capped at 8k chars), so
+    it is always read without a tool call; the rest of the tree is listed by path and read on demand.
+    The prompts ask for directory indexes and collection files.
+  - **Transport.** Tools and instructions reach `callProviderStream` as one `AgentTools` value on the
+    same OpenAI-compatible route for every provider, so they are not provider tools. The loop stops
+    at `maxSteps` (10, curator 25), and the last step must answer in text. A model the catalog marks
+    as tool-less gets no tools; for an unknown model, a 400/404/422 before any output retries once
+    without tools or their instructions, in which case the curator writes nothing.
+  - **Indicator.** A successful mutation broadcasts `memory-updated` to every window, and
+    `MemoryIndicator` shows a transient pill. It is not on a turn because curator writes happen with
+    no reply on screen. `kb-reset` does not delete the document base.
 - **Chat sends are context-budgeted; lookup sends are not.** After the KB prompt is inserted,
   `applyContextBudget(messages, 'chat')` drops the oldest non-system messages until the estimate
   fits 85% of the model's context window minus its output reserve. It is fail-open: an unassigned
@@ -376,7 +404,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   idle → `Exporting…` → `Saved` (2s) or an inline error; the `'Canceled.'` error is a no-op.
 - **KB maintenance is automatic.** `kb/maintenance.ts` subscribes to `onConversationSaved`
   (`conversations.ts`) and `onAppConfigChanged` (`config.ts`). A save starts a 20s-debounced
-  pass that folds at most 4 newest unfed chat conversations into `prompt.txt` through the
+  pass that folds at most 4 newest unfed chat conversations into the document base and `prompt.txt` through the
   `kb-maintenance` role; a backlog continues every 45s, failures back off 2m → 30m, and
   `kb/state.json` persists pacing/error state. All runs (manual or automatic) share one queue,
   so writes never interleave. Nothing runs without a `kb-maintenance` model, and

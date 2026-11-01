@@ -1,9 +1,10 @@
-import { APICallError, JSONParseError, TypeValidationError, streamText } from 'ai'
-import type { LanguageModel, ModelMessage } from 'ai'
+import { APICallError, JSONParseError, TypeValidationError, isStepCount, streamText } from 'ai'
+import type { LanguageModel, ModelMessage, ToolSet } from 'ai'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import { resolveRole, RoleUnassignedError } from './config'
 import type { Connection } from './models/registries'
 import type { ProviderMessage, ProviderType, RoleId } from './models/registries'
+import { withKbPrompt } from './streaming'
 export type { ProviderMessage }
 export { RoleUnassignedError }
 
@@ -13,6 +14,18 @@ const CANCEL_MESSAGE = 'Generation stopped.'
 
 export class NoApiKeyError extends Error {}
 export class UnsupportedProviderError extends Error {}
+/** The endpoint refused the request itself, which is how a model without tool support fails. */
+class RequestRejectedError extends Error {}
+
+/** Application tools for one request; `instructions` joins the system prompt only alongside them. */
+export interface AgentTools {
+  tools: ToolSet
+  instructions: string
+  /** Tool steps plus the closing answer; the last step is forced to answer in text. */
+  maxSteps: number
+}
+
+const REJECTED_REQUEST_STATUSES = new Set([400, 404, 422])
 
 /* ---- Routes ---- */
 
@@ -109,9 +122,12 @@ function translateError(error: unknown): Error {
     const body = (error.responseBody ?? '').trim()
     const detail =
       body.length > API_ERROR_BODY_LIMIT ? `${body.slice(0, API_ERROR_BODY_LIMIT)}…` : body
-    return new Error(
-      detail ? `API error ${error.statusCode}: ${detail}` : `API error ${error.statusCode}`
-    )
+    const message = detail
+      ? `API error ${error.statusCode}: ${detail}`
+      : `API error ${error.statusCode}`
+    return REJECTED_REQUEST_STATUSES.has(error.statusCode)
+      ? new RequestRejectedError(message)
+      : new Error(message)
   }
   if (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')) {
     return new Error(TIMEOUT_MESSAGE)
@@ -122,7 +138,8 @@ function translateError(error: unknown): Error {
 async function* streamModel(
   model: LanguageModel,
   messages: ProviderMessage[],
-  externalSignal?: AbortSignal
+  externalSignal?: AbortSignal,
+  agent?: AgentTools
 ): AsyncGenerator<string> {
   const prompt = splitPrompt(messages)
   const controller = new AbortController()
@@ -152,13 +169,27 @@ async function* streamModel(
       instructions: prompt.instructions,
       messages: prompt.messages,
       maxRetries: 0,
-      abortSignal: controller.signal
+      abortSignal: controller.signal,
+      ...(agent && {
+        tools: agent.tools,
+        stopWhen: isStepCount(agent.maxSteps),
+        prepareStep: ({ stepNumber }: { stepNumber: number }) =>
+          stepNumber === agent.maxSteps - 1 ? { toolChoice: 'none' as const } : {}
+      })
     })
 
+    // Text from separate tool steps must not run together in one answer.
+    let hasText = false
+    let stepEnded = false
     for await (const part of result.fullStream) {
       armTimeout()
       if (part.type === 'text-delta') {
+        if (hasText && stepEnded) yield '\n\n'
+        hasText = true
+        stepEnded = false
         yield part.text
+      } else if (part.type === 'finish-step') {
+        stepEnded = true
       } else if (part.type === 'error') {
         if (!JSONParseError.isInstance(part.error) && !TypeValidationError.isInstance(part.error)) {
           throw part.error
@@ -177,12 +208,37 @@ async function* streamModel(
   }
 }
 
+/**
+ * Tool support can only be discovered by asking for custom endpoints and Ollama, so a
+ * rejected tool request falls back to a plain answer rather than failing the message.
+ */
+async function* streamModelWithTools(
+  model: LanguageModel,
+  messages: ProviderMessage[],
+  agent: AgentTools,
+  signal?: AbortSignal
+): AsyncGenerator<string> {
+  let emitted = false
+  try {
+    const instructed = withKbPrompt(messages, agent.instructions)
+    for await (const chunk of streamModel(model, instructed, signal, agent)) {
+      emitted = true
+      yield chunk
+    }
+  } catch (error) {
+    if (emitted || !(error instanceof RequestRejectedError)) throw error
+    console.warn('Retrying without tools after the endpoint rejected the request:', error.message)
+    yield* streamModel(model, messages, signal)
+  }
+}
+
 /* ---- Public dispatch ---- */
 
 export async function* callProviderStream(
   messages: ProviderMessage[],
   roleId: RoleId,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  agent?: AgentTools
 ): AsyncGenerator<string> {
   const resolved = resolveRole(roleId)
   if (!resolved) {
@@ -205,7 +261,11 @@ export async function* callProviderStream(
     apiKey: connection.apiKey || undefined
   })
 
-  yield* streamModel(provider(model), messages, signal)
+  if (agent) {
+    yield* streamModelWithTools(provider(model), messages, agent, signal)
+  } else {
+    yield* streamModel(provider(model), messages, signal)
+  }
 }
 
 /* ---- Non-streaming: drain the single streaming dispatch ---- */
@@ -213,10 +273,11 @@ export async function* callProviderStream(
 export async function callProvider(
   messages: ProviderMessage[],
   roleId: RoleId,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  agent?: AgentTools
 ): Promise<string> {
   let response = ''
-  for await (const chunk of callProviderStream(messages, roleId, signal)) {
+  for await (const chunk of callProviderStream(messages, roleId, signal, agent)) {
     response += chunk
   }
   return response || '(No response received)'

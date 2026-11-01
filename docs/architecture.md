@@ -316,6 +316,10 @@ injected: web-search grounding is not available, because the AI SDK only exposes
 provider-specific tools (`google.tools.googleSearch`, `openai.tools.webSearch`), which is exactly
 the special-casing this transport avoids.
 
+Application tools are a different thing: `memory/tools.ts` defines the `memory_*` function tools for
+the `{userData}/memories/` document base, and they are sent identically on every route. See
+`AGENTS.md` for their confinement and fallback rules.
+
 ---
 
 ## 5. Platform specifics

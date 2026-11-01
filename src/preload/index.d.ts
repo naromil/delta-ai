@@ -122,6 +122,7 @@ declare global {
       }>
       kbGetStatus: () => Promise<KbMaintenanceStatus>
       kbOnStatus: (cb: (status: KbMaintenanceStatus) => void) => () => void
+      onMemoryUpdated: (cb: () => void) => () => void
     }
   }
 }

@@ -2,17 +2,24 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ConversationRecord } from '../../src/shared/conversation'
 import type { CategorizedKeyword } from '../../src/shared/models'
 
-const { callProvider, loadConversation, markConversationKbFed, saveKbPrompt, store } = vi.hoisted(
-  () => ({
-    callProvider: vi.fn(),
-    loadConversation: vi.fn(),
-    markConversationKbFed: vi.fn(),
-    saveKbPrompt: vi.fn(),
-    store: { prompt: '', keywords: [] as CategorizedKeyword[] }
-  })
-)
+const {
+  callProvider,
+  loadConversation,
+  markConversationKbFed,
+  memoryAgentFor,
+  saveKbPrompt,
+  store
+} = vi.hoisted(() => ({
+  memoryAgentFor: vi.fn(),
+  callProvider: vi.fn(),
+  loadConversation: vi.fn(),
+  markConversationKbFed: vi.fn(),
+  saveKbPrompt: vi.fn(),
+  store: { prompt: '', keywords: [] as CategorizedKeyword[] }
+}))
 
 vi.mock('../../src/main/provider', () => ({ callProvider }))
+vi.mock('../../src/main/memory/tools', () => ({ memoryAgentFor }))
 vi.mock('../../src/main/conversations', () => ({ loadConversation, markConversationKbFed }))
 vi.mock('../../src/main/kb/store', () => ({
   loadKbPrompt: (): string => store.prompt,
@@ -53,6 +60,7 @@ function record(id: string, overrides: Partial<ConversationRecord> = {}): Conver
 describe('runKbAnalysis', () => {
   beforeEach(() => {
     callProvider.mockReset()
+    memoryAgentFor.mockReset()
     loadConversation.mockReset()
     markConversationKbFed.mockReset()
     saveKbPrompt.mockReset()
@@ -172,5 +180,64 @@ describe('runKbAnalysis', () => {
     expect(result.conversationsAnalyzed).toBe(0)
     expect(loadConversation).not.toHaveBeenCalled()
     expect(callProvider).not.toHaveBeenCalled()
+  })
+
+  describe('document base', () => {
+    const agent = { tools: {}, instructions: 'memory rules', maxSteps: 25 }
+
+    function systemPrompt(call: unknown[]): string {
+      return (call[0] as Array<{ role: string; content: string }>)[0].content
+    }
+
+    it('curates memories with tools before folding the prompt', async () => {
+      memoryAgentFor.mockReturnValue(agent)
+      loadConversation.mockImplementation(async (id: string) => record(id))
+      callProvider
+        .mockResolvedValueOnce('wrote profile.md')
+        .mockResolvedValueOnce('PROMPT')
+        .mockResolvedValueOnce('chemistry [topic]')
+
+      await runKbAnalysis([{ id: 'chat_a' }], { markFed: true })
+
+      expect(memoryAgentFor).toHaveBeenCalledWith('kb-maintenance')
+      const [curate, fold, keywords] = callProvider.mock.calls
+      expect(curate[3]).toBe(agent)
+      expect(systemPrompt(curate)).toMatch(/primary writer/)
+      expect(JSON.stringify(curate[0])).toContain('What is a finite state machine?')
+      expect(fold[3]).toBeUndefined()
+      expect(keywords[3]).toBeUndefined()
+      expect(store.prompt).toBe('PROMPT')
+    })
+
+    it('leaves the conversation unfed and the prompt alone when curating fails', async () => {
+      memoryAgentFor.mockReturnValue(agent)
+      loadConversation.mockImplementation(async (id: string) => record(id))
+      callProvider.mockRejectedValueOnce(new Error('API error 500'))
+
+      await expect(runKbAnalysis([{ id: 'chat_a' }], { markFed: true })).rejects.toThrow('500')
+
+      expect(saveKbPrompt).not.toHaveBeenCalled()
+      expect(markConversationKbFed).not.toHaveBeenCalled()
+    })
+
+    it('still folds the prompt when the model cannot use tools', async () => {
+      memoryAgentFor.mockReturnValue(undefined)
+      loadConversation.mockImplementation(async (id: string) => record(id))
+      callProvider.mockResolvedValueOnce('PROMPT').mockResolvedValueOnce('chemistry [topic]')
+
+      const result = await runKbAnalysis([{ id: 'chat_a' }], { markFed: true })
+
+      expect(result.conversationsAnalyzed).toBe(1)
+      expect(callProvider).toHaveBeenCalledTimes(2)
+    })
+
+    it('spends no curation call on a look-up or an empty record', async () => {
+      memoryAgentFor.mockReturnValue(agent)
+      loadConversation.mockImplementation(async (id: string) => record(id, { source: 'lookup' }))
+
+      await runKbAnalysis([{ id: 'lookup_a' }], { markFed: true })
+
+      expect(callProvider).not.toHaveBeenCalled()
+    })
   })
 })
