@@ -134,43 +134,43 @@
   :root {
     color-scheme: light;
 
-    --bg: #f7f7f9;
-    --surface-1: #eeeef2;
-    --surface-2: #e6e6ec;
-    --surface-3: #dbdbe4;
+    --bg: #e8e9ef;
+    --surface-1: #e1e2e9;
+    --surface-2: #d9dae3;
+    --surface-3: #cfd0dd;
 
-    --border: rgba(24, 26, 40, 0.1);
-    --border-strong: rgba(24, 26, 40, 0.18);
+    --border: rgba(38, 39, 52, 0.1);
+    --border-strong: rgba(38, 39, 52, 0.18);
 
-    --text-1: rgba(22, 23, 32, 0.92);
-    --text-2: rgba(22, 23, 32, 0.72);
-    --text-3: rgba(22, 23, 32, 0.62);
+    --text-1: rgba(30, 31, 42, 0.94);
+    --text-2: rgba(38, 39, 52, 0.78);
+    --text-3: rgba(38, 39, 52, 0.72);
 
-    --accent: #47627d;
-    --accent-strong: #3b5369;
-    --accent-soft: rgba(71, 98, 125, 0.14);
-    --accent-ring: rgba(71, 98, 125, 0.28);
+    --accent: #465f77;
+    --accent-strong: #3b5167;
+    --accent-soft: rgba(77, 102, 128, 0.15);
+    --accent-ring: rgba(77, 102, 128, 0.28);
     --accent-contrast: #ffffff;
 
-    --success: #2f6b3e;
-    --error: #a8432f;
-    --danger-soft: rgba(168, 67, 47, 0.1);
+    --success: #2f6640;
+    --error: #99412f;
+    --danger-soft: rgba(153, 65, 47, 0.1);
 
-    --tag-blue: #1f5fa8;
-    --tag-green: #1f6e3a;
-    --tag-purple: #6d3cab;
+    --tag-blue: #25558f;
+    --tag-green: #256339;
+    --tag-purple: #633a9a;
 
-    --code-comment: rgba(22, 23, 32, 0.64);
-    --code-keyword: #6f3fb0;
-    --code-string: #2a6b34;
-    --code-number: #99510f;
-    --code-title: #1f5aa0;
-    --code-attr: #a33b3b;
-    --code-meta: #14686e;
+    --code-comment: rgba(38, 39, 52, 0.7);
+    --code-keyword: #633a9a;
+    --code-string: #2a6030;
+    --code-number: #87480f;
+    --code-title: #25558f;
+    --code-attr: #8f3535;
+    --code-meta: #165f64;
 
-    --shadow-1: 0 1px 2px rgba(20, 22, 35, 0.08);
-    --shadow-2: 0 6px 22px rgba(20, 22, 35, 0.1);
-    --shadow-3: 0 18px 48px rgba(20, 22, 35, 0.18);
+    --shadow-1: 0 1px 2px rgba(30, 32, 50, 0.07);
+    --shadow-2: 0 6px 22px rgba(30, 32, 50, 0.09);
+    --shadow-3: 0 18px 48px rgba(30, 32, 50, 0.16);
   }
 }
 

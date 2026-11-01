@@ -7,7 +7,7 @@
 - [x] Open markdown links in the system browser — `Anchor` swallows every click today; needs the owner because it touches the navigation/`window-guards` security boundary
 - [x] Syntax highlighting in code blocks — needs a new dependency (e.g. a highlighter) and must keep `data-src` offset anchors intact
 - [x] Math (LaTeX) rendering — needs new dependencies (remark-math + a renderer) and changes the markdown → offset mapping
-- [ ] Light/dark theme setting — adds a field to the `settings.json` schema (light theme try to replicate the soothe feel of the dark one)
+- [x] Light/dark theme setting — adds a field to the `settings.json` schema (light theme try to replicate the soothe feel of the dark one)
 - [x] Image attachments in chat (multimodal models) — new IPC payloads, provider capability checks
 - [ ] Have AI-based conversation title generation at first message.
 
