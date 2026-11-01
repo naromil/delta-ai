@@ -9,6 +9,13 @@ export function estimateTokens(text: string): number {
   return Math.max(1, Math.ceil(text.length / 4))
 }
 
+/** Flat allowance per image: providers bill by pixels, which the budget cannot see. */
+export const IMAGE_TOKEN_ESTIMATE = 1500
+
+export function estimateMessageTokens(message: ProviderMessage): number {
+  return estimateTokens(message.content) + (message.images?.length ?? 0) * IMAGE_TOKEN_ESTIMATE
+}
+
 /**
  * Input budget for a context window, leaving room for the reply. `null` means
  * the caller has no usable window, so no trimming should happen.
@@ -35,7 +42,7 @@ export function trimMessages(
 ): { messages: ProviderMessage[]; dropped: number } {
   const kept = [...messages]
   let dropped = 0
-  while (kept.reduce((total, message) => total + estimateTokens(message.content), 0) > budget) {
+  while (kept.reduce((total, message) => total + estimateMessageTokens(message), 0) > budget) {
     const index = kept.findIndex((message, i) => i !== kept.length - 1 && message.role !== 'system')
     if (index === -1) break
     kept.splice(index, 1)

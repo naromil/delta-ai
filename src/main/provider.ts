@@ -74,6 +74,19 @@ function baseUrlFor(connection: Connection, route: ProviderRoute): string {
 
 /* ---- AI SDK transport ---- */
 
+/** The SDK's OpenAI-compatible route turns `file` parts into `image_url` data URLs. */
+function toModelMessage(message: ProviderMessage): ModelMessage {
+  const { role, content, images } = message
+  if (!images?.length) return { role, content } as ModelMessage
+  return {
+    role: 'user',
+    content: [
+      ...(content === '' ? [] : [{ type: 'text' as const, text: content }]),
+      ...images.map(({ mediaType, data }) => ({ type: 'file' as const, data, mediaType }))
+    ]
+  }
+}
+
 function splitPrompt(messages: ProviderMessage[]): {
   instructions: Array<{ role: 'system'; content: string }> | undefined
   messages: ModelMessage[]
@@ -84,7 +97,7 @@ function splitPrompt(messages: ProviderMessage[]): {
       systemMessages.length > 0
         ? systemMessages.map((message) => ({ role: 'system' as const, content: message.content }))
         : undefined,
-    messages: messages.filter((message) => message.role !== 'system') as ModelMessage[]
+    messages: messages.filter((message) => message.role !== 'system').map(toModelMessage)
   }
 }
 

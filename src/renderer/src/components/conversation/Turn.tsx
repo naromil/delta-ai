@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import type { Turn as TurnType } from '../../../../shared/conversation'
 import type { ExpansionNode } from '../../../../shared/rich-text'
+import { attachmentSrc } from '../../lib/image-attachments'
 import Markdown from './Markdown'
 import ExpansionFrame from './ExpansionFrame'
 
@@ -29,10 +30,18 @@ function Turn({
   onDismissExpansion
 }: TurnProps): React.JSX.Element {
   const isUser = turn.role === 'user'
+  const hasAttachments = (turn.attachments?.length ?? 0) > 0
   const [copied, setCopied] = useState(false)
   const [editing, setEditing] = useState(false)
   const [editDraft, setEditDraft] = useState('')
   const editRef = useRef<HTMLTextAreaElement>(null)
+  const copiedTimerRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current)
+    }
+  }, [])
 
   useEffect(() => {
     const el = editRef.current
@@ -48,7 +57,7 @@ function Turn({
 
   const submitEdit = (): void => {
     const trimmed = editDraft.trim()
-    if (trimmed === '' || loading || !onEdit) return
+    if ((trimmed === '' && !hasAttachments) || loading || !onEdit) return
     if (onEdit(turn.id, trimmed)) setEditing(false)
   }
 
@@ -66,7 +75,11 @@ function Turn({
     try {
       await navigator.clipboard.writeText(turn.content)
       setCopied(true)
-      window.setTimeout(() => setCopied(false), 1500)
+      if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current)
+      copiedTimerRef.current = window.setTimeout(() => {
+        copiedTimerRef.current = null
+        setCopied(false)
+      }, 1500)
     } catch {
       /* clipboard unavailable — leave the label unchanged */
     }
@@ -122,6 +135,19 @@ function Turn({
         )}
       </div>
       <div className="message-body">
+        {hasAttachments && (
+          <div className="message-attachments">
+            {turn.attachments?.map((attachment, index) => (
+              <img
+                key={index}
+                className="message-attachment"
+                src={attachmentSrc(attachment)}
+                alt={attachment.name}
+                title={attachment.name}
+              />
+            ))}
+          </div>
+        )}
         {isStreamingPlaceholder ? (
           <div className="message-content">
             <div className="loading-dots" aria-hidden="true">
@@ -150,13 +176,13 @@ function Turn({
                 type="button"
                 className="btn btn--sm btn--primary"
                 onClick={submitEdit}
-                disabled={loading || editDraft.trim() === ''}
+                disabled={loading || (editDraft.trim() === '' && !hasAttachments)}
               >
                 Send
               </button>
             </div>
           </div>
-        ) : (
+        ) : turn.content === '' && hasAttachments ? null : (
           <div className={`message-content${turn.error ? ' error' : ''}`}>
             <Markdown
               source={turn.content}
@@ -172,28 +198,30 @@ function Turn({
             )}
           </div>
         )}
-        {turn.content !== '' && !editing && (
+        {(turn.content !== '' || hasAttachments) && !editing && (
           <div className="message-actions">
-            <button
-              type="button"
-              className="message-copy"
-              onClick={() => void handleCopy()}
-              title="Copy message"
-            >
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
+            {turn.content !== '' && (
+              <button
+                type="button"
+                className="message-copy"
+                onClick={() => void handleCopy()}
+                title="Copy message"
               >
-                <rect x="9" y="9" width="12" height="12" rx="2" />
-                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
-              </svg>
-              {copied ? 'Copied' : 'Copy'}
-            </button>
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <rect x="9" y="9" width="12" height="12" rx="2" />
+                  <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                </svg>
+                {copied ? 'Copied' : 'Copy'}
+              </button>
+            )}
             {isUser && onEdit && !loading && (
               <button
                 type="button"

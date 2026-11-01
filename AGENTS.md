@@ -59,6 +59,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | `chat-response`                           | Main → Renderer | Final response for a chat-send (`cancelled: true` + partial text after stop)                    |
 | `chat-error`                              | Main → Renderer | Error for a chat-send                                                                           |
 | `chat-cancel`                             | Renderer → Main | Abort an in-flight `chat-send`/`chat-expand` by `requestId`                                     |
+| `chat-image-support`                      | Renderer → Main | Whether a role's model reads images (`yes` / `no` / `unknown`); the composer asks on attach     |
 | `chat-expand`                             | Renderer → Main | Request an inline word-expansion stream                                                         |
 | `chat-expand-chunk`                       | Main → Renderer | Expand chunks (`done`; `cancelled: true` + partial text after stop)                             |
 | `chat-replace-conversation`               | Main → Renderer | Hydrate transferred state + id/title/createdAt into the chat window                             |
@@ -97,6 +98,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | `context-budget.ts` | Pure token budgeting: `estimateTokens` (4 chars/token), `budgetFor` (85% of the window minus the output reserve), `trimMessages` (drops oldest non-system messages, never the last)                                           |
 | `rich-text.ts`      | Pure rich-text model: `ExpansionNode`, `validateInsertion` / `insertExpansion(InTurns)` / `updateExpansion` / `setExpansionFolded` / `findExpansionIn*` / `maxExpansionId`, `flattenMarkdown`, legacy `migrateLegacySegments` |
 | `expand-prompt.ts`  | `buildExpandMessages({answer, selection, prompt?})` — constructs API messages for expand requests                                                                                                                             |
+| `attachments.ts`    | `ImageAttachment`, per-message/size limits, `isImageInput` / `isImageAttachment` validation, `scaledImageSize`                                                                                                                |
 | `prompts.ts`        | All LLM-facing prompt/instruction strings: system prompts, context template, lookup default, expand instructions                                                                                                              |
 
 ##### Main process (`src/main/`)
@@ -105,6 +107,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | ------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | App lifecycle       | `index.ts`                    | Main window, tray, streaming IPC (chat-send/expand/cancel), lookup transfer, conversation IPC                                                                                    |
 | Conversation store  | `conversations.ts`            | CRUD on `{userData}/conversations/{id}.json` + `{id}.meta.json` sidecars; per-id write chain (`saveConversation`, `mutateConversation`); title+content search, KB-fed mark/reset |
+| Image support       | `image-support.ts`            | `modelImageSupport(role)` (catalog modalities, fail-open) + `fitImagesToSupport` (refuse current, drop history images)                                                           |
 | Conversation export | `conversation-export.ts`      | `renderConversationMarkdown` (expansions quoted inline) + `exportConversationToFile` (save dialog, atomic write)                                                                 |
 | Context budget      | `context-budget.ts`           | `applyContextBudget(messages, role)`: trims chat sends to the cached model's window; fail-open on any missing input                                                              |
 | Streaming helpers   | `streaming.ts`                | IPC payload validation, `withKbPrompt`, `createChunkBatcher` (32 ms token deltas)                                                                                                |
@@ -133,64 +136,70 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 
 ##### Renderer (`src/renderer/src/`)
 
-| Module           | Path                                                     | Role                                                                                                                |
-| ---------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| Entry point      | `main.tsx`                                               | createRoot, imports CSS, mounts Root                                                                                |
-| Root router      | `Root.tsx`                                               | Routes App (main window) vs LookupApp (popup) by `?role=lookup`                                                     |
-| App shell        | `App.tsx`                                                | Sidebar + 5-view routing, global Ctrl+N/Ctrl+K, search modal, composer draft                                        |
-| Lookup popup     | `LookupApp.tsx`                                          | Header, context panel, ask input, paste handling, grow transitions                                                  |
-| Chat hook        | `hooks/useChatStreaming.ts`                              | Owns ConversationState, stop/retry/regenerate/rename, routes requests via `hooks/chat/*`, auto-saves                |
-| Chat requests    | `hooks/chat/{requests,persistence,transport}.ts`         | Pure request book (pending ids, `activeSendId`, drain helpers), autosave effect, IPC subscriptions + stale-id drops |
-| Scroll following | `hooks/useStickToBottom.ts`                              | Pins chat/popup views to the bottom while a response streams; an upward scroll unpins                               |
-| Conversation     | `components/conversation/Conversation.tsx`               | Message list, composer + Stop button (Esc), toolbar (export/delete), context menu                                   |
-| Turn             | `components/conversation/Turn.tsx`                       | Single message (user/assistant) with avatar, markdown body, retry, inline edit-and-resend                           |
-| Markdown         | `components/conversation/Markdown.tsx`                   | remark → mdast → hast → React; block mode for turns, inline mode+`md-*` spans for frames; `data-src` text anchors   |
-| Markdown core    | `lib/markdown.ts`                                        | Pure parse/splice/anchor helpers (`prepareMarkdownTree`, `isAnchoredRange`, `collectTextNodeSpans`)                 |
-| ExpansionFrame   | `components/conversation/ExpansionFrame.tsx`             | Inline expandable frames, folded pills, nested children                                                             |
-| ContextMenu      | `components/conversation/ContextMenu.tsx`                | Right-click Expand / Expand on… / Copy / Select All                                                                 |
-| ExpandPrompt     | `components/conversation/ExpandPrompt.tsx`               | Floating inline input for custom expand direction ("Expand on…")                                                    |
-| Search           | `components/conversation/ConversationSearch.tsx`         | Ctrl/Cmd+K modal: search titles + messages, snippet, load/delete, errors                                            |
-| Settings         | `views/settings/Settings.tsx`                            | 3-tab settings orchestrator                                                                                         |
-| Views            | `views/home/`, `views/knowledge/`, `views/lookup-guide/` | Dashboard (recent conversations + learned tags) and placeholder views                                               |
+| Module           | Path                                                       | Role                                                                                                                 |
+| ---------------- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Entry point      | `main.tsx`                                                 | createRoot, imports CSS, mounts Root                                                                                 |
+| Root router      | `Root.tsx`                                                 | Routes App (main window) vs LookupApp (popup) by `?role=lookup`                                                      |
+| App shell        | `App.tsx`                                                  | Sidebar + 5-view routing, global Ctrl+N/Ctrl+K, search modal, composer draft                                         |
+| Lookup popup     | `LookupApp.tsx`                                            | Header, context panel, ask input, paste handling, grow transitions                                                   |
+| Chat hook        | `hooks/useChatStreaming.ts`                                | Owns ConversationState, stop/retry/regenerate/rename, routes requests via `hooks/chat/*`, auto-saves                 |
+| Chat requests    | `hooks/chat/{requests,persistence,transport}.ts`           | Pure request book (pending ids, `activeSendId`, drain helpers), autosave effect, IPC subscriptions + stale-id drops  |
+| Scroll following | `hooks/useStickToBottom.ts`                                | Pins chat/popup views to the bottom while a response streams; an upward scroll unpins                                |
+| Conversation     | `components/conversation/Conversation.tsx`                 | Message list, composer + Stop button (Esc), toolbar (export/delete), context menu                                    |
+| Turn             | `components/conversation/Turn.tsx`                         | Single message (user/assistant) with avatar, markdown body, retry, inline edit-and-resend                            |
+| Markdown         | `components/conversation/Markdown.tsx`                     | remark → mdast → hast → React; block mode for turns, inline mode+`md-*` spans for frames; `data-src` text anchors    |
+| Markdown core    | `lib/markdown.ts`                                          | Pure parse/splice/anchor helpers (`prepareMarkdownTree`, `isAnchoredRange`, `collectTextNodeSpans`), math delimiters |
+| Code / math      | `lib/highlight.ts`, `lib/math.ts`                          | lowlight → hast (text-preserving) and KaTeX → HTML (`trust: false`)                                                  |
+| Image attach     | `lib/image-attachments.ts`, `hooks/useImageAttachments.ts` | Decode + scale + re-encode to JPEG; composer add flow (capability check, limits, notices)                            |
+| ExpansionFrame   | `components/conversation/ExpansionFrame.tsx`               | Inline expandable frames, folded pills, nested children                                                              |
+| ContextMenu      | `components/conversation/ContextMenu.tsx`                  | Right-click Expand / Expand on… / Copy / Select All                                                                  |
+| ExpandPrompt     | `components/conversation/ExpandPrompt.tsx`                 | Floating inline input for custom expand direction ("Expand on…")                                                     |
+| Search           | `components/conversation/ConversationSearch.tsx`           | Ctrl/Cmd+K modal: search titles + messages, snippet, load/delete, errors                                             |
+| Settings         | `views/settings/Settings.tsx`                              | 3-tab settings orchestrator                                                                                          |
+| Views            | `views/home/`, `views/knowledge/`, `views/lookup-guide/`   | Dashboard (recent conversations + learned tags) and placeholder views                                                |
 
 #### What to touch when
 
-| Task                                   | File(s)                                                                                               |
-| -------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| Add an AI provider                     | `provider.ts` (`ROUTES` row: name + base URL, nothing else)                                           |
-| Change the OCR/capture pipeline        | `lookup/capture.ts`                                                                                   |
-| Change the hotkey response flow        | `lookup/lookup.ts` (`handleHotkeyPressed`)                                                            |
-| Change the look-up context source      | `lookup/lookup.ts` (`handleHotkeyPressed`) + `config.ts` + `shared/conversation.ts`                   |
-| Reposition / restyle the lookup popup  | `lookup/window.ts` + CSS in `lookup.css`, `LookupApp.tsx`                                             |
-| Change the expand prompt               | `shared/expand-prompt.ts` (`buildExpandMessages`)                                                     |
-| Change the expand instruction text     | `shared/prompts.ts` (`buildExpandUserInstruction`, `buildExpandPromptedInstruction`)                  |
-| Change the Expand Prompt UI            | `components/conversation/ExpandPrompt.tsx`                                                            |
-| Change frame fold/unfold behaviour     | `shared/rich-text.ts` (`setExpansionFolded`) + `ExpansionFrame.tsx`                                   |
-| Change the expansion targeting logic   | `hooks/useExpansionContextMenu.ts` (DOM→offset mapping) + `shared/rich-text.ts` (`validateInsertion`) |
-| Change the expand data model/anchors   | `shared/rich-text.ts` (+ `lib/markdown.ts` splice, `Markdown.tsx` render)                             |
-| Add / change markdown rendering        | `components/conversation/Markdown.tsx`, `lib/markdown.ts`, `assets/markdown.css`                      |
-| Persist or load user config/settings   | `config.ts`                                                                                           |
-| Wayland global-shortcut binding        | `services/global-shortcut.ts`                                                                         |
-| KDE Wayland silent screenshot          | `services/screen-capture.ts`                                                                          |
-| Add a new IPC channel                  | preload `index.ts` + `.d.ts`, then main `index.ts`                                                    |
-| Change the chat streaming hook         | `hooks/useChatStreaming.ts` + `hooks/chat/{requests,persistence,transport}.ts`                        |
-| Persist or load conversations          | `conversations.ts` (main) + `useChatStreaming.ts` (renderer)                                          |
-| Search conversations                   | `conversations.ts` (`searchConversations`) + `ConversationSearch.tsx`                                 |
-| Rename / regenerate a conversation     | `useChatStreaming.ts` (`renameConversation`/`regenerate`) + `Conversation.tsx`, `Turn.tsx`            |
-| Export a conversation                  | `conversation-export.ts` + `Conversation.tsx` (button states), preload `exportConversation`           |
-| Trim chats to the model context window | `shared/context-budget.ts` (pure) + `main/context-budget.ts` (catalog lookup, fail-open)              |
-| KB prompt / fed flags                  | `kb/handlers.ts` + `conversations.ts` (`resetKbFedFlags`) + `KnowledgeView.tsx`                       |
-| Automatic learning pacing              | `kb/schedule.ts` (pure) + `kb/maintenance.ts` (timers, queue, status)                                 |
-| What gets folded into the profile      | `kb/run.ts` (`runKbAnalysis`) + `kb/analysis.ts` (material/messages)                                  |
-| Stop/retry generation                  | `useChatStreaming.ts` (`stop`/`retry`) + `Conversation.tsx`, `Turn.tsx`                               |
-| Edit and resend a user message         | `useChatStreaming.ts` (`editMessage` → `truncateAndResend`) + `Turn.tsx`, `Conversation.tsx`          |
-| Delete the open conversation           | `useChatStreaming.ts` (`deleteConversation`) + `Conversation.tsx` toolbar                             |
-| App-wide shortcuts / search modal      | `App.tsx` (Ctrl/Cmd+N, Ctrl/Cmd+K, `ConversationSearch` mount)                                        |
-| Change chat auto-scroll                | `hooks/useStickToBottom.ts`                                                                           |
-| Renderer chat UI                       | `App.tsx`, `Conversation.tsx`, `Turn.tsx`, `ConversationSearch.tsx`                                   |
-| Provider config form                   | `components/settings/models/ModelsTab.tsx` (+ `RoleRow.tsx`, `ConnectionCard.tsx`)                    |
-| Model picker / catalog                 | `shared/model-catalog.ts` (pure), `services/model-catalog.ts` (fetch+cache)                           |
-| Change the model-config schema         | `models/config-schema.ts` — add a vN→vN+1 step, bump `MODEL_CONFIG_VERSION`                           |
+| Task                                   | File(s)                                                                                                |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Add an AI provider                     | `provider.ts` (`ROUTES` row: name + base URL, nothing else)                                            |
+| Change the OCR/capture pipeline        | `lookup/capture.ts`                                                                                    |
+| Change the hotkey response flow        | `lookup/lookup.ts` (`handleHotkeyPressed`)                                                             |
+| Change the look-up context source      | `lookup/lookup.ts` (`handleHotkeyPressed`) + `config.ts` + `shared/conversation.ts`                    |
+| Reposition / restyle the lookup popup  | `lookup/window.ts` + CSS in `lookup.css`, `LookupApp.tsx`                                              |
+| Change the expand prompt               | `shared/expand-prompt.ts` (`buildExpandMessages`)                                                      |
+| Change the expand instruction text     | `shared/prompts.ts` (`buildExpandUserInstruction`, `buildExpandPromptedInstruction`)                   |
+| Change the Expand Prompt UI            | `components/conversation/ExpandPrompt.tsx`                                                             |
+| Change frame fold/unfold behaviour     | `shared/rich-text.ts` (`setExpansionFolded`) + `ExpansionFrame.tsx`                                    |
+| Change the expansion targeting logic   | `hooks/useExpansionContextMenu.ts` (DOM→offset mapping) + `shared/rich-text.ts` (`validateInsertion`)  |
+| Change the expand data model/anchors   | `shared/rich-text.ts` (+ `lib/markdown.ts` splice, `Markdown.tsx` render)                              |
+| Add / change markdown rendering        | `components/conversation/Markdown.tsx`, `lib/markdown.ts`, `assets/markdown.css`                       |
+| Syntax highlighting                    | `lib/highlight.ts` + `hljs-*` rules in `assets/markdown.css` + `--code-*` tokens                       |
+| Math rendering / delimiters            | `lib/markdown.ts` (`parseMarkdown`), `lib/math.ts`, `Markdown.tsx` (`MathFormula`)                     |
+| Light/dark theme or palette            | `config.ts` (`theme`) + light `:root` block in `assets/base.css`                                       |
+| Image attachments                      | `shared/attachments.ts`, `main/image-support.ts`, `provider.ts` (`toModelMessage`), `Conversation.tsx` |
+| Persist or load user config/settings   | `config.ts`                                                                                            |
+| Wayland global-shortcut binding        | `services/global-shortcut.ts`                                                                          |
+| KDE Wayland silent screenshot          | `services/screen-capture.ts`                                                                           |
+| Add a new IPC channel                  | preload `index.ts` + `.d.ts`, then main `index.ts`                                                     |
+| Change the chat streaming hook         | `hooks/useChatStreaming.ts` + `hooks/chat/{requests,persistence,transport}.ts`                         |
+| Persist or load conversations          | `conversations.ts` (main) + `useChatStreaming.ts` (renderer)                                           |
+| Search conversations                   | `conversations.ts` (`searchConversations`) + `ConversationSearch.tsx`                                  |
+| Rename / regenerate a conversation     | `useChatStreaming.ts` (`renameConversation`/`regenerate`) + `Conversation.tsx`, `Turn.tsx`             |
+| Export a conversation                  | `conversation-export.ts` + `Conversation.tsx` (button states), preload `exportConversation`            |
+| Trim chats to the model context window | `shared/context-budget.ts` (pure) + `main/context-budget.ts` (catalog lookup, fail-open)               |
+| KB prompt / fed flags                  | `kb/handlers.ts` + `conversations.ts` (`resetKbFedFlags`) + `KnowledgeView.tsx`                        |
+| Automatic learning pacing              | `kb/schedule.ts` (pure) + `kb/maintenance.ts` (timers, queue, status)                                  |
+| What gets folded into the profile      | `kb/run.ts` (`runKbAnalysis`) + `kb/analysis.ts` (material/messages)                                   |
+| Stop/retry generation                  | `useChatStreaming.ts` (`stop`/`retry`) + `Conversation.tsx`, `Turn.tsx`                                |
+| Edit and resend a user message         | `useChatStreaming.ts` (`editMessage` → `truncateAndResend`) + `Turn.tsx`, `Conversation.tsx`           |
+| Delete the open conversation           | `useChatStreaming.ts` (`deleteConversation`) + `Conversation.tsx` toolbar                              |
+| App-wide shortcuts / search modal      | `App.tsx` (Ctrl/Cmd+N, Ctrl/Cmd+K, `ConversationSearch` mount)                                         |
+| Change chat auto-scroll                | `hooks/useStickToBottom.ts`                                                                            |
+| Renderer chat UI                       | `App.tsx`, `Conversation.tsx`, `Turn.tsx`, `ConversationSearch.tsx`                                    |
+| Provider config form                   | `components/settings/models/ModelsTab.tsx` (+ `RoleRow.tsx`, `ConnectionCard.tsx`)                     |
+| Model picker / catalog                 | `shared/model-catalog.ts` (pure), `services/model-catalog.ts` (fetch+cache)                            |
+| Change the model-config schema         | `models/config-schema.ts` — add a vN→vN+1 step, bump `MODEL_CONFIG_VERSION`                            |
 
 #### Important conventions
 
@@ -231,8 +240,8 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   X11/macOS/Windows and non-KDE Wayland.
 - **Config files** live under `{userData}/config/` (`providers.json`, `settings.json`).
   `settings.json` holds `hotkey`, `closeToTray`, `lookupContextMode`
-  (default `'none'`) and `kbAutoMaintain`
-  (default `true`); `save-settings` merges a **partial** patch over the stored settings
+  (default `'none'`), `kbAutoMaintain` (default `true`) and `theme`
+  (`dark` / `light` / `system`, default `dark`); `save-settings` merges a **partial** patch over the stored settings
   (`mergeAppSettings`), so a caller sends only the fields it changes.
   Always go through `config.ts` helpers; call `ensureConfigDir()` before writing. Writes use
   `services/atomic-file.ts` (sibling temp file + rename), so a crash can't truncate them.
@@ -388,6 +397,35 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   `strong`/`em`/`del`/`a`, with `md-p`/`md-list`/`md-li`/`md-pre`/… classes) inside an
   expansion frame, whose host is a `<span>`. `flattenMarkdown` remains only for titles and
   search.
+- **Links open in the system browser.** `Anchor` renders `target="_blank"` and does not intercept
+  the click: `setWindowOpenHandler` in `window-guards.ts` hands http(s) URLs to `shell.openExternal`.
+  The renderer allowlist must match `isSafeExternalUrl`, so every other scheme (`mailto:` included)
+  renders as plain text instead of a link that does nothing. The tooltip always shows the real URL,
+  never a model-written title.
+- **Fenced code is highlighted without touching offsets.** Fenced code never carried `data-src`
+  and still does not, so it stays non-expandable. `highlightCode` only wraps text in `hljs-*`
+  spans; the text is unchanged, so Copy stays exact. Blocks over 20k chars stay plain because
+  highlighting re-runs on every streamed chunk.
+- **Math must never move an offset.** `parseMarkdown` is the single entry point. `\(…\)` and
+  `\[…\]` are rewritten to `$$` in place (both delimiters are two characters, code is skipped);
+  `\[` counts only on its own line, so an escaped citation like `\[1\]` stays text. Prose dollars
+  ("$5 and $10", Pandoc's rule) are demoted back to merged text nodes. A formula has no `data-src`,
+  so it cannot be an expansion target. `electron.vite.config.ts` never inlines fonts, because the CSP
+  has no `data:` in `font-src`. KaTeX runs with `trust: false`; `MathFormula` is the only
+  `dangerouslySetInnerHTML` in the renderer, so keep that option.
+- **Theme is `nativeTheme.themeSource`, not renderer state.** `applyAppSettings` sets it and CSS
+  follows `prefers-color-scheme`: only the tokens in `base.css` differ, every open window restyles
+  live, a new one paints correctly from its first frame, and there is no theme IPC. Hardcoded colours
+  in a surface stylesheet break this, so use a token.
+- **Image attachments live inline on the user turn** (`Turn.attachments`, base64 in `{id}.json`, never
+  in the sidecar). The chat composer is the only entry point (picker, paste, drop); the lookup popup's
+  paste still means OCR. The renderer re-encodes to a JPEG under 1568px, which also strips EXIF, and
+  `ProviderMessage.images` carries them to `provider.ts`, where they become SDK `file` parts on the one
+  OpenAI-compatible route. `chat-send` runs `fitImagesToSupport`: on a model the catalog says is
+  text-only, images in the message being sent are refused and earlier ones become `IMAGE_OMITTED_NOTE`,
+  so a model switch cannot strand a chat. Unknown models are sent as-is and the provider decides. Each
+  image counts as `IMAGE_TOKEN_ESTIMATE` in the context budget. Expand, KB analysis, search and
+  titles use text only; export writes a `_[Image: name]_` line.
 - **Selections are mapped by offset, never by string search.** `useExpansionContextMenu`
   resolves each Range endpoint to its nearest `[data-src]` leaf plus the character offset,
   refusing when the endpoints live in different scopes (turn vs. frame). A range is

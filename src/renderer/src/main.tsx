@@ -1,3 +1,4 @@
+import 'katex/dist/katex.min.css'
 import './assets/base.css'
 import './assets/lookup.css'
 

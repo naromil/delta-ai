@@ -1,4 +1,5 @@
 import type { ProviderMessage } from './provider'
+import { MAX_ATTACHMENTS_PER_MESSAGE, isImageAttachment, isImageInput } from '../shared/attachments'
 import type { ConversationRecord, ConversationState } from '../shared/conversation'
 
 /* ---- IPC payload validation ----
@@ -23,7 +24,20 @@ export function parseProviderMessages(raw: unknown): ProviderMessage[] | null {
   for (const entry of raw) {
     if (!isRecord(entry) || typeof entry.content !== 'string') return null
     if (typeof entry.role !== 'string' || !MESSAGE_ROLES.has(entry.role)) return null
-    messages.push({ role: entry.role, content: entry.content })
+    if (entry.images === undefined) {
+      messages.push({ role: entry.role, content: entry.content })
+      continue
+    }
+    if (
+      entry.role !== 'user' ||
+      !Array.isArray(entry.images) ||
+      entry.images.length > MAX_ATTACHMENTS_PER_MESSAGE ||
+      !entry.images.every(isImageInput)
+    ) {
+      return null
+    }
+    const images = entry.images.map(({ mediaType, data }) => ({ mediaType, data }))
+    messages.push({ role: entry.role, content: entry.content, images })
   }
   return messages
 }
@@ -37,7 +51,9 @@ export function isConversationState(value: unknown): value is ConversationState 
       typeof turn.id === 'number' &&
       (turn.role === 'user' || turn.role === 'assistant') &&
       typeof turn.content === 'string' &&
-      (turn.expansions === undefined || Array.isArray(turn.expansions))
+      (turn.expansions === undefined || Array.isArray(turn.expansions)) &&
+      (turn.attachments === undefined ||
+        (Array.isArray(turn.attachments) && turn.attachments.every(isImageAttachment)))
   )
 }
 

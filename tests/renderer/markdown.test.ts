@@ -272,3 +272,139 @@ describe('Markdown renderer', () => {
     expect(markup).toContain('**bo')
   })
 })
+
+const textOf = (html: string): string => html.replace(/<[^>]+>/g, '')
+
+describe('links', () => {
+  it('renders web links as external anchors that show the real URL', () => {
+    const html = renderMarkdown('[docs](https://example.com/a "Totally safe")')
+    expect(html).toContain('href="https://example.com/a"')
+    expect(html).toContain('target="_blank"')
+    expect(html).toContain('title="https://example.com/a"')
+    expect(html).not.toContain('Totally safe')
+  })
+
+  it.each(['javascript:alert(1)', 'data:text/html,x', 'file:///etc/passwd', 'mailto:a@b.c'])(
+    'degrades %s to plain text',
+    (url) => {
+      const html = renderMarkdown(`[click](${url})`)
+      expect(html).not.toContain('<a ')
+      expect(html).toContain('click')
+    }
+  )
+})
+
+describe('syntax highlighting', () => {
+  it('wraps tokens of a known language in hljs spans', () => {
+    const html = renderMarkdown('```ts\nconst a = 1\n```')
+    expect(html).toContain('hljs-keyword')
+    expect(html).toContain('language-ts')
+  })
+
+  it('leaves the code text unchanged, so Copy and offsets are unaffected', () => {
+    const code = 'function add(a, b) {\n  return a + b // sum\n}'
+    expect(textOf(renderMarkdown('```js\n' + code + '\n```'))).toContain(code)
+    expect(renderMarkdown('```js\n' + code + '\n```')).not.toContain('data-src')
+  })
+
+  it('renders an unknown or missing language as plain text', () => {
+    expect(renderMarkdown('```nosuchlang\nconst a = 1\n```')).not.toContain('hljs-')
+    expect(renderMarkdown('```\nconst a = 1\n```')).not.toContain('hljs-')
+  })
+
+  it('keeps data-src anchors of the surrounding text exact', () => {
+    const source = 'before\n\n```ts\nconst a = 1\n```\n\nafter'
+    const html = renderMarkdown(source)
+    expect(html).toContain(`data-src="${source.indexOf('after')}"`)
+    expect(isAnchoredRange(source, { start: source.indexOf('after'), end: source.length })).toBe(
+      true
+    )
+    expect(
+      isAnchoredRange(source, { start: source.indexOf('const'), end: source.indexOf(' =') })
+    ).toBe(false)
+  })
+})
+
+describe('math', () => {
+  it.each([
+    ['$x^2$', false],
+    ['\\(x^2\\)', false],
+    ['$$x^2$$', true],
+    ['\\[x^2\\]', true],
+    ['$$\nx^2\n$$', true],
+    ['\\[\nx^2\n\\]', true]
+  ])('renders %s (display: %s)', (source, display) => {
+    const html = renderMarkdown(source)
+    expect(html).toContain('class="katex')
+    expect(html.includes('md-math-display')).toBe(display)
+  })
+
+  it('keeps offsets of text after a formula exact, for every delimiter', () => {
+    for (const source of ['Before $x^2$ after', 'Before \\(x^2\\) after', '\\[x^2\\]\n\n after']) {
+      const start = source.lastIndexOf('after')
+      const html = renderMarkdown(source)
+      expect(html).toContain('class="katex')
+      expect(html).toMatch(new RegExp(`data-src="(${start}|${start - 1})"`))
+      expect(isAnchoredRange(source, { start, end: source.length })).toBe(true)
+    }
+  })
+
+  it('refuses to anchor an expansion inside a formula', () => {
+    const source = 'Before $x^2$ after'
+    expect(isAnchoredRange(source, { start: 8, end: 9 })).toBe(false)
+  })
+
+  it('splices an expansion after a formula at the right place', () => {
+    const source = 'Given \\(x\\) the value holds'
+    const start = source.indexOf('value')
+    const html = renderMarkdown(source, [
+      expansion({ id: 1, start, end: start + 5, originalText: 'value' })
+    ])
+    expect(html).toContain('class="katex')
+    expect(html).toContain('data-expansion-id="1"')
+  })
+
+  it.each(['$5 and $10', 'from $5-$10 today', 'costs $100 (about $120)', 'US$5 or CA$7'])(
+    'leaves the prose %s as anchored text',
+    (source) => {
+      expect(renderMarkdown(source)).not.toContain('katex')
+      expect(textOf(renderMarkdown(source))).toBe(source)
+      expect(isAnchoredRange(source, { start: 0, end: source.length })).toBe(true)
+    }
+  )
+
+  it('does not treat backslash delimiters inside code as math', () => {
+    expect(renderMarkdown('`\\(x\\)`')).toContain('\\(x\\)')
+    expect(renderMarkdown('`\\(x\\)`')).not.toContain('katex')
+    expect(renderMarkdown('```\n\\[x\\]\n```')).not.toContain('katex')
+  })
+
+  it('leaves an inline escaped citation alone', () => {
+    expect(renderMarkdown('see \\[1\\] for more')).not.toContain('katex')
+  })
+
+  it('renders broken TeX as an error instead of throwing', () => {
+    expect(renderMarkdown('$\\frac{$')).toContain('katex-error')
+  })
+
+  it('disables TeX commands that could carry a URL', () => {
+    const html = renderMarkdown('$\\href{javascript:alert(1)}{x}$')
+    expect(html).not.toContain('href=')
+    expect(html).not.toContain('<a ')
+  })
+
+  it('stays inside span-only markup in an inline frame', () => {
+    const html = renderToStaticMarkup(
+      createElement(Markdown, {
+        source: '$$x^2$$',
+        expansions: [],
+        inline: true,
+        onFold: noop,
+        onUnfold: noop,
+        renderExpansion: () => null
+      })
+    )
+    expect(html).toContain('md-math-display')
+    expect(html).not.toMatch(/<(div|p)\b/)
+  })
+})

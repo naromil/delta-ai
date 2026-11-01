@@ -38,6 +38,20 @@
   --danger: var(--error);
   --danger-soft: rgba(207, 123, 110, 0.12);
 
+  /* Learned-tag labels */
+  --tag-blue: #8fc2ff;
+  --tag-green: #86d9a0;
+  --tag-purple: #d3aefb;
+
+  /* Syntax highlighting */
+  --code-comment: rgba(228, 230, 240, 0.5);
+  --code-keyword: #c3a6e8;
+  --code-string: #9ccc9c;
+  --code-number: #e0b07a;
+  --code-title: #8fb8e8;
+  --code-attr: #e39a9a;
+  --code-meta: #7fc4c4;
+
   /* Shape */
   --radius-sm: 8px;
   --radius-md: 12px;
@@ -111,6 +125,53 @@
   --chat-hover: var(--surface-2);
   --chat-accent: var(--accent);
   --chat-muted: var(--text-muted);
+}
+
+/* ---- Light theme ----
+ * `nativeTheme.themeSource` (settings.json -> theme) drives this query, so only the
+ * tokens differ between themes and there is no per-window theme state. */
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+
+    --bg: #f7f7f9;
+    --surface-1: #eeeef2;
+    --surface-2: #e6e6ec;
+    --surface-3: #dbdbe4;
+
+    --border: rgba(24, 26, 40, 0.1);
+    --border-strong: rgba(24, 26, 40, 0.18);
+
+    --text-1: rgba(22, 23, 32, 0.92);
+    --text-2: rgba(22, 23, 32, 0.72);
+    --text-3: rgba(22, 23, 32, 0.62);
+
+    --accent: #47627d;
+    --accent-strong: #3b5369;
+    --accent-soft: rgba(71, 98, 125, 0.14);
+    --accent-ring: rgba(71, 98, 125, 0.28);
+    --accent-contrast: #ffffff;
+
+    --success: #2f6b3e;
+    --error: #a8432f;
+    --danger-soft: rgba(168, 67, 47, 0.1);
+
+    --tag-blue: #1f5fa8;
+    --tag-green: #1f6e3a;
+    --tag-purple: #6d3cab;
+
+    --code-comment: rgba(22, 23, 32, 0.64);
+    --code-keyword: #6f3fb0;
+    --code-string: #2a6b34;
+    --code-number: #99510f;
+    --code-title: #1f5aa0;
+    --code-attr: #a33b3b;
+    --code-meta: #14686e;
+
+    --shadow-1: 0 1px 2px rgba(20, 22, 35, 0.08);
+    --shadow-2: 0 6px 22px rgba(20, 22, 35, 0.1);
+    --shadow-3: 0 18px 48px rgba(20, 22, 35, 0.18);
+  }
 }
 
 *,

@@ -294,3 +294,63 @@ describe('callProvider', () => {
     await expect(callProvider(MESSAGES, 'chat')).resolves.toBe('(No response received)')
   })
 })
+
+describe('image attachments on the wire', () => {
+  function capture(): { bodies: Array<Record<string, unknown>> } {
+    const bodies: Array<Record<string, unknown>> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: unknown, init?: RequestInit): Promise<Response> => {
+        bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+        return sseResponse(openAiFrames(['ok']))
+      })
+    )
+    return { bodies }
+  }
+
+  it.each(['openai', 'openrouter', 'google-ai-studio', 'ollama'])(
+    'sends an image as an image_url data URL on %s',
+    async (providerType) => {
+      const { bodies } = capture()
+      resolveRole.mockReturnValue({
+        connection: { id: 'c', label: 'c', providerType, apiKey: 'k' },
+        model: 'm'
+      })
+      await callProvider(
+        [
+          { role: 'system', content: 'sys' },
+          {
+            role: 'user',
+            content: 'what is this',
+            images: [{ mediaType: 'image/jpeg', data: 'QUJD' }]
+          }
+        ],
+        'chat'
+      )
+      expect(bodies[0].messages).toEqual([
+        { role: 'system', content: 'sys' },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'what is this' },
+            { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,QUJD' } }
+          ]
+        }
+      ])
+    }
+  )
+
+  it('omits the text part of an image-only message', async () => {
+    const { bodies } = capture()
+    resolveRole.mockReturnValue({
+      connection: { id: 'c', label: 'c', providerType: 'openai', apiKey: 'k' },
+      model: 'm'
+    })
+    await callProvider(
+      [{ role: 'user', content: '', images: [{ mediaType: 'image/png', data: 'QUJD' }] }],
+      'chat'
+    )
+    const [message] = bodies[0].messages as Array<{ content: Array<{ type: string }> }>
+    expect(message.content.map((part) => part.type)).toEqual(['image_url'])
+  })
+})

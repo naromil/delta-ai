@@ -346,19 +346,19 @@
 .kb-home-tag--topic {
   border-color: rgba(74, 158, 255, 0.38);
   background: rgba(74, 158, 255, 0.09);
-  color: #8fc2ff;
+  color: var(--tag-blue);
 }
 
 .kb-home-tag--knowledge_area {
   border-color: rgba(80, 200, 120, 0.38);
   background: rgba(80, 200, 120, 0.09);
-  color: #86d9a0;
+  color: var(--tag-green);
 }
 
 .kb-home-tag--learning_preference {
   border-color: rgba(192, 132, 252, 0.38);
   background: rgba(192, 132, 252, 0.09);
-  color: #d3aefb;
+  color: var(--tag-purple);
 }
 
 .kb-home-tag-keyword {
@@ -570,8 +570,8 @@
 }
 
 .kb-danger {
-  background: rgba(231, 76, 60, 0.12);
-  color: #e74c3c;
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 
 .kb-dirty {

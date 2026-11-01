@@ -102,3 +102,7 @@ export function buildExpandPromptedInstruction(selection: string, prompt: string
     ...EXPAND_SHARED_CONSTRAINTS
   ].join(' ')
 }
+
+/** Replaces an earlier image in the history when the current model cannot read images. */
+export const IMAGE_OMITTED_NOTE =
+  '[An image was attached here, but the current model cannot read images, so it was omitted.]'

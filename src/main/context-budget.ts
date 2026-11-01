@@ -1,4 +1,4 @@
-import { budgetFor, estimateTokens, trimMessages } from '../shared/context-budget'
+import { budgetFor, estimateMessageTokens, trimMessages } from '../shared/context-budget'
 import type { ProviderMessage } from './provider'
 import type { RoleId } from '../shared/models'
 import { resolveRole } from './config'
@@ -23,7 +23,7 @@ export function applyContextBudget(messages: ProviderMessage[], role: RoleId): P
 
     const { messages: trimmed, dropped } = trimMessages(messages, budget)
     if (dropped > 0) {
-      const remaining = trimmed.reduce((total, msg) => total + estimateTokens(msg.content), 0)
+      const remaining = trimmed.reduce((total, msg) => total + estimateMessageTokens(msg), 0)
       console.warn(
         `Context budget trimmed ${dropped} message(s) for role "${role}" ` +
           `(${resolved.model}); ~${remaining} tokens remain of a ${budget} budget.`

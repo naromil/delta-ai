@@ -1,7 +1,7 @@
 /**
  * Markdown renderer for turn content and expansion answers.
  *
- * Pipeline: remark parse (+GFM) → splice expansion nodes by source offset →
+ * Pipeline: remark parse (+GFM, math) → splice expansion nodes by source offset →
  * mdast-util-to-hast (custom handlers for expansion + sourced text) →
  * hast-util-to-jsx-runtime with a React component map.
  *
@@ -16,13 +16,21 @@ import * as jsxRuntime from 'react/jsx-runtime'
 import { toHast } from 'mdast-util-to-hast'
 import type { Handlers } from 'mdast-util-to-hast'
 import { toJsxRuntime } from 'hast-util-to-jsx-runtime'
-import type { Root as HastRoot } from 'hast'
+import type { Element, Root as HastRoot } from 'hast'
 import type { Root as MdastRoot } from 'mdast'
 import type { ExpansionNode } from '../../../../shared/rich-text'
-import { EXPANSION_NODE, SOURCED_TEXT, prepareMarkdownTree } from '../../lib/markdown'
+import { highlightCode } from '../../lib/highlight'
+import { renderMath } from '../../lib/math'
+import {
+  EXPANSION_NODE,
+  SOURCED_TEXT,
+  isDisplayMath,
+  prepareMarkdownTree
+} from '../../lib/markdown'
 import type { MarkdownNode } from '../../lib/markdown'
 
 const EXPANSION_ELEMENT = 'expansion-frame'
+const MATH_ELEMENT = 'math-formula'
 
 export interface MarkdownActions {
   onFold: (id: number) => void
@@ -78,13 +86,13 @@ type JsxOptions = Parameters<typeof toJsxRuntime>[1]
 
 interface AnchorProps {
   href?: string
-  title?: string
   children?: React.ReactNode
 }
 
-const SAFE_PROTOCOL = /^(?:https?:|mailto:)/i
+/** Matches `isSafeExternalUrl` in `window-guards.ts`, the check that actually opens a link. */
+const SAFE_PROTOCOL = /^https?:/i
 
-/** Model output is untrusted: only absolute web/mail URLs may become links. */
+/** Model output is untrusted: only absolute web URLs may become links. */
 function safeHref(href: string | undefined): string | undefined {
   if (!href) return undefined
   const value = href.trim()
@@ -92,23 +100,36 @@ function safeHref(href: string | undefined): string | undefined {
 }
 
 /**
- * Rendered as a real anchor, but never navigates the app window. Unsafe
- * schemes (`javascript:`, `data:`, `file:`) degrade to plain text.
+ * `target="_blank"` routes the click through `setWindowOpenHandler`, which hands
+ * the URL to the system browser, so the app window never navigates. The tooltip
+ * always shows the real URL: a model-written title or label must not disguise
+ * the destination. Other schemes (`javascript:`, `data:`, `file:`, `mailto:`)
+ * degrade to plain text.
  */
-function Anchor({ href, title, children }: AnchorProps): React.JSX.Element {
+function Anchor({ href, children }: AnchorProps): React.JSX.Element {
   const url = safeHref(href)
   if (!url) return <span className="md-link">{children}</span>
   return (
-    <a
-      className="md-link"
-      href={url}
-      title={title ?? url}
-      rel="noopener noreferrer"
-      target="_blank"
-      onClick={(event) => event.preventDefault()}
-    >
+    <a className="md-link" href={url} title={url} rel="noopener noreferrer" target="_blank">
       {children}
     </a>
+  )
+}
+
+interface MathFormulaProps {
+  'data-tex'?: string
+  'data-display'?: string
+}
+
+function MathFormula(props: MathFormulaProps): React.JSX.Element {
+  const tex = props['data-tex'] ?? ''
+  const display = props['data-display'] === 'true'
+  const html = useMemo(() => renderMath(tex, display), [tex, display])
+  return (
+    <span
+      className={display ? 'md-math md-math-display' : 'md-math'}
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
   )
 }
 
@@ -161,6 +182,7 @@ function CodeBlock({ children }: CodeBlockProps): React.JSX.Element {
 
 const INLINE_COMPONENTS: Record<string, React.ComponentType<never>> = {
   [EXPANSION_ELEMENT]: ExpansionSlot as React.ComponentType<never>,
+  [MATH_ELEMENT]: MathFormula as React.ComponentType<never>,
   p: inlineElement('md-p') as React.ComponentType<never>,
   h1: inlineElement('md-h1') as React.ComponentType<never>,
   h2: inlineElement('md-h2') as React.ComponentType<never>,
@@ -188,9 +210,19 @@ const INLINE_COMPONENTS: Record<string, React.ComponentType<never>> = {
 
 const BLOCK_COMPONENTS: Record<string, React.ComponentType<never>> = {
   [EXPANSION_ELEMENT]: ExpansionSlot as React.ComponentType<never>,
+  [MATH_ELEMENT]: MathFormula as React.ComponentType<never>,
   pre: CodeBlock as React.ComponentType<never>,
   img: ImageFallback as React.ComponentType<never>,
   a: Anchor as React.ComponentType<never>
+}
+
+function mathElement(tex: string, display: boolean): Element {
+  return {
+    type: 'element',
+    tagName: MATH_ELEMENT,
+    properties: { 'data-tex': tex, 'data-display': String(display) },
+    children: []
+  }
 }
 
 function createHandlers(source: string): Handlers {
@@ -207,6 +239,26 @@ function createHandlers(source: string): Handlers {
       properties: { 'data-expansion-id': node.id },
       children: []
     }),
+    inlineMath: (_state, node: MarkdownNode) =>
+      mathElement(node.value ?? '', isDisplayMath(source, node)),
+    math: (_state, node: MarkdownNode) => mathElement(node.value ?? '', true),
+    code: (_state, node: MarkdownNode) => {
+      const language = node.lang?.split(/\s+/)[0]
+      return {
+        type: 'element',
+        tagName: 'pre',
+        properties: {},
+        children: [
+          {
+            type: 'element',
+            tagName: 'code',
+            properties: language ? { className: [`language-${language}`] } : {},
+            // Same trailing newline as the default handler; CodeBlock's Copy strips it.
+            children: highlightCode(node.value ? `${node.value}\n` : '', language)
+          }
+        ]
+      }
+    },
     inlineCode: (_state, node: MarkdownNode) => {
       const offset = node.position?.start.offset
       const ticks =

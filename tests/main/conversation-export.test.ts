@@ -167,3 +167,29 @@ describe('renderConversationMarkdown', () => {
     expect(markdown.match(/## Delta AI/g)).toHaveLength(1)
   })
 })
+
+describe('image attachments in exports', () => {
+  it('names the image and never embeds its data', () => {
+    const output = renderConversationMarkdown({
+      id: 'a',
+      title: 'T',
+      createdAt: 'c',
+      updatedAt: 'u',
+      source: 'chat',
+      kbFed: false,
+      state: {
+        turns: [
+          {
+            id: 1,
+            role: 'user',
+            content: '',
+            expansions: [],
+            attachments: [{ name: 'cat.jpg', mediaType: 'image/jpeg', data: 'QUJDQUJD' }]
+          }
+        ]
+      }
+    })
+    expect(output).toContain('_[Image: cat.jpg]_')
+    expect(output).not.toContain('QUJDQUJD')
+  })
+})

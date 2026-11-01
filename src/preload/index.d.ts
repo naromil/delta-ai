@@ -25,6 +25,7 @@ declare global {
         closeToTray: boolean
         lookupContextMode: string
         kbAutoMaintain: boolean
+        theme: string
       }>
       /** A partial update: omitted fields keep their stored value. */
       saveSettings: (settings: {
@@ -32,6 +33,7 @@ declare global {
         closeToTray?: boolean
         lookupContextMode?: string
         kbAutoMaintain?: boolean
+        theme?: string
       }) => Promise<{ success: boolean; hotkeyMode: 'global' | 'local'; error?: string }>
       getHotkeyStatus: () => Promise<{ accelerator: string; mode: 'global' | 'local' }>
       setHotkeyCaptureActive: (active: boolean) => void
@@ -51,10 +53,15 @@ declare global {
 
       /* Chat streaming channels */
       chatSend: (payload: {
-        messages: Array<{ role: string; content: string }>
+        messages: Array<{
+          role: string
+          content: string
+          images?: Array<{ mediaType: string; data: string }>
+        }>
         requestId: string
         role?: string
       }) => void
+      chatImageSupport: (role: string) => Promise<'yes' | 'no' | 'unknown'>
       chatExpand: (payload: {
         messages: Array<{ role: string; content: string }>
         requestId: string

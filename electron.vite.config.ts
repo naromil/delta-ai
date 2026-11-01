@@ -11,6 +11,10 @@ export default defineConfig({
         '@renderer': resolve('src/renderer/src')
       }
     },
-    plugins: [react()]
+    plugins: [react()],
+    build: {
+      // The CSP has no `data:` in font-src, so an inlined KaTeX font would be blocked.
+      assetsInlineLimit: (filePath) => (/\.(woff2?|ttf)$/.test(filePath) ? false : undefined)
+    }
   }
 })

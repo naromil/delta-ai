@@ -1,5 +1,5 @@
 import HotkeyInput from '../../components/settings/HotkeyInput'
-import type { LookupContextMode } from '../../../../shared/models'
+import type { LookupContextMode, ThemeMode } from '../../../../shared/models'
 
 interface GeneralTabProps {
   hotkey: string
@@ -11,6 +11,8 @@ interface GeneralTabProps {
   onLookupContextModeChange: (value: LookupContextMode) => void
   kbAutoMaintain: boolean
   onKbAutoMaintainChange: (value: boolean) => void
+  theme: ThemeMode
+  onThemeChange: (value: ThemeMode) => void
 }
 
 function GeneralTab({
@@ -22,10 +24,27 @@ function GeneralTab({
   lookupContextMode,
   onLookupContextModeChange,
   kbAutoMaintain,
-  onKbAutoMaintainChange
+  onKbAutoMaintainChange,
+  theme,
+  onThemeChange
 }: GeneralTabProps): React.JSX.Element {
   return (
     <>
+      <div className="settings-section">
+        <label className="settings-label" htmlFor="theme-mode">
+          Theme
+        </label>
+        <select
+          id="theme-mode"
+          className="settings-select"
+          value={theme}
+          onChange={(e) => onThemeChange(e.target.value as ThemeMode)}
+        >
+          <option value="dark">Dark</option>
+          <option value="light">Light</option>
+          <option value="system">Match system</option>
+        </select>
+      </div>
       <HotkeyInput value={hotkey} onChange={onHotkeyChange} mode={hotkeyMode} />
       <div className="settings-section">
         <label className="settings-label" htmlFor="lookup-context-mode">

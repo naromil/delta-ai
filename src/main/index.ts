@@ -17,6 +17,7 @@ import { handleHotkeyPressed } from './lookup/lookup'
 import { cancelOCR } from './lookup/capture'
 import { callProviderStream } from './provider'
 import type { ProviderMessage } from './provider'
+import { IMAGES_UNSUPPORTED_ERROR, fitImagesToSupport, modelImageSupport } from './image-support'
 import type { RoleId } from '../shared/models'
 import {
   lookupSessions,
@@ -95,9 +96,14 @@ if (!hasSingleInstanceLock) {
       const { requestId, role } = request
       // Both windows get the learned profile. Chat sends are then trimmed to the
       // model's window; lookup keeps its full screen context.
-      const messages = withKbPrompt(request.messages, loadKbPrompt())
-      const finalMessages = role === 'chat' ? applyContextBudget(messages, role) : messages
       const sender = event.sender
+      const fitted = fitImagesToSupport(request.messages, modelImageSupport(role))
+      if (!fitted) {
+        safeSend(sender, 'chat-error', { requestId, error: IMAGES_UNSUPPORTED_ERROR })
+        return
+      }
+      const messages = withKbPrompt(fitted, loadKbPrompt())
+      const finalMessages = role === 'chat' ? applyContextBudget(messages, role) : messages
       void streamToSender(sender, requestId, finalMessages, role, {
         chunk: (delta) => safeSend(sender, 'chat-chunk', { requestId, delta }),
         done: (text) => safeSend(sender, 'chat-response', { requestId, text }),
@@ -106,6 +112,11 @@ if (!hasSingleInstanceLock) {
         failed: (error) => safeSend(sender, 'chat-error', { requestId, error })
       })
     })
+
+    /* Whether the model behind a role reads images; the composer asks before attaching. */
+    ipcMain.handle('chat-image-support', (_event, role: unknown) =>
+      modelImageSupport(parseStreamRole(role))
+    )
 
     /* Chat streaming: expand a word/excerpt */
     ipcMain.on('chat-expand', (event, payload: unknown) => {

@@ -5,6 +5,7 @@ import {
   buildConversationTitle,
   CONVERSATION_TITLE_MAX_LENGTH
 } from '../../../shared/conversation'
+import type { ImageAttachment } from '../../../shared/attachments'
 import type { ExpansionTarget } from '../../../shared/rich-text'
 import {
   expansionMessageInput,
@@ -51,7 +52,7 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
   contextReady: boolean
   conversationId: string | null
   conversationTitle: string
-  send: (content: string) => void
+  send: (content: string, attachments?: ImageAttachment[]) => void
   stop: () => void
   retry: (turnId: number) => void
   regenerate: (turnId: number) => void
@@ -239,28 +240,33 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
   const editMessage = useCallback(
     (turnId: number, content: string) => {
       const trimmed = content.trim()
-      if (trimmed === '' || loading) return
+      if (loading) return
       const turnIndex = stateRef.current.turns.findIndex((turn) => turn.id === turnId)
-      if (turnIndex < 0 || stateRef.current.turns[turnIndex].role !== 'user') return
+      const original = stateRef.current.turns[turnIndex]
+      if (turnIndex < 0 || original.role !== 'user') return
+      if (trimmed === '' && !original.attachments?.length) return
+      // An edit changes the words; the images stay on the message.
       truncateAndResend(turnIndex, {
         id: nextTurnId++,
         role: 'user',
         content: trimmed,
-        expansions: []
+        expansions: [],
+        ...(original.attachments?.length ? { attachments: original.attachments } : {})
       })
     },
     [loading, truncateAndResend]
   )
 
   const send = useCallback(
-    (content: string) => {
+    (content: string, attachments?: ImageAttachment[]) => {
       const trimmed = content.trim()
-      if (trimmed === '' || loading) return
+      const hasImages = (attachments?.length ?? 0) > 0
+      if ((trimmed === '' && !hasImages) || loading) return
       if (role === 'lookup' && !contextReady) return
 
       if (!conversationMetaRef.current) {
         const id = crypto.randomUUID()
-        const title = buildConversationTitle(trimmed)
+        const title = buildConversationTitle(trimmed || (attachments?.[0]?.name ?? ''))
         const now = new Date().toISOString()
         conversationMetaRef.current = {
           id,
@@ -279,7 +285,8 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
         id: userTurnId,
         role: 'user',
         content: trimmed,
-        expansions: []
+        expansions: [],
+        ...(hasImages ? { attachments } : {})
       }
       const snapshot = stateRef.current
       const messages = serializeForChat(

@@ -32,6 +32,7 @@ export function renderConversationMarkdown(record: ConversationRecord): string {
     if (turn.role === 'assistant' && (turn.error || turn.content.trim() === '')) continue
 
     lines.push('', turn.role === 'user' ? '## You' : '## Delta AI')
+    for (const attachment of turn.attachments ?? []) lines.push(`_[Image: ${attachment.name}]_`)
     const body = turn.content.trimEnd()
     if (body) lines.push(body)
     for (const expansion of turn.expansions) {

@@ -1,9 +1,13 @@
 import { useCallback, useRef, useState, useEffect } from 'react'
+import type { ImageAttachment } from '../../../../shared/attachments'
+import { MAX_ATTACHMENTS_PER_MESSAGE } from '../../../../shared/attachments'
 import type { ConversationState } from '../../../../shared/conversation'
 import { CONVERSATION_TITLE_MAX_LENGTH } from '../../../../shared/conversation'
 import { useExpansionContextMenu } from '../../hooks/useExpansionContextMenu'
 import type { ExpandRequest } from '../../hooks/useExpansionContextMenu'
+import { useImageAttachments } from '../../hooks/useImageAttachments'
 import { useStickToBottom } from '../../hooks/useStickToBottom'
+import { attachmentSrc } from '../../lib/image-attachments'
 import Turn from './Turn'
 import ContextMenu from './ContextMenu'
 import ExpandPrompt from './ExpandPrompt'
@@ -11,7 +15,7 @@ import ExpandPrompt from './ExpandPrompt'
 interface ConversationProps {
   state: ConversationState
   loading: boolean
-  onSend: (content: string) => void
+  onSend: (content: string, attachments?: ImageAttachment[]) => void
   onStop: () => void
   onRetry: (turnId: number) => void
   onRegenerate?: (turnId: number) => void
@@ -24,6 +28,8 @@ interface ConversationProps {
   /** The composer draft is owned by the caller so it survives unmounting. */
   input: string
   onInputChange: (value: string) => void
+  attachments: ImageAttachment[]
+  onAttachmentsChange: React.Dispatch<React.SetStateAction<ImageAttachment[]>>
   onExpand: ExpandRequest
   onFold: (id: number) => void
   onUnfold: (id: number) => void
@@ -56,6 +62,8 @@ function Conversation({
   searchOpen = false,
   input,
   onInputChange,
+  attachments,
+  onAttachmentsChange,
   onExpand,
   onFold,
   onUnfold,
@@ -68,6 +76,12 @@ function Conversation({
 }: ConversationProps): React.JSX.Element {
   const { scrollRef, atBottom, pin, jumpToLatest } = useStickToBottom(state.turns)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const {
+    notice: attachNotice,
+    busy: attaching,
+    addFiles
+  } = useImageAttachments(attachments, onAttachmentsChange)
   const [exporting, setExporting] = useState(false)
   const [exported, setExported] = useState(false)
   const [toolbarError, setToolbarError] = useState<string | null>(null)
@@ -148,10 +162,29 @@ function Conversation({
 
   const handleSend = (): void => {
     const trimmed = input.trim()
-    if (trimmed === '' || loading) return
+    if ((trimmed === '' && attachments.length === 0) || attaching || loading) return
     pin()
     onInputChange('')
-    onSend(trimmed)
+    onAttachmentsChange([])
+    onSend(trimmed, attachments)
+  }
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>): void => {
+    const images = Array.from(e.clipboardData.files).filter((f) => f.type.startsWith('image/'))
+    if (images.length === 0) return
+    e.preventDefault()
+    void addFiles(images)
+  }
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>): void => {
+    e.preventDefault()
+    void addFiles(Array.from(e.dataTransfer.files))
+  }
+
+  const handleFilePicked = (e: React.ChangeEvent<HTMLInputElement>): void => {
+    void addFiles(Array.from(e.target.files ?? []))
+    // Picking the same file twice must fire `change` again.
+    e.target.value = ''
   }
 
   const handleExport = async (): Promise<void> => {
@@ -433,13 +466,69 @@ function Conversation({
             Latest
           </button>
         )}
-        <div className="composer-box">
+        {attachNotice && (
+          <p className="composer-notice" role="status">
+            {attachNotice}
+          </p>
+        )}
+        {attachments.length > 0 && (
+          <div className="composer-attachments">
+            {attachments.map((attachment, index) => (
+              <div key={index} className="composer-attachment">
+                <img
+                  src={attachmentSrc(attachment)}
+                  alt={attachment.name}
+                  title={attachment.name}
+                />
+                <button
+                  type="button"
+                  className="composer-attachment-remove"
+                  aria-label={`Remove ${attachment.name}`}
+                  onClick={() => onAttachmentsChange((prev) => prev.filter((_, i) => i !== index))}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="composer-box" onDragOver={(e) => e.preventDefault()} onDrop={handleDrop}>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            multiple
+            hidden
+            onChange={handleFilePicked}
+          />
+          <button
+            type="button"
+            className="composer-attach"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={attaching || attachments.length >= MAX_ATTACHMENTS_PER_MESSAGE}
+            aria-label="Attach images"
+            title="Attach images"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              className="icon"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M21 11.5l-8.6 8.6a5.5 5.5 0 01-7.8-7.8l9.2-9.2a3.7 3.7 0 015.2 5.2l-9.2 9.2a1.8 1.8 0 01-2.6-2.6l8.5-8.5" />
+            </svg>
+          </button>
           <textarea
             ref={textareaRef}
             className="composer-input"
             value={input}
             onChange={(e) => onInputChange(e.target.value)}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             placeholder="Message Delta AI..."
             aria-label="Message Delta AI"
             rows={1}
@@ -459,7 +548,7 @@ function Conversation({
             <button
               className="composer-send"
               onClick={handleSend}
-              disabled={input.trim() === ''}
+              disabled={attaching || (input.trim() === '' && attachments.length === 0)}
               aria-label="Send message"
             >
               <svg viewBox="0 0 24 24" className="icon" aria-hidden="true">

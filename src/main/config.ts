@@ -1,6 +1,6 @@
 import { join } from 'path'
 import { readFileSync, existsSync, mkdirSync } from 'fs'
-import { app, ipcMain, globalShortcut } from 'electron'
+import { app, ipcMain, globalShortcut, nativeTheme } from 'electron'
 import { registerGlobalShortcutPortal } from './services/global-shortcut'
 import { configureLocalShortcut, setHotkeyCaptureActive } from './services/local-shortcut'
 import { handleHotkeyPressed } from './lookup/lookup'
@@ -11,6 +11,7 @@ import {
   type ModelConfig,
   type Connection,
   type LookupContextMode,
+  type ThemeMode,
   createDefaultModelConfig
 } from './models/registries'
 import { migrateModelConfig } from './models/config-schema'
@@ -46,6 +47,7 @@ interface AppSettings {
   lookupContextMode: LookupContextMode
   /** Learn the user's preferences in the background; see `kb/maintenance.ts`. */
   kbAutoMaintain: boolean
+  theme: ThemeMode
 }
 
 /* ---- Wayland detection ----
@@ -178,7 +180,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   hotkey: DEFAULT_HOTKEY,
   closeToTray: true,
   lookupContextMode: 'none',
-  kbAutoMaintain: true
+  kbAutoMaintain: true,
+  theme: 'dark'
 }
 
 /** Accept only the shapes the app can honour; a hand-edited file must not poison them. */
@@ -202,7 +205,11 @@ export function normalizeAppSettings(raw: unknown): AppSettings {
     kbAutoMaintain:
       typeof record.kbAutoMaintain === 'boolean'
         ? record.kbAutoMaintain
-        : DEFAULT_SETTINGS.kbAutoMaintain
+        : DEFAULT_SETTINGS.kbAutoMaintain,
+    theme:
+      record.theme === 'system' || record.theme === 'light' || record.theme === 'dark'
+        ? record.theme
+        : DEFAULT_SETTINGS.theme
   }
 }
 
@@ -229,6 +236,9 @@ export function loadAppSettings(): AppSettings {
 export function applyAppSettings(settings: AppSettings): void {
   currentCloseToTray = settings.closeToTray
   currentLookupContextMode = settings.lookupContextMode
+  // Every window follows through `prefers-color-scheme`, so an open popup restyles
+  // live and a new one paints correctly from its first frame, with no extra IPC.
+  nativeTheme.themeSource = settings.theme
 }
 
 function ensureConfigDir(): string {

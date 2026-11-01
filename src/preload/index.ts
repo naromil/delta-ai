@@ -26,12 +26,14 @@ const api = {
     closeToTray: boolean
     lookupContextMode: string
     kbAutoMaintain: boolean
+    theme: string
   }> => ipcRenderer.invoke('load-settings'),
   saveSettings: (settings: {
     hotkey?: string
     closeToTray?: boolean
     lookupContextMode?: string
     kbAutoMaintain?: boolean
+    theme?: string
   }): Promise<{ success: boolean; hotkeyMode: 'global' | 'local'; error?: string }> =>
     ipcRenderer.invoke('save-settings', settings),
   getHotkeyStatus: (): Promise<{ accelerator: string; mode: 'global' | 'local' }> =>
@@ -57,10 +59,16 @@ const api = {
 
   /* Chat streaming channels (correlated by requestId) */
   chatSend: (payload: {
-    messages: Array<{ role: string; content: string }>
+    messages: Array<{
+      role: string
+      content: string
+      images?: Array<{ mediaType: string; data: string }>
+    }>
     requestId: string
     role?: string
   }) => ipcRenderer.send('chat-send', payload),
+  chatImageSupport: (role: string): Promise<'yes' | 'no' | 'unknown'> =>
+    ipcRenderer.invoke('chat-image-support', role),
   chatExpand: (payload: {
     messages: Array<{ role: string; content: string }>
     requestId: string

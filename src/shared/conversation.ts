@@ -1,3 +1,4 @@
+import type { ImageAttachment } from './attachments'
 import type { ProviderMessage } from './models'
 import { getSystemPrompt, buildScreenContextMessage } from './prompts'
 import type { ExpansionNode, LegacyTurn, RichTextTurn } from './rich-text'
@@ -8,6 +9,8 @@ export type { ProviderMessage, ExpansionNode }
 export interface Turn extends RichTextTurn {
   role: 'user' | 'assistant'
   error?: boolean
+  /** Images sent with a user turn. */
+  attachments?: ImageAttachment[]
 }
 
 export interface ConversationState {
@@ -99,7 +102,12 @@ export function serializeForChat(
     // Failed turns store the error text for the UI, and empty assistant turns are
     // in-flight/legacy placeholders; neither may be replayed to the model.
     if (turn.role === 'assistant' && (turn.error || turn.content.trim() === '')) continue
-    messages.push({ role: turn.role, content: turn.content })
+    const images = turn.attachments?.map(({ mediaType, data }) => ({ mediaType, data }))
+    messages.push({
+      role: turn.role,
+      content: turn.content,
+      ...(images?.length ? { images } : {})
+    })
   }
   return messages
 }

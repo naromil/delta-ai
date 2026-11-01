@@ -124,3 +124,40 @@ describe('createChunkBatcher', () => {
     expect(send).not.toHaveBeenCalled()
   })
 })
+
+describe('image payloads', () => {
+  const image = { mediaType: 'image/jpeg', data: 'QUJD' }
+
+  it('keeps valid images on a user message', () => {
+    const parsed = parseProviderMessages([{ role: 'user', content: 'x', images: [image] }])
+    expect(parsed).toEqual([{ role: 'user', content: 'x', images: [image] }])
+  })
+
+  it('strips unknown image fields before they reach a provider', () => {
+    const parsed = parseProviderMessages([
+      { role: 'user', content: 'x', images: [{ ...image, name: 'secret.jpg' }] }
+    ])
+    expect(parsed?.[0].images).toEqual([image])
+  })
+
+  it.each([
+    ['on a non-user message', { role: 'assistant', content: 'x', images: [image] }],
+    [
+      'with a bad media type',
+      { role: 'user', content: 'x', images: [{ ...image, mediaType: 'text/html' }] }
+    ],
+    ['not in an array', { role: 'user', content: 'x', images: image }],
+    ['over the count limit', { role: 'user', content: 'x', images: Array(5).fill(image) }]
+  ])('refuses images %s', (_label, message) => {
+    expect(parseProviderMessages([message])).toBeNull()
+  })
+
+  it('validates stored attachments on a conversation state', () => {
+    const turn = { id: 1, role: 'user', content: 'x', expansions: [] }
+    expect(
+      isConversationState({ turns: [{ ...turn, attachments: [{ ...image, name: 'a.jpg' }] }] })
+    ).toBe(true)
+    expect(isConversationState({ turns: [{ ...turn, attachments: [image] }] })).toBe(false)
+    expect(isConversationState({ turns: [{ ...turn, attachments: 'nope' }] })).toBe(false)
+  })
+})

@@ -17,6 +17,9 @@ Delta AI lives in two windows: a full **chat** interface and an **always-on-top 
 - **Conversation persistence & search** — All conversations are saved to disk automatically (body + metadata sidecar), survive restarts, and are searchable by title and message content with `Ctrl/Cmd+K` from any view. The Home view lists your most recent chats.
 - **Rename, edit, regenerate, export, delete** — Rename a conversation inline without reordering recents, edit and resend any of your messages, regenerate any answer (confirming when later messages would be dropped), export a conversation as markdown through the system save dialog, or delete the open conversation from the chat toolbar.
 - **Keyboard-friendly chat** — `Ctrl/Cmd+N` starts a new chat from anywhere, `Esc` stops a response mid-stream, the composer keeps your draft when you switch views, and code blocks have their own Copy button.
+- **Rich answers** — Code blocks are syntax highlighted, LaTeX math renders with KaTeX (`$…$`, `$$…$$`, `\(…\)`, `\[…\]`), and links open in your system browser.
+- **Image attachments** — Attach, paste or drop up to 4 images per chat message for vision models. Images are scaled down and stripped of metadata before they are sent or saved.
+- **Light and dark themes** — Choose Dark, Light or Match system in Settings → General.
 - **Long chats stay within the model's window** — Chat requests drop the oldest messages when they would exceed the model's context window (as reported by models.dev); when the window is unknown nothing is trimmed.
 - **Wayland-first** — Built-in support for KDE Plasma Wayland via XDG Desktop Portals (GlobalShortcuts + Screenshot). Falls back to Electron's `globalShortcut` / `desktopCapturer` on X11, macOS, and Windows.
 - **Privacy-first** — All data stays on your machine except AI API calls (and the public models.dev model list). API keys are encrypted at rest with the OS keychain and never reach the UI. No telemetry, no accounts.
@@ -158,7 +161,7 @@ Delta AI requires **your own API keys** to function. Open Settings → Models to
 Configuration files live in `{userData}/config/`:
 
 - `providers.json` — connections and role assignments; API keys are sealed with Electron `safeStorage`
-- `settings.json` — `hotkey`, `closeToTray`, `lookupContextMode` (`none` / `clipboard` / `fullscreen-ocr`, default `none`) and `kbAutoMaintain` (default `true`)
+- `settings.json` — `hotkey`, `closeToTray`, `lookupContextMode` (`none` / `clipboard` / `fullscreen-ocr`, default `none`) , `kbAutoMaintain` (default `true`) and `theme` (`dark` / `light` / `system`, default `dark`)
 
 Conversations are stored in `{userData}/conversations/{id}.json` with a `{id}.meta.json` sidecar.
 The learned profile lives in `{userData}/kb/`.
@@ -183,6 +186,7 @@ On Wayland, Electron's `clipboard.readText()` reads from the XWayland clipboard 
 
 - **Bring your own key (BYOK)** — API keys are stored locally in `{userData}/config/providers.json`, encrypted with the OS keychain via Electron `safeStorage` (plaintext only where the platform offers no keychain). Keys stay in the main process and are never sent to the UI.
 - **All data stays local** except the AI API requests themselves.
+- **Image attachments** go to your chat model's provider with the conversation, on every later message in that chat. They are stored unencrypted in the conversation file, like the rest of your chat history.
 - **KB personalization** appends a condensed learned profile to chat and lookup requests. Building that profile sends your chat history to the model you assign to the Knowledge Base Maintenance role; turn automatic learning off in Settings → General to stop it.
 - **No telemetry, no analytics, no accounts.**
 

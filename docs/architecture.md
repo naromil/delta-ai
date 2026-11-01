@@ -85,7 +85,8 @@ Both windows talk to the same main process. Everything the app knows about the u
 3. `window.api.chatSend({ messages, requestId, role })` → `chat-send` in `index.ts`.
 4. Main validates the payload (`streaming.ts`: `parseProviderMessages`, `parseStreamRole` —
    only `chat`/`lookup` are reachable) and, for both roles, appends the KB personalization
-   prompt to the system message (`withKbPrompt`) before dispatch.
+   prompt to the system message (`withKbPrompt`) before dispatch. Images are validated here too
+   (`isImageInput`), and `fitImagesToSupport` refuses or drops them on a text-only model first.
 5. For `role: 'chat'` only, `applyContextBudget(messages, 'chat')` drops the oldest non-system
    messages (never the last) until a 4-chars-per-token estimate fits `budgetFor` of the cached
    model's `contextWindow`/`maxOutput`. The catalog is read from the memory/disk cache only, and
@@ -223,6 +224,7 @@ record, and resets `expansionIdCounter` past the max imported id.
 | ----------------------------------------------------------- | ------------ | --------------------------------------------------------------- |
 | `chat-send` → `chat-chunk` / `chat-response` / `chat-error` | R → M, M → R | Streaming chat, correlated by `requestId`                       |
 | `chat-cancel`                                               | R → M        | Abort a `chat-send`/`chat-expand` stream                        |
+| `chat-image-support`                                        | R → M        | Whether a role's model reads images (`yes` / `no` / `unknown`)  |
 | `chat-expand` → `chat-expand-chunk`                         | R → M, M → R | Expansions (`done` / `error` / `cancelled` marks)               |
 | `chat-replace-conversation`                                 | M → R        | Hydrate transferred state + id/title/createdAt                  |
 | `lookup-trigger-grow` / `lookup-grow`                       | L → M, M → L | First-ask window growth                                         |
@@ -261,9 +263,9 @@ surfaces a failed save inline (`role="alert"`) instead of a native `alert()`.
 ```
 {userData}/
   config/providers.json     ModelConfig (schemaVersion 2)
-  config/settings.json      { hotkey, closeToTray, lookupContextMode, kbAutoMaintain }
+  config/settings.json      { hotkey, closeToTray, lookupContextMode, kbAutoMaintain, theme }
   cache/models-dev.json     models.dev snapshot (24h TTL, offline fallback)
-  conversations/{id}.json   ConversationRecord
+  conversations/{id}.json   ConversationRecord (image attachments inline, base64)
   conversations/{id}.meta.json  ConversationMeta (list/search sidecar)
   kb/prompt.txt             personalization prompt (plain text)
   kb/keywords.json          CategorizedKeyword[]
@@ -392,6 +394,9 @@ tokens and must not redefine them (it used to, which is how the popup drifted).
   `--ease-out`), layers (`--z-menu`, `--z-overlay`), type (`--font-sans`, `--font-display`,
   `--font-mono`) and `--content-width`. Use a token; never hardcode a hex colour or px radius in a
   surface stylesheet.
+- **Theme**: `settings.json` → `theme` sets `nativeTheme.themeSource`, and the `@media
+(prefers-color-scheme: light)` block in `base.css` overrides the colour tokens. Nothing else knows
+  which theme is active. Syntax colours are tokens too (`--code-*`), as are tag labels (`--tag-*`).
 - **Controls**: `.btn` with `--primary` / `--danger` / `--sm` modifiers, and `.field` for text
   inputs and selects. A view must not invent its own button style.
 - **Focus**: buttons and clickable elements get the shared `:focus-visible` outline from
@@ -402,7 +407,8 @@ tokens and must not redefine them (it used to, which is how the popup drifted).
 - **Scrollbars**: one global `*::-webkit-scrollbar` rule guarantees no native OS scrollbar; a
   surface may refine width or colour on top of it.
 - **Motion**: every animation and transition collapses under `prefers-reduced-motion: reduce`.
-- **Fonts**: system stacks only. The renderer CSP (`style-src 'self'`) blocks remote stylesheets,
+- **Fonts**: system stacks only, except KaTeX's bundled math fonts, which load from the app itself.
+  The renderer CSP (`style-src 'self'`) blocks remote stylesheets,
   so a webfont `@import` silently never applies — the display serif is `--font-display`.
 - **Narrow windows**: the sidebar collapses to a 64px icon rail at ≤860px (labels hidden, `title`
   attributes carry the names); at ≤720px the chat drops its toolbar title, key hints and message

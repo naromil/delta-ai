@@ -4,6 +4,7 @@ export {
   type AuthShape,
   type RoleId,
   type LookupContextMode,
+  type ThemeMode,
   type ProviderTypeDef,
   type RoleDef,
   type Connection,

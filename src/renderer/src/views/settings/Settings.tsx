@@ -4,7 +4,8 @@ import type {
   LookupContextMode,
   ModelConfig,
   RoleAssignment,
-  RoleId
+  RoleId,
+  ThemeMode
 } from '../../../../shared/models'
 import { createDefaultModelConfig } from '../../../../shared/models'
 import type { ModelCatalogState } from '../../../../shared/model-catalog'
@@ -42,9 +43,10 @@ function settingsSnapshot(
   hotkey: string,
   closeToTray: boolean,
   lookupContextMode: LookupContextMode,
-  kbAutoMaintain: boolean
+  kbAutoMaintain: boolean,
+  theme: ThemeMode
 ): string {
-  return JSON.stringify({ hotkey, closeToTray, lookupContextMode, kbAutoMaintain })
+  return JSON.stringify({ hotkey, closeToTray, lookupContextMode, kbAutoMaintain, theme })
 }
 
 function Settings(): React.JSX.Element {
@@ -60,6 +62,7 @@ function Settings(): React.JSX.Element {
   const [closeToTray, setCloseToTray] = useState(true)
   const [lookupContextMode, setLookupContextMode] = useState<LookupContextMode>('none')
   const [kbAutoMaintain, setKbAutoMaintain] = useState(true)
+  const [theme, setTheme] = useState<ThemeMode>('dark')
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
   const [saveError, setSaveError] = useState<string | null>(null)
   const [hydrated, setHydrated] = useState(false)
@@ -70,7 +73,8 @@ function Settings(): React.JSX.Element {
     hotkey,
     closeToTray,
     lookupContextMode,
-    kbAutoMaintain
+    kbAutoMaintain,
+    theme
   })
   const hydratedRef = useRef(false)
 
@@ -99,6 +103,7 @@ function Settings(): React.JSX.Element {
         closeToTray?: boolean
         lookupContextMode?: string
         kbAutoMaintain?: boolean
+        theme?: string
       } | null
       const config = (
         cfg && typeof cfg === 'object' ? cfg : createDefaultModelConfig()
@@ -112,6 +117,10 @@ function Settings(): React.JSX.Element {
           ? settings.lookupContextMode
           : 'none'
       const nextKbAutoMaintain = settings?.kbAutoMaintain ?? true
+      const nextTheme: ThemeMode =
+        settings?.theme === 'system' || settings?.theme === 'light' || settings?.theme === 'dark'
+          ? settings.theme
+          : 'dark'
 
       // Seed both baselines before flipping `hydrated`, so loading never writes back.
       savedConfigRef.current = JSON.stringify(config)
@@ -119,13 +128,15 @@ function Settings(): React.JSX.Element {
         nextHotkey,
         nextTray,
         nextMode,
-        nextKbAutoMaintain
+        nextKbAutoMaintain,
+        nextTheme
       )
       setModelConfig(config)
       setHotkey(nextHotkey)
       setCloseToTray(nextTray)
       setLookupContextMode(nextMode)
       setKbAutoMaintain(nextKbAutoMaintain)
+      setTheme(nextTheme)
       hydratedRef.current = true
       setHydrated(true)
     })()
@@ -195,7 +206,8 @@ function Settings(): React.JSX.Element {
       nextHotkey: string,
       nextTray: boolean,
       nextMode: LookupContextMode,
-      nextKbAutoMaintain: boolean
+      nextKbAutoMaintain: boolean,
+      nextTheme: ThemeMode
     ): Promise<void> => {
       setSaveStatus('saving')
       setSaveError(null)
@@ -211,13 +223,20 @@ function Settings(): React.JSX.Element {
           savedConfigRef.current = configJson
         }
 
-        const settingsJson = settingsSnapshot(nextHotkey, nextTray, nextMode, nextKbAutoMaintain)
+        const settingsJson = settingsSnapshot(
+          nextHotkey,
+          nextTray,
+          nextMode,
+          nextKbAutoMaintain,
+          nextTheme
+        )
         if (settingsJson !== savedSettingsRef.current) {
           const settingsRes = await window.api.saveSettings({
             hotkey: nextHotkey,
             closeToTray: nextTray,
             lookupContextMode: nextMode,
-            kbAutoMaintain: nextKbAutoMaintain
+            kbAutoMaintain: nextKbAutoMaintain,
+            theme: nextTheme
           })
           if (!settingsRes.success) {
             setSaveStatus('error')
@@ -243,24 +262,32 @@ function Settings(): React.JSX.Element {
       nextHotkey: string,
       nextTray: boolean,
       nextMode: LookupContextMode,
-      nextKbAutoMaintain: boolean
+      nextKbAutoMaintain: boolean,
+      nextTheme: ThemeMode
     ): boolean =>
       JSON.stringify(config) !== savedConfigRef.current ||
-      settingsSnapshot(nextHotkey, nextTray, nextMode, nextKbAutoMaintain) !==
+      settingsSnapshot(nextHotkey, nextTray, nextMode, nextKbAutoMaintain, nextTheme) !==
         savedSettingsRef.current,
     []
   )
 
   useEffect(() => {
-    latestRef.current = { modelConfig, hotkey, closeToTray, lookupContextMode, kbAutoMaintain }
-  }, [modelConfig, hotkey, closeToTray, lookupContextMode, kbAutoMaintain])
+    latestRef.current = {
+      modelConfig,
+      hotkey,
+      closeToTray,
+      lookupContextMode,
+      kbAutoMaintain,
+      theme
+    }
+  }, [modelConfig, hotkey, closeToTray, lookupContextMode, kbAutoMaintain, theme])
 
   /* Debounced: typing an API key or a base URL must not hit the disk per keystroke. */
   useEffect(() => {
     if (!hydrated) return
-    if (!isDirty(modelConfig, hotkey, closeToTray, lookupContextMode, kbAutoMaintain)) return
+    if (!isDirty(modelConfig, hotkey, closeToTray, lookupContextMode, kbAutoMaintain, theme)) return
     const timer = window.setTimeout(() => {
-      void persist(modelConfig, hotkey, closeToTray, lookupContextMode, kbAutoMaintain)
+      void persist(modelConfig, hotkey, closeToTray, lookupContextMode, kbAutoMaintain, theme)
     }, 500)
     return () => window.clearTimeout(timer)
   }, [
@@ -270,6 +297,7 @@ function Settings(): React.JSX.Element {
     closeToTray,
     lookupContextMode,
     kbAutoMaintain,
+    theme,
     isDirty,
     persist
   ])
@@ -285,7 +313,8 @@ function Settings(): React.JSX.Element {
           latest.hotkey,
           latest.closeToTray,
           latest.lookupContextMode,
-          latest.kbAutoMaintain
+          latest.kbAutoMaintain,
+          latest.theme
         )
       ) {
         return
@@ -295,7 +324,8 @@ function Settings(): React.JSX.Element {
         latest.hotkey,
         latest.closeToTray,
         latest.lookupContextMode,
-        latest.kbAutoMaintain
+        latest.kbAutoMaintain,
+        latest.theme
       )
     }
   }, [isDirty, persist])
@@ -353,6 +383,8 @@ function Settings(): React.JSX.Element {
             onLookupContextModeChange={setLookupContextMode}
             kbAutoMaintain={kbAutoMaintain}
             onKbAutoMaintainChange={setKbAutoMaintain}
+            theme={theme}
+            onThemeChange={setTheme}
           />
         )}
         {activeTab === 'models' && (

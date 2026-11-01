@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { mergeAppSettings, normalizeAppSettings } from '../../src/main/config'
+import { nativeTheme } from 'electron'
+import { applyAppSettings, mergeAppSettings, normalizeAppSettings } from '../../src/main/config'
 
 // config.ts pulls in Electron, the portal and the lookup orchestrator. Everything
 // under test (settings normalization) is pure, so replace the heavy edges.
@@ -14,7 +15,8 @@ vi.mock('electron', () => ({
   screen: { getDisplayNearestPoint: vi.fn(), getCursorScreenPoint: vi.fn() },
   clipboard: { readText: vi.fn(() => ''), readImage: vi.fn() },
   desktopCapturer: { getSources: vi.fn() },
-  nativeImage: { createFromBuffer: vi.fn() }
+  nativeImage: { createFromBuffer: vi.fn() },
+  nativeTheme: { themeSource: 'system' }
 }))
 
 vi.mock('../../src/main/services/global-shortcut', () => ({
@@ -35,7 +37,8 @@ const DEFAULTS = {
   hotkey: 'Ctrl+Shift+D',
   closeToTray: true,
   lookupContextMode: 'none',
-  kbAutoMaintain: true
+  kbAutoMaintain: true,
+  theme: 'dark'
 }
 
 describe('normalizeAppSettings', () => {
@@ -86,7 +89,8 @@ describe('mergeAppSettings', () => {
     hotkey: 'Ctrl+Space',
     closeToTray: false,
     lookupContextMode: 'clipboard' as const,
-    kbAutoMaintain: false
+    kbAutoMaintain: false,
+    theme: 'dark'
   }
 
   it('changes only the fields in the patch', () => {
@@ -106,5 +110,29 @@ describe('mergeAppSettings', () => {
     expect(mergeAppSettings(current, { lookupContextMode: 'telepathy' }).lookupContextMode).toBe(
       'none'
     )
+  })
+})
+
+describe('theme setting', () => {
+  it('defaults to dark, so existing installs keep their look', () => {
+    expect(normalizeAppSettings({}).theme).toBe('dark')
+  })
+
+  it.each(['system', 'light', 'dark'])('accepts %s', (theme) => {
+    expect(normalizeAppSettings({ theme }).theme).toBe(theme)
+  })
+
+  it('rejects a hand-edited value', () => {
+    expect(normalizeAppSettings({ theme: 'neon' }).theme).toBe('dark')
+  })
+
+  it('keeps the theme when another field is patched', () => {
+    const current = normalizeAppSettings({ theme: 'light' })
+    expect(mergeAppSettings(current, { closeToTray: false }).theme).toBe('light')
+  })
+
+  it('applies the theme to every window through nativeTheme', () => {
+    applyAppSettings(normalizeAppSettings({ theme: 'light' }))
+    expect(nativeTheme.themeSource).toBe('light')
   })
 })
