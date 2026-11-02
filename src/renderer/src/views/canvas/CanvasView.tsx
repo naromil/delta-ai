@@ -23,8 +23,10 @@ import {
   estimateWords,
   fitViewport,
   fitsOnScreen,
+  gridSpacing,
   isTopLevel,
   movingCardIds,
+  pulledOutCardIds,
   nearestCardInDirection,
   rectAgainst,
   rectCenteredAt,
@@ -32,6 +34,8 @@ import {
   rectClearOf,
   rectFromPoints,
   rectsOverlap,
+  resizeCard,
+  resizeFollowerIds,
   resolveMove,
   revealRect,
   screenToWorld,
@@ -53,6 +57,8 @@ import ExpandSelectionBar from '../../components/conversation/ExpandSelectionBar
 import type { useCanvas } from '../../hooks/useCanvas'
 import { useExpansionContextMenu } from '../../hooks/useExpansionContextMenu'
 import { formatRelativeTime } from '../../lib/format'
+import type { ViewportMotion } from '../../lib/viewport-motion'
+import { createViewportMotion } from '../../lib/viewport-motion'
 import CanvasCardView from './CanvasCardView'
 import type { CanvasCardActions, CanvasCardStatus } from './CanvasCardView'
 import CanvasDraft from './CanvasDraft'
@@ -65,7 +71,15 @@ type Tool = 'move' | 'select'
 type Gesture =
   | { type: 'pan'; pointer: CanvasPoint; origin: CanvasViewport }
   | { type: 'draw'; start: CanvasPoint; end: CanvasPoint }
-  | { type: 'drag'; id: string; ids: Set<string>; start: CanvasPoint; pointer: CanvasPoint }
+  | {
+      type: 'drag'
+      id: string
+      ids: Set<string>
+      /** Alt+drag: only this card moves, and it snaps to nothing. */
+      pulledOut: boolean
+      start: CanvasPoint
+      pointer: CanvasPoint
+    }
   | { type: 'resize'; id: string; start: CanvasPoint; pointer: CanvasPoint }
 
 /** A rectangle waiting for its question: the canvas's composer. */
@@ -158,6 +172,12 @@ function canScrollBy(element: Element, dx: number, dy: number): boolean {
   return dx > 0 && scrollLeft + clientWidth < scrollWidth - 1
 }
 
+/** Chromium leaves Shift+wheel vertical here, and it is a plain mouse's only way sideways. */
+function wheelPanDelta(e: WheelEvent): { deltaX: number; deltaY: number } {
+  if (e.shiftKey && e.deltaX === 0) return { deltaX: e.deltaY, deltaY: 0 }
+  return { deltaX: e.deltaX, deltaY: e.deltaY }
+}
+
 /** A claimed press takes no focus by itself, so whatever held it would otherwise keep it. */
 function releaseFocus(pressed: Element): void {
   const active = document.activeElement
@@ -206,6 +226,9 @@ function confirmCascade(question: string, dependents: number): boolean {
     )
   )
 }
+
+/** Keeps a run of wheel events on what it started moving as things pass under the pointer. */
+const WHEEL_LATCH_MS = 160
 
 /** Reads the status a card should show from its turn or expansion. */
 function cardContent(
@@ -274,10 +297,43 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
   const animationTimerRef = useRef<number | null>(null)
   const exportTimerRef = useRef<number | null>(null)
 
+  const worldRef = useRef<HTMLDivElement>(null)
+  const zoomValueRef = useRef<HTMLSpanElement>(null)
+  const motionRef = useRef<ViewportMotion | null>(null)
+
   const viewportRef = useRef(viewport)
+  const paintViewport = useCallback((next: CanvasViewport): void => {
+    viewportRef.current = next
+    const { x, y, zoom } = next
+    const grid = gridSpacing(zoom)
+    if (worldRef.current) {
+      worldRef.current.style.transform = `translate(${x}px, ${y}px) scale(${zoom})`
+    }
+    if (surfaceRef.current) {
+      surfaceRef.current.style.backgroundSize = `${grid}px ${grid}px`
+      surfaceRef.current.style.backgroundPosition = `${x}px ${y}px`
+    }
+    if (zoomValueRef.current) zoomValueRef.current.textContent = `${Math.round(zoom * 100)}%`
+  }, [])
+
+  // The plane's position is never a React style prop: frames in motion are written
+  // directly, and React's diff would skip a viewport equal to the one it last rendered.
+  useLayoutEffect(() => {
+    paintViewport(viewport)
+    // Inherited by every card, so it is restyled only at rest, never frame by frame.
+    worldRef.current?.style.setProperty('--canvas-zoom', String(viewport.zoom))
+  }, [paintViewport, viewport])
+
   useEffect(() => {
-    viewportRef.current = viewport
-  }, [viewport])
+    const motion = createViewportMotion({
+      read: () => viewportRef.current,
+      paint: paintViewport,
+      commit: setViewport,
+      setMoving: (moving) => surfaceRef.current?.toggleAttribute('data-moving', moving)
+    })
+    motionRef.current = motion
+    return () => motion.cancel()
+  }, [paintViewport, setViewport])
 
   // Callbacks read the turns through this, so card actions stay stable while text streams.
   const canvasRef = useRef(canvas)
@@ -323,9 +379,10 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     return () => observer.disconnect()
   }, [])
 
-  /** Eases to a viewport; panning and wheel zoom set it directly instead. */
+  /** Eases to a viewport; panning and wheel zoom go through `motionRef` instead. */
   const glideTo = useCallback(
     (next: CanvasViewport): void => {
+      motionRef.current?.settle()
       setAnimating(true)
       setViewport(next)
       if (animationTimerRef.current !== null) window.clearTimeout(animationTimerRef.current)
@@ -467,6 +524,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
   const claimedPressRef = useRef(false)
   const claimPress = useCallback((e: React.PointerEvent): void => {
     claimedPressRef.current = true
+    motionRef.current?.settle()
     surfaceRef.current?.setPointerCapture(e.pointerId)
   }, [])
 
@@ -488,7 +546,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       window.getSelection()?.removeAllRanges()
       claimPress(e)
       unfollow()
-      setGesture({ type: 'pan', pointer: pointerOnSurface(e), origin: viewport })
+      setGesture({ type: 'pan', pointer: pointerOnSurface(e), origin: viewportRef.current })
       return
     }
     if (e.button === 0 && drawing) {
@@ -502,11 +560,12 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     if (!gesture) return
     if (gesture.type === 'pan') {
       const pointer = pointerOnSurface(e)
-      setViewport({
+      const next = {
         ...gesture.origin,
         x: gesture.origin.x + pointer.x - gesture.pointer.x,
         y: gesture.origin.y + pointer.y - gesture.pointer.y
-      })
+      }
+      motionRef.current?.steer(() => next, true)
     } else if (gesture.type === 'draw') {
       setGesture({ ...gesture, end: pointerInWorld(e) })
     } else {
@@ -529,7 +588,8 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       x: card.rect.x + gesture.pointer.x - gesture.start.x,
       y: card.rect.y + gesture.pointer.y - gesture.start.y
     }
-    const snap = snapMove(moved, topLevelRects(cards, gesture.ids), SNAP_SCREEN_PX / viewport.zoom)
+    const snapDistance = gesture.pulledOut ? -1 : SNAP_SCREEN_PX / viewport.zoom
+    const snap = snapMove(moved, topLevelRects(cards, gesture.ids), snapDistance)
     return {
       dx: snap.rect.x - card.rect.x,
       dy: snap.rect.y - card.rect.y,
@@ -552,9 +612,11 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       const host = cards.find((item) => item.id === card.hostId)
       return host ? clampRectInside(rect, host.rect) : rect
     }
+    // A card that follows the moving edge is not a target: it would hold the edge in place.
+    const carried = new Set([card.id, ...resizeFollowerIds(cards, card.id)])
     const snapped = snapEdges(
       rect,
-      topLevelRects(cards, new Set([card.id])),
+      topLevelRects(cards, carried),
       SNAP_SCREEN_PX / viewport.zoom
     ).rect
     return { ...rect, w: snapped.x + snapped.w - rect.x, h: snapped.y + snapped.h - rect.y }
@@ -568,13 +630,23 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     [cards, dragDelta, gesture]
   )
 
-  const resizeBlocked = useMemo(() => {
-    if (gesture?.type !== 'resize' || !resizedRect) return false
-    const card = cards.find((item) => item.id === gesture.id)
-    if (!card || (card.kind === 'expansion' && card.inset)) return false
-    const others = topLevelRects(cards, new Set([card.id]))
-    return others.some((rect) => rectsOverlap(resizedRect, rect))
-  }, [cards, gesture, resizedRect])
+  const resizeUpdates = useMemo(
+    () =>
+      gesture?.type === 'resize' && resizedRect
+        ? resizeCard(cards, gesture.id, { w: resizedRect.w, h: resizedRect.h })
+        : null,
+    [cards, gesture, resizedRect]
+  )
+  const resizeBlocked = gesture?.type === 'resize' && resizedRect !== null && !resizeUpdates
+
+  // A refused drop or resize sends back everything that would have moved, so all of it warns.
+  const refusedIds = useMemo((): ReadonlySet<string> => {
+    if (gesture?.type === 'drag') return dragResult?.ok === false ? gesture.ids : new Set()
+    if (gesture?.type === 'resize' && resizeBlocked) {
+      return new Set([gesture.id, ...resizeFollowerIds(cards, gesture.id)])
+    }
+    return new Set()
+  }, [cards, dragResult, gesture, resizeBlocked])
 
   const handleSurfaceUp = (): void => {
     claimedPressRef.current = false
@@ -594,8 +666,8 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       const isOut = dragResult.updates.some((item) => item.id === gesture.id && !item.inset)
       if (wasInset && isOut) canvas.requestFit(gesture.id)
     } else if (gesture.type === 'resize' && resizedRect) {
-      if (resizeBlocked) showNotice(REFUSE_MOVE)
-      else updateCards([{ id: gesture.id, rect: resizedRect }])
+      if (resizeUpdates) updateCards(resizeUpdates)
+      else showNotice(REFUSE_MOVE)
     }
   }
 
@@ -608,7 +680,10 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       setGesture({
         type: 'drag',
         id,
-        ids: movingCardIds(cardsRef.current, id),
+        ids: e.altKey
+          ? pulledOutCardIds(cardsRef.current, id)
+          : movingCardIds(cardsRef.current, id),
+        pulledOut: e.altKey,
         start,
         pointer: start
       })
@@ -631,26 +706,39 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
   useEffect(() => {
     const surface = surfaceRef.current
     if (!surface) return
+    let latch: { target: Element | 'plane'; at: number } | null = null
     const handleWheel = (e: WheelEvent): void => {
-      const current = viewportRef.current
+      const held = latch && e.timeStamp - latch.at < WHEEL_LATCH_MS ? latch.target : null
+      const { deltaX, deltaY } = wheelPanDelta(e)
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault()
         followRef.current = false
+        latch = { target: 'plane', at: e.timeStamp }
         const box = surface.getBoundingClientRect()
         const anchor = { x: e.clientX - box.left, y: e.clientY - box.top }
-        const zoom = current.zoom * wheelZoomFactor(e.deltaY)
-        setViewport(zoomAt(current, anchor, zoom))
+        const factor = wheelZoomFactor(e.deltaY)
+        motionRef.current?.steer((view) => zoomAt(view, anchor, view.zoom * factor))
         return
       }
-      const body = (e.target as Element).closest('.canvas-card-body')
-      if (body && canScrollBy(body, e.deltaX, e.deltaY)) return
+      if (held instanceof Element) {
+        // A card scrolled to its end stops there rather than dragging the plane after it.
+        latch = { target: held, at: e.timeStamp }
+        if (!canScrollBy(held, deltaX, deltaY)) e.preventDefault()
+        return
+      }
+      const body = held ? null : (e.target as Element).closest('.canvas-card-body')
+      if (body && canScrollBy(body, deltaX, deltaY)) {
+        latch = { target: body, at: e.timeStamp }
+        return
+      }
       e.preventDefault()
       followRef.current = false
-      setViewport({ ...current, x: current.x - e.deltaX, y: current.y - e.deltaY })
+      latch = { target: 'plane', at: e.timeStamp }
+      motionRef.current?.steer((view) => ({ ...view, x: view.x - deltaX, y: view.y - deltaY }))
     }
     surface.addEventListener('wheel', handleWheel, { passive: false })
     return () => surface.removeEventListener('wheel', handleWheel)
-  }, [setViewport])
+  }, [])
 
   /* ---- Fitting heights to finished answers ---- */
 
@@ -674,9 +762,8 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     (id: string): void => {
       const dependents = cascadeCardIds(cardsRef.current, id).size - 1
       const confirmed =
-        dependents === 0
-          ? window.confirm('Delete this card? This cannot be undone.')
-          : confirmCascade(`Delete this card and ${dependentsPhrase(dependents)}?`, dependents)
+        dependents === 0 ||
+        confirmCascade(`Delete this card and ${dependentsPhrase(dependents)}?`, dependents)
       if (confirmed) deleteCard(id)
     },
     [deleteCard]
@@ -1103,10 +1190,16 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       })
     }
     if (gesture?.type === 'resize' && resizedRect) {
-      return cards.map((card) => (card.id === gesture.id ? { ...card, rect: resizedRect } : card))
+      // Refused, the card still shows its size, and its neighbours stay where they are.
+      const moved = new Map(resizeUpdates?.map((update) => [update.id, update.rect]))
+      if (!resizeUpdates) moved.set(gesture.id, resizedRect)
+      return cards.map((card) => {
+        const rect = moved.get(card.id)
+        return rect ? { ...card, rect } : card
+      })
     }
     return cards
-  }, [cards, dragDelta, gesture, resizedRect])
+  }, [cards, dragDelta, gesture, resizedRect, resizeUpdates])
 
   const draftParent = useMemo(
     () =>
@@ -1240,39 +1333,26 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     .filter(Boolean)
     .join(' ')
   const message = notice ?? selection.notice
-  const gridSize = 28 * viewport.zoom
 
   return (
     <div className="canvas-view">
       <div
         ref={surfaceRef}
         className={surfaceClasses}
-        style={{
-          backgroundSize: `${gridSize}px ${gridSize}px`,
-          backgroundPosition: `${viewport.x}px ${viewport.y}px`
-        }}
         onPointerDown={handleSurfaceDown}
         onMouseDown={handleSurfaceMouseDown}
         onPointerMove={handleSurfaceMove}
         onPointerUp={handleSurfaceUp}
         onPointerCancel={() => setGesture(null)}
       >
-        <div
-          className={`canvas-world${animating ? ' is-animating' : ''}`}
-          style={
-            {
-              transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`,
-              '--canvas-zoom': viewport.zoom
-            } as React.CSSProperties
-          }
-        >
+        <div ref={worldRef} className={`canvas-world${animating ? ' is-animating' : ''}`}>
           {displayed.map((card) => {
             const dragging =
               (gesture?.type === 'drag' && gesture.ids.has(card.id)) ||
-              (gesture?.type === 'resize' && gesture.id === card.id)
-            const invalid =
-              (gesture?.type === 'drag' && gesture.id === card.id && dragResult?.ok === false) ||
-              (gesture?.type === 'resize' && gesture.id === card.id && resizeBlocked)
+              (gesture?.type === 'resize' &&
+                (gesture.id === card.id ||
+                  (resizeUpdates?.some((update) => update.id === card.id) ?? false)))
+            const invalid = refusedIds.has(card.id)
             return (
               <CanvasCardView
                 key={card.id}
@@ -1420,7 +1500,14 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
         >
           −
         </button>
-        <span className="canvas-zoom-value">{Math.round(viewport.zoom * 100)}%</span>
+        <button
+          type="button"
+          className="canvas-tool canvas-zoom-value"
+          title="Reset to 100%"
+          onClick={() => zoomBy(1 / viewportRef.current.zoom)}
+        >
+          <span ref={zoomValueRef} />
+        </button>
         <button
           type="button"
           className="canvas-tool"

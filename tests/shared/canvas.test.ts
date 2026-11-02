@@ -18,9 +18,13 @@ import {
   fitsOnScreen,
   linkPath,
   movingCardIds,
+  pulledOutCardIds,
   nearestCardInDirection,
   normalizeCanvasLayout,
   rectAgainst,
+  rectsOverlap,
+  resizeCard,
+  resizeFollowerIds,
   resolveMove,
   rectClearBelow,
   rectClearOf,
@@ -36,6 +40,8 @@ import {
   unionRect,
   visibleWorldRect,
   wheelZoomFactor,
+  chaseViewport,
+  gridSpacing,
   withCanvasFit,
   zoomAt
 } from '../../src/shared/canvas'
@@ -325,6 +331,47 @@ describe('links and viewport', () => {
     expect(wheelZoomFactor(-120)).toBeGreaterThan(1.2)
   })
 
+  it('eases a zoom without moving what is under the pointer, then arrives exactly', () => {
+    const anchor = { x: 300, y: 200 }
+    const start = { x: 40, y: -30, zoom: 0.7 }
+    const target = zoomAt(start, anchor, 1.4)
+    const world = screenToWorld(start, anchor)
+
+    let current = start
+    let frames = 0
+    while (current !== target && frames < 200) {
+      const previous = current
+      current = chaseViewport(current, target, 16)
+      expect(current.zoom).toBeGreaterThan(previous.zoom)
+      if (current !== target) {
+        expect(screenToWorld(current, anchor).x).toBeCloseTo(world.x, 6)
+        expect(screenToWorld(current, anchor).y).toBeCloseTo(world.y, 6)
+      }
+      frames++
+    }
+    expect(current).toBe(target)
+    expect(frames).toBeGreaterThan(5)
+    expect(frames).toBeLessThan(45)
+    // One mouse notch no longer lands in a single frame.
+    const notch = zoomAt(start, anchor, start.zoom * wheelZoomFactor(-120))
+    expect(notch.zoom / start.zoom).toBeGreaterThan(1.2)
+    expect(chaseViewport(start, notch, 16).zoom / start.zoom).toBeLessThan(1.1)
+  })
+
+  it('spreads one wheel pan over several frames', () => {
+    const target = { x: 0, y: -120, zoom: 1 }
+    const first = chaseViewport({ x: 0, y: 0, zoom: 1 }, target, 16)
+    expect(first.y).toBeLessThan(0)
+    expect(first.y).toBeGreaterThan(-40)
+  })
+
+  it('keeps grid dots apart when zoomed out, on the same origin', () => {
+    expect(gridSpacing(1)).toBe(28)
+    expect(gridSpacing(2)).toBe(56)
+    expect(gridSpacing(0.25)).toBe(28)
+    expect(gridSpacing(0.5)).toBe(28)
+  })
+
   it('zooms around the pointer and respects the limits', () => {
     const zoomed = zoomAt({ x: 0, y: 0, zoom: 1 }, { x: 100, y: 100 }, 2)
     expect(screenToWorld(zoomed, { x: 100, y: 100 })).toEqual({ x: 100, y: 100 })
@@ -477,6 +524,193 @@ describe('fitCardHeight', () => {
       message('blocker', 5, rect(300, 100, 300, 200))
     ]
     expect(fitCardHeight(cards, 'a', 150)).toEqual([])
+  })
+})
+
+describe('keeping adjacent cards joined', () => {
+  const movedTo = (updates: ReturnType<typeof resizeCard>, id: string): CanvasRect | undefined =>
+    updates?.find((update) => update.id === id)?.rect
+
+  it('drags touching cards as one, whatever session they are in', () => {
+    const cards = [
+      message('a', 1, rect(0, 0)),
+      message('b', 3, rect(100, 0)),
+      message('c', 5, rect(100, 100)),
+      message('apart', 7, rect(400, 0))
+    ]
+    expect(movingCardIds(cards, 'a')).toEqual(new Set(['a', 'b', 'c']))
+    expect(movingCardIds(cards, 'apart')).toEqual(new Set(['apart']))
+  })
+
+  it('pulls out one card with what sits on it, leaving the rest', () => {
+    const cards = [
+      message('a', 1, rect(0, 0)),
+      message('b', 3, rect(100, 0), 'a'),
+      expansion('over', 7, 4, 'b', true, rect(110, 10, 40, 40)),
+      expansion('out', 9, 4, 'b', false, rect(500, 0))
+    ]
+    expect(pulledOutCardIds(cards, 'b')).toEqual(new Set(['b', 'over']))
+  })
+
+  it('leaves a continuation behind once it no longer touches, keeping its history', () => {
+    const turns: Turn[] = [
+      turn(1, 'user', 'first'),
+      turn(2, 'assistant', 'one'),
+      turn(3, 'user', 'second'),
+      turn(4, 'assistant', 'two')
+    ]
+    const cards = [message('a', 1, rect(0, 0)), message('b', 3, rect(500, 0), 'a')]
+    expect(movingCardIds(cards, 'a')).toEqual(new Set(['a']))
+    expect(movingCardIds(cards, 'b')).toEqual(new Set(['b']))
+    expect(turnsThroughCard(cards, turns, 'b')).toHaveLength(4)
+  })
+
+  it('does not count a corner as touching', () => {
+    const cards = [message('a', 1, rect(0, 0)), message('corner', 3, rect(100, 100))]
+    expect(movingCardIds(cards, 'a')).toEqual(new Set(['a']))
+  })
+
+  it('keeps the neighbour on the new boundary when widening and narrowing', () => {
+    const cards = [
+      message('a', 1, rect(0, 0, 300, 200)),
+      message('b', 3, rect(300, 0, 300, 200)),
+      message('c', 5, rect(600, 0, 300, 200))
+    ]
+    const wider = resizeCard(cards, 'a', { w: 350, h: 200 })
+    expect(movedTo(wider, 'a')).toEqual(rect(0, 0, 350, 200))
+    expect(movedTo(wider, 'b')).toEqual(rect(350, 0, 300, 200))
+    expect(movedTo(wider, 'c')).toEqual(rect(650, 0, 300, 200))
+    const narrower = resizeCard(cards, 'a', { w: 250, h: 200 })
+    expect(movedTo(narrower, 'b')).toEqual(rect(250, 0, 300, 200))
+    expect(movedTo(narrower, 'c')).toEqual(rect(550, 0, 300, 200))
+  })
+
+  it('keeps the card below on the new boundary, and leaves the one alongside', () => {
+    const cards = [
+      message('a', 1, rect(0, 0, 300, 200)),
+      message('below', 3, rect(0, 200, 300, 200)),
+      message('right', 5, rect(300, 0, 300, 200))
+    ]
+    const taller = resizeCard(cards, 'a', { w: 300, h: 260 })
+    expect(movedTo(taller, 'below')).toEqual(rect(0, 260, 300, 200))
+    expect(movedTo(taller, 'right')).toBeUndefined()
+  })
+
+  it('moves both ways when both sides change', () => {
+    const cards = [
+      message('a', 1, rect(0, 0, 300, 200)),
+      message('below', 3, rect(0, 200, 300, 200)),
+      message('right', 5, rect(300, 0, 300, 200))
+    ]
+    const both = resizeCard(cards, 'a', { w: 340, h: 170 })
+    expect(movedTo(both, 'below')?.y).toBe(170)
+    expect(movedTo(both, 'right')?.x).toBe(340)
+  })
+
+  it('takes what hangs only off a follower, and what sits on any of them', () => {
+    const over: CanvasExpansionCard = {
+      ...expansion('over', 9, 2, 'b', true, rect(320, 20, 50, 50))
+    }
+    const cards = [
+      message('a', 1, rect(0, 0, 300, 200)),
+      message('b', 3, rect(300, 0, 300, 200)),
+      message('under-b', 5, rect(300, 200, 300, 200)),
+      over
+    ]
+    const wider = resizeCard(cards, 'a', { w: 340, h: 200 })
+    expect(movedTo(wider, 'b')?.x).toBe(340)
+    expect(movedTo(wider, 'under-b')?.x).toBe(340)
+    expect(movedTo(wider, 'over')?.x).toBe(360)
+  })
+
+  it('leaves a card also joined by another route, which stays adjacent', () => {
+    const cards = [
+      message('a', 1, rect(0, 0, 300, 200)),
+      message('b', 3, rect(300, 0, 300, 200)),
+      message('d', 5, rect(0, 200, 300, 200)),
+      message('e', 7, rect(300, 200, 300, 200))
+    ]
+    const wider = resizeCard(cards, 'a', { w: 340, h: 200 })
+    expect(movedTo(wider, 'b')?.x).toBe(340)
+    expect(movedTo(wider, 'd')).toBeUndefined()
+    expect(movedTo(wider, 'e')).toBeUndefined()
+  })
+
+  it('pushes a card that was not touching, in a chain', () => {
+    const cards = [
+      message('a', 1, rect(0, 0, 300, 200)),
+      message('near', 3, rect(320, 0, 100, 200)),
+      message('next', 5, rect(420, 0, 100, 200)),
+      message('far', 7, rect(320, 500, 100, 100))
+    ]
+    const wider = resizeCard(cards, 'a', { w: 400, h: 200 })
+    expect(movedTo(wider, 'near')?.x).toBe(400)
+    expect(movedTo(wider, 'next')?.x).toBe(500)
+    expect(movedTo(wider, 'far')).toBeUndefined()
+  })
+
+  it('stops shrinking where a follower can come back no further', () => {
+    const cards = [
+      message('a', 1, rect(0, 0, 300, 100)),
+      message('tall', 3, rect(300, 0, 300, 300)),
+      message('blocker', 5, rect(0, 100, 300, 100))
+    ]
+    expect(movedTo(resizeCard(cards, 'a', { w: 250, h: 100 }), 'a')?.w).toBe(300)
+    expect(movedTo(resizeCard(cards, 'a', { w: 250, h: 100 }), 'tall')).toBeUndefined()
+  })
+
+  it('shrinks an L-shaped corner as far as it can, without overlap or a gap', () => {
+    const cards = [
+      message('a', 1, rect(0, 0, 440, 340)),
+      message('right', 3, rect(440, 0, 380, 300)),
+      message('below', 5, rect(0, 340, 380, 300))
+    ]
+    const updates = resizeCard(cards, 'a', { w: 320, h: 250 })
+    const a = movedTo(updates, 'a') as CanvasRect
+    const right = movedTo(updates, 'right') as CanvasRect
+    const below = movedTo(updates, 'below') as CanvasRect
+    expect(a).toEqual(rect(0, 0, 320, 300))
+    expect(right.x).toBe(320)
+    expect(below.y).toBe(300)
+    expect(rectsOverlap(right, below)).toBe(false)
+  })
+
+  it('moves only an inset card when one is resized', () => {
+    const cards = [
+      message('a', 1, rect(0, 0, 300, 300)),
+      expansion('e', 7, 2, 'a', true, rect(10, 10, 100, 100))
+    ]
+    expect(resizeCard(cards, 'e', { w: 120, h: 100 })).toEqual([
+      { id: 'e', rect: rect(10, 10, 120, 100) }
+    ])
+  })
+
+  it('names the followers, so a resize does not snap to them', () => {
+    const cards = [
+      message('a', 1, rect(0, 0)),
+      message('b', 3, rect(100, 0)),
+      message('c', 5, rect(0, 100)),
+      message('apart', 7, rect(500, 0))
+    ]
+    expect(resizeFollowerIds(cards, 'a')).toEqual(new Set(['b', 'c']))
+  })
+
+  it('follows on fitting too, for a card from another session', () => {
+    const cards = [
+      message('a', 1, rect(0, 0, 300, 300)),
+      message('unrelated', 3, rect(0, 300, 300, 100))
+    ]
+    expect(fitCardHeight(cards, 'a', 200).find((update) => update.id === 'unrelated')?.rect.y).toBe(
+      200
+    )
+  })
+
+  it('does not call a free expansion inset when its host moves with it', () => {
+    const host = message('h', 1, rect(0, 0, 300, 300))
+    const free = expansion('f', 7, 2, 'h', false, rect(300, 0, 100, 100))
+    const result = resolveMove([host, free], 'f', new Set(['h', 'f']), -150, 0)
+    expect(result).toMatchObject({ ok: true })
+    if (result.ok) expect(result.updates.find((u) => u.id === 'f')?.inset).toBe(false)
   })
 })
 

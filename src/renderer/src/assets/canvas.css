@@ -44,7 +44,13 @@
 }
 
 .canvas-world.is-animating {
+  will-change: transform;
   transition: transform var(--canvas-settle) var(--canvas-ease);
+}
+
+/* Scales the layer already drawn instead of redrawing all text each frame; it sharpens at rest. */
+.canvas-surface[data-moving] .canvas-world {
+  will-change: transform;
 }
 
 /* ---- Cards ---- */
@@ -116,7 +122,6 @@
 
 .canvas-card.is-dragging .canvas-card-surface {
   box-shadow: var(--shadow-3);
-  transform: scale(1.012);
 }
 
 .canvas-card.is-invalid .canvas-card-surface {
@@ -195,6 +200,18 @@
   border-radius: var(--radius-sm);
   opacity: 0;
   transition: opacity var(--dur-1) var(--ease-out);
+}
+
+/* The caption fades into the buttons instead of being cut off mid-word. */
+.canvas-card-actions::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 100%;
+  bottom: 0;
+  width: 20px;
+  background: linear-gradient(to right, transparent, var(--surface-2));
+  pointer-events: none;
 }
 
 .canvas-card:hover .canvas-card-actions,

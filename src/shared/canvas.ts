@@ -387,10 +387,22 @@ export function nearestCardInDirection(
   return best
 }
 
+/** A card and what is drawn over its text: what an Alt+drag pulls out of its group. */
+export function pulledOutCardIds(cards: CanvasCard[], id: string): Set<string> {
+  const pulled = new Set([id])
+  for (const cardId of pulled) {
+    for (const other of cards) {
+      if (other.kind === 'expansion' && other.inset && other.hostId === cardId) pulled.add(other.id)
+    }
+  }
+  return pulled
+}
+
 /**
- * The cards that travel with `id` when it is dragged: its session, so shared
- * sides stay shared, and whatever is drawn over their text. Expansions dragged
- * outward stay put and their links follow.
+ * The cards that travel with `id` when it is dragged: everything touching it, so
+ * adjacent rectangles move as one, and whatever is drawn over their text. Only touching
+ * counts, so a card pulled out of its session stays out while its history still follows
+ * `parentId`. A distant expansion stays and its link follows.
  */
 export function movingCardIds(cards: CanvasCard[], id: string): Set<string> {
   const moving = new Set<string>()
@@ -399,10 +411,11 @@ export function movingCardIds(cards: CanvasCard[], id: string): Set<string> {
     const card = cardById(cards, cardId)
     if (!card) return
     moving.add(cardId)
-    if (card.kind === 'message' && card.parentId !== undefined) visit(card.parentId)
     for (const other of cards) {
-      if (other.kind === 'message' && other.parentId === cardId) visit(other.id)
       if (other.kind === 'expansion' && other.inset && other.hostId === cardId) visit(other.id)
+      if (isTopLevel(card) && isTopLevel(other) && sharesSide(card.rect, other.rect)) {
+        visit(other.id)
+      }
     }
   }
   visit(id)
@@ -450,7 +463,10 @@ export function resolveMove(
   const dragged = cardById(cards, draggedId)
   const host = dragged?.kind === 'expansion' ? cardById(cards, dragged.hostId) : undefined
   const staysInset =
-    dragged !== undefined && host !== undefined && containsRect(host.rect, shifted(dragged.rect))
+    dragged !== undefined &&
+    host !== undefined &&
+    !moving.has(host.id) &&
+    containsRect(host.rect, shifted(dragged.rect))
 
   const obstacles = topLevelRects(cards, new Set([...moving, draggedId]))
   for (const card of cards) {
@@ -472,13 +488,147 @@ export function resolveMove(
   }
 }
 
-/* ---- Fitting a card's height to its answer ---- */
+/* ---- Resizing: adjacent cards stay joined ---- */
 
-/** The cards that keep their shared side with `id` when it moves: its continuations alongside. */
-function continuationsAlongside(cards: CanvasCard[], id: string, rect: CanvasRect): CanvasCard[] {
-  return cards.filter(
-    (card) => card.kind === 'message' && card.parentId === id && sharesSide(card.rect, rect)
-  )
+type CardRects = Map<string, CanvasRect>
+type CardDimension = 'w' | 'h'
+
+function standingRects(cards: CanvasCard[]): CardRects {
+  return new Map(cards.filter(isTopLevel).map((card): [string, CanvasRect] => [card.id, card.rect]))
+}
+
+/** Whether `next` begins at the far edge of `from` along a dimension, sharing that side. */
+function startsAtEdge(from: CanvasRect, next: CanvasRect, dimension: CardDimension): boolean {
+  return dimension === 'w'
+    ? Math.abs(from.x + from.w - next.x) <= SIDE_EPSILON &&
+        overlapLength(from.y, from.h, next.y, next.h) >= MIN_SHARED_LENGTH
+    : Math.abs(from.y + from.h - next.y) <= SIDE_EPSILON &&
+        overlapLength(from.x, from.w, next.x, next.w) >= MIN_SHARED_LENGTH
+}
+
+/** Everything joined to `start` by shared sides, never passing through `barred`. */
+function joinedTo(rects: CardRects, start: string, barred: ReadonlySet<string>): Set<string> {
+  const joined = new Set([start])
+  for (const id of joined) {
+    const rect = rects.get(id) as CanvasRect
+    for (const [otherId, other] of rects) {
+      if (!barred.has(otherId) && sharesSide(rect, other)) joined.add(otherId)
+    }
+  }
+  return joined
+}
+
+/**
+ * What must move when the far edge of `id` does: the cards beyond that edge, and
+ * whatever is joined to the rest only through them. A card also joined by another
+ * route, such as one below a card alongside, keeps its place.
+ */
+function edgeFollowers(rects: CardRects, id: string, dimension: CardDimension): Set<string> {
+  const beyond = new Set<string>()
+  const carry = (fromId: string): void => {
+    const from = rects.get(fromId) as CanvasRect
+    for (const [otherId, other] of rects) {
+      if (otherId === id || beyond.has(otherId) || !startsAtEdge(from, other, dimension)) continue
+      beyond.add(otherId)
+      carry(otherId)
+    }
+  }
+  carry(id)
+  if (beyond.size === 0) return beyond
+
+  const anchored = joinedTo(rects, id, beyond)
+  const followers = new Set(beyond)
+  for (const joined of joinedTo(rects, id, new Set())) {
+    if (!anchored.has(joined)) followers.add(joined)
+  }
+  return followers
+}
+
+/** How far followers can come back along a dimension before one reaches a card behind it. */
+function roomBehind(
+  rects: CardRects,
+  id: string,
+  followers: ReadonlySet<string>,
+  dimension: CardDimension
+): number {
+  let room = Infinity
+  for (const follower of followers) {
+    const rect = rects.get(follower) as CanvasRect
+    for (const [otherId, other] of rects) {
+      if (otherId === id || followers.has(otherId)) continue
+      const [start, otherEnd, crossing] =
+        dimension === 'w'
+          ? [rect.x, other.x + other.w, overlapLength(rect.y, rect.h, other.y, other.h)]
+          : [rect.y, other.y + other.h, overlapLength(rect.x, rect.w, other.x, other.w)]
+      if (crossing > 0 && otherEnd <= start + SIDE_EPSILON) {
+        room = Math.min(room, Math.max(start - otherEnd, 0))
+      }
+    }
+  }
+  return room
+}
+
+/**
+ * Gives a standing card a new width or height. Its followers keep their distance from
+ * the moved edge. Shrinking stops where a follower can come back no further; growing
+ * pushes whatever else is in the way, with what follows that. Returns false, with
+ * `rects` of no further use, if a push cannot settle.
+ */
+function resizeAlong(
+  rects: CardRects,
+  id: string,
+  dimension: CardDimension,
+  length: number
+): boolean {
+  const start = rects.get(id) as CanvasRect
+  const followers = edgeFollowers(rects, id, dimension)
+  const wanted = length - start[dimension]
+  const delta = wanted < 0 ? Math.max(wanted, -roomBehind(rects, id, followers, dimension)) : wanted
+  if (delta === 0) return true
+  const axis = dimension === 'w' ? 'x' : 'y'
+  const shift = (cardId: string, distance: number): void => {
+    const before = rects.get(cardId) as CanvasRect
+    rects.set(cardId, { ...before, [axis]: before[axis] + distance })
+  }
+
+  rects.set(id, { ...start, [dimension]: start[dimension] + delta })
+  for (const follower of followers) shift(follower, delta)
+  if (delta < 0) return true
+
+  // Everything moves one way and lands clear of what pushed it, so this settles;
+  // the budget only guards against a stored layout that never could.
+  let budget = rects.size * rects.size * 4
+  const queue = [id, ...followers]
+  while (queue.length > 0) {
+    if (budget-- <= 0) return false
+    const pusherId = queue.shift() as string
+    for (const [otherId, other] of rects) {
+      const pusher = rects.get(pusherId) as CanvasRect
+      if (otherId === pusherId || !rectsOverlap(pusher, other)) continue
+      if (otherId === id) return false
+      const distance = pusher[axis] + pusher[dimension] - other[axis]
+      const carried = [otherId, ...edgeFollowers(rects, otherId, dimension)].filter(
+        (cardId) => cardId !== id
+      )
+      for (const cardId of carried) shift(cardId, distance)
+      queue.push(...carried)
+    }
+  }
+  return true
+}
+
+/** The moves that put `cards` where `rects` says, with inset cards riding on their hosts. */
+function updatesFromRects(cards: CanvasCard[], rects: CardRects, id: string): CanvasMoveUpdate[] {
+  return cards.flatMap((item): CanvasMoveUpdate[] => {
+    if (item.id === id) return [{ id, rect: rects.get(id) as CanvasRect }]
+    const standing = standingCard(cards, item)
+    const now = standing ? rects.get(standing.id) : undefined
+    if (!standing || !now) return []
+    const dx = now.x - standing.rect.x
+    const dy = now.y - standing.rect.y
+    if (dx === 0 && dy === 0) return []
+    return [{ id: item.id, rect: { ...item.rect, x: item.rect.x + dx, y: item.rect.y + dy } }]
+  })
 }
 
 /** The top-level card an inset card ultimately sits on. */
@@ -489,12 +639,37 @@ function standingCard(cards: CanvasCard[], card: CanvasCard): CanvasCard | undef
     : undefined
 }
 
+/** The cards a resize of `id` carries along, whose edges it should therefore not snap to. */
+export function resizeFollowerIds(cards: CanvasCard[], id: string): Set<string> {
+  const rects = standingRects(cards)
+  if (!rects.has(id)) return new Set()
+  return new Set([...edgeFollowers(rects, id, 'w'), ...edgeFollowers(rects, id, 'h')])
+}
+
+/**
+ * The moves that resize a card from its bottom-right corner, as close to `size` as
+ * adjacent cards allow, or null when what it pushes cannot get out of the way.
+ */
+export function resizeCard(
+  cards: CanvasCard[],
+  id: string,
+  size: { w: number; h: number }
+): CanvasMoveUpdate[] | null {
+  const card = cardById(cards, id)
+  if (!card) return null
+  if (!isTopLevel(card)) return [{ id, rect: { ...card.rect, ...size } }]
+  const rects = standingRects(cards)
+  if (!resizeAlong(rects, id, 'w', size.w) || !resizeAlong(rects, id, 'h', size.h)) return null
+  return updatesFromRects(cards, rects, id)
+}
+
+/* ---- Fitting a card's height to its answer ---- */
+
 /**
  * The moves that give a card the height its answer needs; its width never changes.
  * An inset card stays inside its host and a host never shrinks past what sits on
- * its text. Continuations hanging off the bottom follow, and anything else in the
- * way is pushed down, so nothing overlaps. A card shrinks only if what hangs below
- * can follow it. An empty result means nothing changes, and the body scrolls.
+ * its text. A top-level card resizes as `resizeCard` does, so what is joined below
+ * follows it. An empty result means nothing changes, and the body scrolls.
  */
 export function fitCardHeight(
   cards: CanvasCard[],
@@ -518,67 +693,10 @@ export function fitCardHeight(
     return [{ id, rect: { ...card.rect, h: height } }]
   }
 
-  const delta = wanted - card.rect.h
-  if (delta === 0) return []
-
-  const rects = new Map(
-    cards.filter(isTopLevel).map((item): [string, CanvasRect] => [item.id, item.rect])
-  )
-  const resized = { ...card.rect, h: wanted }
-  rects.set(id, resized)
-  const moved: string[] = []
-  const shift = (cardId: string, dy: number): void => {
-    const before = rects.get(cardId)
-    if (!before) return
-    rects.set(cardId, { ...before, y: before.y + dy })
-    moved.push(cardId)
-    for (const other of continuationsAlongside(cards, cardId, before)) {
-      // Compared where it stands now, as an earlier push may have moved it already.
-      const now = rects.get(other.id)
-      if (now && sharesSide(now, before)) shift(other.id, dy)
-    }
-  }
-
-  const oldBottom = card.rect.y + card.rect.h
-  for (const other of continuationsAlongside(cards, id, card.rect)) {
-    if (Math.abs(other.rect.y - oldBottom) <= SIDE_EPSILON) shift(other.id, delta)
-  }
-
-  if (delta > 0) {
-    // Everything moves down and lands clear of what pushed it, so this settles;
-    // the budget only guards against a stored layout that never could.
-    let budget = cards.length * cards.length * 4
-    const queue = [id, ...moved]
-    while (queue.length > 0) {
-      if (budget-- <= 0) return []
-      const pusherId = queue.shift() as string
-      const pusher = rects.get(pusherId) as CanvasRect
-      for (const [otherId, other] of rects) {
-        if (otherId === pusherId || !rectsOverlap(pusher, other)) continue
-        moved.length = 0
-        shift(otherId, pusher.y + pusher.h - other.y)
-        queue.push(...moved)
-      }
-    }
-  } else {
-    const following = new Set(moved)
-    for (const movedId of following) {
-      const rect = rects.get(movedId) as CanvasRect
-      for (const [otherId, other] of rects) {
-        if (otherId !== movedId && !following.has(otherId) && rectsOverlap(rect, other)) return []
-      }
-    }
-  }
-
-  return cards.flatMap((item): CanvasMoveUpdate[] => {
-    if (item.id === id) return [{ id, rect: rects.get(id) as CanvasRect }]
-    const standing = standingCard(cards, item)
-    const now = standing ? rects.get(standing.id) : undefined
-    if (!standing || !now) return []
-    const dy = now.y - standing.rect.y
-    // The resized card's top stays where it is, so what sits on it does too.
-    return dy === 0 ? [] : [{ id: item.id, rect: { ...item.rect, y: item.rect.y + dy } }]
-  })
+  if (wanted === card.rect.h) return []
+  const updates = resizeCard(cards, id, { w: card.rect.w, h: wanted }) ?? []
+  const unchanged = updates.find((update) => update.id === id)?.rect.h === card.rect.h
+  return unchanged ? [] : updates
 }
 
 /* ---- Session history ---- */
@@ -665,6 +783,43 @@ const MAX_WHEEL_ZOOM_DELTA = 25
 export function wheelZoomFactor(deltaY: number): number {
   const delta = Math.min(Math.max(deltaY, -MAX_WHEEL_ZOOM_DELTA), MAX_WHEEL_ZOOM_DELTA)
   return Math.exp(-delta * WHEEL_ZOOM_RATE)
+}
+
+const VIEWPORT_CHASE_MS = 55
+const SETTLED_PX = 0.25
+const SETTLED_ZOOM = 0.0005
+
+/**
+ * One frame of easing towards `target`, returning `target` itself on arrival. All three
+ * values take the same fraction, which keeps fixed whatever point both ends agree on, so
+ * the world under the pointer stays under the pointer throughout a zoom.
+ */
+export function chaseViewport(
+  current: CanvasViewport,
+  target: CanvasViewport,
+  elapsedMs: number
+): CanvasViewport {
+  const t = 1 - Math.exp(-elapsedMs / VIEWPORT_CHASE_MS)
+  const next = {
+    x: current.x + (target.x - current.x) * t,
+    y: current.y + (target.y - current.y) * t,
+    zoom: current.zoom + (target.zoom - current.zoom) * t
+  }
+  const settled =
+    Math.abs(target.x - next.x) < SETTLED_PX &&
+    Math.abs(target.y - next.y) < SETTLED_PX &&
+    Math.abs(target.zoom - next.zoom) < SETTLED_ZOOM
+  return settled ? target : next
+}
+
+const GRID_SPACING = 28
+const MIN_GRID_SCREEN_SPACING = 16
+
+/** Dot spacing on screen; it doubles rather than let the dots crowd when zoomed out. */
+export function gridSpacing(zoom: number): number {
+  let spacing = GRID_SPACING * zoom
+  while (spacing < MIN_GRID_SCREEN_SPACING) spacing *= 2
+  return spacing
 }
 
 const FIT_MARGIN = 64

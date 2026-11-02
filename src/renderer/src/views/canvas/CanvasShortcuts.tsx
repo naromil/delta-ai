@@ -12,15 +12,19 @@ const SHORTCUTS: ReadonlyArray<{ keys: string[]; what: string }> = [
   { keys: ['V'], what: 'Move and read' },
   { keys: ['Space'], what: 'Hold and drag to pan' },
   { keys: ['+', '−', '0'], what: 'Zoom in, zoom out, show everything' },
+  { keys: ['Alt', 'Drag'], what: 'Pull one card out of the cards it touches' },
+  { keys: ['Ctrl', 'Scroll'], what: 'Zoom at the pointer' },
+  { keys: ['Scroll'], what: 'Pan up and down' },
+  { keys: ['Shift', 'Scroll'], what: 'Pan left and right' },
   { keys: ['Esc'], what: 'Cancel' }
 ]
 
-/** The canvas keyboard map, toggled with `?`. */
+/** The canvas keyboard and mouse map, toggled with `?`. */
 function CanvasShortcuts({ onClose }: { onClose: () => void }): React.JSX.Element {
   return (
-    <section className="canvas-shortcuts" aria-label="Keyboard shortcuts">
+    <section className="canvas-shortcuts" aria-label="Keyboard and mouse shortcuts">
       <header className="canvas-shortcuts-header">
-        <h2>Keyboard</h2>
+        <h2>Keyboard and mouse</h2>
         <button
           type="button"
           className="canvas-icon-btn canvas-icon-btn--close"

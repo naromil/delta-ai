@@ -154,6 +154,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | Chat requests    | `hooks/chat/{requests,persistence,transport}.ts`           | Pure request book (pending ids, `activeSendId`, drain helpers), autosave effect, IPC subscriptions + stale-id drops                  |
 | Canvas state     | `hooks/useCanvas.ts`                                       | Open canvas, its streams and autosave; lives in `App` so answers survive a view change                                               |
 | Canvas view      | `views/canvas/*`                                           | `CanvasView` (gestures, keys, follow), `CanvasCardView`, `CanvasDraft`, `CanvasLinks`, `CanvasShortcuts`; styles in `canvas.css`     |
+| Viewport motion  | `lib/viewport-motion.ts`                                   | Eases wheel zoom/pan and paints frames directly; React gets the viewport once it rests                                               |
 | Scroll following | `hooks/useStickToBottom.ts`                                | Pins chat/popup views to the bottom while a response streams; an upward scroll unpins                                                |
 | Conversation     | `components/conversation/Conversation.tsx`                 | Message list, composer + Stop button (Esc), toolbar (export/delete), context menu                                                    |
 | Turn             | `components/conversation/Turn.tsx`                         | Single message (user/assistant) with avatar, markdown body, retry, inline edit-and-resend                                            |
@@ -218,7 +219,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | Memory updated indicator               | `components/MemoryIndicator.tsx`, `memory/tools.ts` (`broadcastMemoryUpdated`)                         |
 | Canvas geometry, sessions, word fit    | `shared/canvas.ts` (+ `estimateWords` constants mirror `assets/canvas.css`)                            |
 | Canvas gestures, tools, expansion flow | `views/canvas/CanvasView.tsx`                                                                          |
-| Canvas card height and pushing         | `shared/canvas.ts` (`fitCardHeight`), measured in `CanvasView.tsx`                                     |
+| Canvas card height and pushing         | `shared/canvas.ts` (`resizeCard`, `fitCardHeight`), measured in `CanvasView.tsx`                       |
 | Canvas card buttons                    | `views/canvas/CanvasCardView.tsx`, `hooks/useCanvas.ts` (`regenerateCard`, `editCard`)                 |
 | Canvas streaming and saving            | `hooks/useCanvas.ts`                                                                                   |
 | Canvas sizing instruction              | `shared/prompts.ts` (`buildCanvasFitNote`)                                                             |
@@ -365,26 +366,39 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   and history and search stay chat-only. `state.turns` is a pool rather than a line: a card's history
   is `turnsThroughCard`, following `parentId`, so branches do not see each other. `normalizeCanvasLayout`
   distrusts the stored layout at load. An emptied canvas is deleted from disk.
+- **The plane moves outside React.** Wheel zoom, wheel pan and drag pan go through
+  `createViewportMotion`: frames ease with `chaseViewport` and are painted directly, with the layer
+  promoted (`data-moving`), and `setViewport` runs once the view rests. So `viewportRef` is the live
+  value and `viewport` can lag; `claimPress` and `glideTo` call `settle()` before relying on it. The
+  transform and grid are never React style props (`paintViewport`), and `--canvas-zoom` changes only
+  at rest because every card inherits it.
 - **A rectangle decides the answer's length.** `estimateWords(rect, captionChars)` mirrors the card
   typography in `canvas.css`; change them together. `withCanvasFit` appends the size to the newest
   user message at request time only, so turns never store it, and the note overrides the system
   prompt's concision and expand's four-sentence limit.
+- **Touching cards stay joined, whatever session they belong to.** Dragging moves everything joined by
+  a shared side (`movingCardIds`). Resizing (`resizeCard`) carries the cards beyond the moved edge both
+  ways, plus anything joined only through them (`edgeFollowers`); a card also joined by another route
+  keeps its place. Growing pushes whatever else is in the way; shrinking stops where a follower can come
+  back no further (`roomBehind`), so a gesture is limited rather than refused.
 - **A finished answer then fits its card's height, never its width.** `useCanvas` marks a card when
   its answer completes normally (not stopped, not failed), and `CanvasBoard` measures it on screen
-  and applies `fitCardHeight`, so an answer that finished in another view fits on return. Bottom
-  continuations follow and anything in the way is pushed down. A body still scrolls when the card
+  and applies `fitCardHeight`, so an answer that finished in another view fits on return. It resizes
+  as `resizeCard` does. A body still scrolls when the card
   cannot change: an inset card capped by its host (refitted when dragged out), or a card that
   cannot shrink because what hangs below cannot follow.
 - **Regenerate and Retry are one action sized by the card's current rectangle** (`regenerateCard`).
   Like chat it drops what came after: every card in `cascadeCardIds`. Anything that takes other cards
-  along, delete included, confirms twice (`confirmCascade`).
+  along, delete included, confirms twice (`confirmCascade`); a card nothing depends on deletes at once.
 - **Sides are sessions.** Drawing with a side against a card (`continuationParent`, snapped by
   `snapEdges`) continues it; anywhere else starts a new session. A rectangle touching several cards
   continues one only (`continuationCandidates`, newest first) and sends only that history; the
   drawing highlights it (`is-continued`) and the draft's "Continues" picker can switch to another
-  candidate or to a new session. Dragging moves the whole session
-  (`movingCardIds`) so sides stay shared; anything standing on the plane may not overlap, and a
-  refused drop springs back through the card's own transform transition.
+  candidate or to a new session. Dragging moves everything touching the card
+  (`movingCardIds`), and Alt+drag pulls out just that card without snapping (`pulledOutCardIds`), which
+  leaves its session history (`parentId`) intact; anything standing on the plane may not overlap, and a
+  refused drop turns everything that would have moved red (`refusedIds`) and springs back through the
+  cards' own transform transition.
 - **The draft is the canvas's composer, and the viewport follows it like a pinned chat.** Sending
   opens the next draft against the new card's bottom (else right), kept there through `Draft.side`
   as the card grows or moves; it cannot send while the answer it continues is streaming or failed.
