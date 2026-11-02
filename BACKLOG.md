@@ -11,6 +11,15 @@
 - [x] Image attachments in chat (multimodal models) — new IPC payloads, provider capability checks
 - [ ] Have AI-based conversation title generation at first message.
 
+- [ ] Expansion: answer with the real context — a request carries only the system prompt and the enclosing text, so it never sees the user's question or earlier turns, and a nested expansion sees only its parent's answer; send the question, recent turns and the ancestor chain, and budget it (`applyContextBudget` only covers `chat-send`)
+- [ ] Expansion: fit the answer to the selection and the learner — plain Expand always asks for a bare definition, even for a whole sentence; choose define vs. explain from the selection, and give expand read-only `index*` memories so depth follows `index-learning.md` (it gets no memory today)
+- [ ] Expansion: make finished frames manageable — Retry and Dismiss exist only on errors, and the frame never shows the "Expand on…" prompt; add regenerate, remove, copy, re-ask with a different prompt, and show the prompt on the frame and folded pill
+- [ ] Expansion: faster ways to ask — one-click intents (Simpler, Example, Why, Compare, Deeper) stored in the existing `prompt` field, plus a floating bar on selection and a keyboard shortcut, so it no longer always takes a right-click
+- [ ] Expansion: accept more selections — a range must sit inside one markdown text node, so a selection crossing bold, inline code or a link is refused, and code blocks and formulas can't be targets; touches the offset-anchoring invariants in `lib/markdown.ts` and `rich-text.ts`
+- [ ] Expansion: suggested terms — lightly underline words in an answer that the document base suggests are new to the user, so one click expands them; needs a per-answer model pass or a term list, and must not get noisy.
+- [ ] Expansion: support expand a term multiple times. If there are multiple to select at one place, just have a pop-up list to choose from the expansions.
+- [ ] Expansion: in the expansion box, have a button to delete the expansion, and also display the question asked if not the default one. 
+
 ## Proposed (needs the owner's OK — move to Routine to approve)
 
 - [ ] Per-message timestamps — requires adding a field to the stored `Turn` format
@@ -19,13 +28,12 @@
 
 - Per-conversation system prompt or persona
 - Voice input and read-aloud
+- Expansion: map of what you've explored — a view of every expanded term across conversations, showing repeats and how they connect, with a jump back to the source; fits "conversations are learning materials" and could reuse an earlier answer when a term comes back
 
 ## Rejected (Claude won't re-propose these)
-
-Conversations are treated as learning materials only and the history can be visualized in better forms in the future.
 
 - Pin or star conversations — changes the `ConversationMeta` sidecar format
 - Export all conversations / import from a file — needs new IPC channels and a bulk file format
 - Conversation history sidebar in the chat view — a layout redesign of the chat screen
-- Branching history: keep earlier answers when regenerating and let the user switch between them
 - Quiz / flashcard mode built from the KB profile and history, with spaced repetition
+- Expansion: dedicated `expand` model role — inline answers should appear almost immediately, but expand uses the chat or lookup model; a fast, cheap role falling back to the current one (new `RoleId`, needs a config-schema migration)
