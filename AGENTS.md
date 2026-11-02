@@ -427,6 +427,11 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   the link, under the cards and faintly over them so it never strikes through text. Offsets are
   measured relative to the scaled `.canvas-card-surface`, which stays correct mid-animation.
   `folded` has no meaning on a canvas.
+- **The curator sees the conversation's shape, not its storage order.** `buildSingleMaterial` asks
+  `conversationExchanges` for question/answer pairs with a `parentId` (a chat is one line, a canvas
+  follows its cards), then `splitIntoThreads` cuts them at forks, so shared history appears once and
+  each branch says which thread it continues. A single line has no thread labels. Anything that gains
+  branches, such as a future branching chat, only needs to report its exchanges there.
 - **Chat and lookup are one assistant.** Only the window differs: same memory tools, curation and
   context budget, one `DELTA_SYSTEM_PROMPT` (`LOOKUP_WINDOW_NOTE` adds only a length limit), plus a
   one-way transfer. `source` records where a conversation started; history lists still show only
