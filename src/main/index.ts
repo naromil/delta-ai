@@ -54,7 +54,7 @@ import { registerKbIpcHandlers } from './kb/handlers'
 import { startKbAutoMaintenance, stopKbAutoMaintenance } from './kb/maintenance'
 import { migrateLegacyKbPrompt } from './kb/store'
 import { registerModelCatalogIpcHandlers } from './services/model-catalog'
-import { memoryAgentFor } from './memory/tools'
+import { memoryAgentFor, withAutoLoadedMemories } from './memory/tools'
 
 interface ActiveStream {
   controller: AbortController
@@ -94,14 +94,13 @@ if (!hasSingleInstanceLock) {
       const request = parseStreamPayload(payload)
       if (!request) return
       const { requestId, role } = request
-      // Chat sends are trimmed to the model's window; lookup keeps its full screen context.
       const sender = event.sender
       const fitted = fitImagesToSupport(request.messages, modelImageSupport(role))
       if (!fitted) {
         safeSend(sender, 'chat-error', { requestId, error: IMAGES_UNSUPPORTED_ERROR })
         return
       }
-      const finalMessages = role === 'chat' ? applyContextBudget(fitted, role) : fitted
+      const finalMessages = applyContextBudget(fitted, role)
       void streamToSender(
         sender,
         requestId,
@@ -129,7 +128,8 @@ if (!hasSingleInstanceLock) {
       if (!request) return
       const { requestId } = request
       const sender = event.sender
-      void streamToSender(sender, requestId, request.messages, request.role, {
+      const messages = withAutoLoadedMemories(request.messages)
+      void streamToSender(sender, requestId, messages, request.role, {
         chunk: (delta) => safeSend(sender, 'chat-expand-chunk', { requestId, delta }),
         done: (text) => safeSend(sender, 'chat-expand-chunk', { requestId, text, done: true }),
         cancelled: (text) =>

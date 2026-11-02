@@ -6,7 +6,7 @@ import {
   persistableTurns,
   serializeForChat
 } from '../../src/shared/conversation'
-import { CHAT_SYSTEM_PROMPT, LOOKUP_SYSTEM_PROMPT } from '../../src/shared/prompts'
+import { DELTA_SYSTEM_PROMPT, getSystemPrompt, LOOKUP_WINDOW_NOTE } from '../../src/shared/prompts'
 
 function turn(overrides: Partial<Turn> & Pick<Turn, 'id' | 'role' | 'content'>): Turn {
   return { expansions: [], ...overrides }
@@ -44,27 +44,27 @@ describe('serializeForChat', () => {
 
   it('uses the chat prompt and no context preamble without context', () => {
     expect(serializeForChat({ turns })).toEqual([
-      { role: 'system', content: CHAT_SYSTEM_PROMPT },
+      { role: 'system', content: DELTA_SYSTEM_PROMPT },
       { role: 'user', content: 'hello' }
     ])
   })
 
   it('injects the screen context before the turns', () => {
     const messages = serializeForChat({ context: 'screen', turns })
-    expect(messages[0]).toEqual({ role: 'system', content: CHAT_SYSTEM_PROMPT })
+    expect(messages[0]).toEqual({ role: 'system', content: DELTA_SYSTEM_PROMPT })
     expect(messages[1].content).toContain('screen')
     expect(messages[2]).toEqual({ role: 'user', content: 'hello' })
   })
 
-  it('always uses the lookup prompt for the lookup role', () => {
-    const messages = serializeForChat({ turns }, 'lookup')
-    expect(messages[0]).toEqual({ role: 'system', content: LOOKUP_SYSTEM_PROMPT })
+  it('gives lookup the same assistant as chat, plus a note about its small window', () => {
+    expect(getSystemPrompt('lookup')).toBe(`${DELTA_SYSTEM_PROMPT} ${LOOKUP_WINDOW_NOTE}`)
+    expect(getSystemPrompt('chat')).toBe(DELTA_SYSTEM_PROMPT)
   })
 
   it('omits the preamble for a lookup with no captured context', () => {
     const messages = serializeForChat({ turns }, 'lookup')
     expect(messages).toEqual([
-      { role: 'system', content: LOOKUP_SYSTEM_PROMPT },
+      { role: 'system', content: getSystemPrompt('lookup') },
       { role: 'user', content: 'hello' }
     ])
   })
@@ -79,7 +79,7 @@ describe('serializeForChat', () => {
     })
 
     expect(messages).toEqual([
-      { role: 'system', content: CHAT_SYSTEM_PROMPT },
+      { role: 'system', content: DELTA_SYSTEM_PROMPT },
       { role: 'user', content: 'hello' },
       { role: 'user', content: 'try again' }
     ])
@@ -95,7 +95,7 @@ describe('serializeForChat', () => {
     })
 
     expect(messages).toEqual([
-      { role: 'system', content: CHAT_SYSTEM_PROMPT },
+      { role: 'system', content: DELTA_SYSTEM_PROMPT },
       { role: 'user', content: 'hello' },
       { role: 'user', content: 'try again' }
     ])

@@ -2,11 +2,17 @@ import { BrowserWindow } from 'electron'
 import { tool } from 'ai'
 import type { ToolSet } from 'ai'
 import { z } from 'zod'
-import { buildMemoryPrompt, MEMORY_PATH_HINT, MEMORY_TOOL_DESCRIPTIONS } from '../../shared/prompts'
+import {
+  buildExpandMemoryPrompt,
+  buildMemoryPrompt,
+  MEMORY_PATH_HINT,
+  MEMORY_TOOL_DESCRIPTIONS
+} from '../../shared/prompts'
 import type { RoleId } from '../../shared/models'
 import { resolveRole } from '../config'
-import type { AgentTools } from '../provider'
+import type { AgentTools, ProviderMessage } from '../provider'
 import { getCachedModel } from '../services/model-catalog'
+import { withInstructions } from '../streaming'
 import {
   editMemory,
   grepMemories,
@@ -132,5 +138,19 @@ export function memoryAgentFor(role: RoleId): AgentTools | undefined {
   } catch (err) {
     console.warn('Memory tools are unavailable for this request:', err)
     return undefined
+  }
+}
+
+/**
+ * Adds the auto-loaded memories to an expand request, which holds no tools. Never throws:
+ * memory problems must not be why an expansion fails.
+ */
+export function withAutoLoadedMemories(messages: ProviderMessage[]): ProviderMessage[] {
+  try {
+    const prompt = buildExpandMemoryPrompt(readAutoLoadedMemories(memoriesDir()))
+    return withInstructions(messages, prompt)
+  } catch (err) {
+    console.warn('Memories are unavailable for this expansion:', err)
+    return messages
   }
 }

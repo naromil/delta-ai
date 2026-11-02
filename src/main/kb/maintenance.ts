@@ -142,7 +142,7 @@ async function runAutoPass(): Promise<void> {
     const unfed = await listUnfedConversations()
     // A stop landed while the queue was being read.
     if (generation !== lifecycle) return
-    pendingCount = unfed.filter((meta) => meta.source === 'chat' && !meta.kbFed).length
+    pendingCount = selectAutoBatch(unfed, Number.MAX_SAFE_INTEGER).length
     const batch = selectAutoBatch(unfed)
     if (batch.length === 0) return
 
@@ -196,7 +196,7 @@ async function runAutoPass(): Promise<void> {
  * so a multi-turn chat is learned once it goes quiet, not after every answer.
  */
 function handleConversationSaved(record: ConversationRecord): void {
-  if (record.source !== 'chat' || record.kbFed) return
+  if (record.kbFed) return
   if (!loadAppSettings().kbAutoMaintain) return
   if (!resolveRole('kb-maintenance')) return
   schedule(AUTO_DEBOUNCE_MS)

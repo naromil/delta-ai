@@ -78,16 +78,48 @@ describe('conversation store', () => {
     expect(await listConversations()).toEqual([])
   })
 
-  it('preserves kbFed across renderer autosaves', async () => {
-    await saveConversation(record('chat_kb', { kbFed: true }))
-    await saveConversation(
-      record('chat_kb', { kbFed: false, updatedAt: '2026-02-01T00:00:00.000Z' }),
-      { preserveKbFed: true }
-    )
+  it('preserves kbFed across renderer autosaves that change no content', async () => {
+    const fed = record('chat_kb', { kbFed: true })
+    await saveConversation(fed)
+    await saveConversation({ ...fed, title: 'Renamed', kbFed: false }, { preserveKbFed: true })
 
     const loaded = await loadConversation('chat_kb')
     expect(loaded?.kbFed).toBe(true)
-    expect(loaded?.updatedAt).toBe('2026-02-01T00:00:00.000Z')
+    expect(loaded?.title).toBe('Renamed')
+  })
+
+  it('reopens a curated conversation for the curator when its content changes', async () => {
+    await saveConversation(record('chat_kb_new', { kbFed: true }))
+    await saveConversation(
+      record('chat_kb_new', { kbFed: true, updatedAt: '2026-12-01T00:00:00.000Z' }),
+      { preserveKbFed: true }
+    )
+
+    const loaded = await loadConversation('chat_kb_new')
+    expect(loaded?.kbFed).toBe(false)
+    expect(loaded?.updatedAt).toBe('2026-12-01T00:00:00.000Z')
+  })
+
+  it('keeps a look-up after curating it, like any conversation', async () => {
+    await saveConversation(record('lookup_kept', { source: 'lookup' }))
+
+    await markConversationKbFed('lookup_kept')
+
+    expect((await loadConversation('lookup_kept'))?.kbFed).toBe(true)
+  })
+
+  it('does not mark a conversation fed when it changed after the curator read it', async () => {
+    const curated = record('chat_kb_race')
+    await saveConversation(curated)
+    await saveConversation(record('chat_kb_race', { updatedAt: '2026-12-01T00:00:00.000Z' }), {
+      preserveKbFed: true
+    })
+
+    await markConversationKbFed('chat_kb_race', curated.updatedAt)
+    expect((await loadConversation('chat_kb_race'))?.kbFed).toBe(false)
+
+    await markConversationKbFed('chat_kb_race', '2026-12-01T00:00:00.000Z')
+    expect((await loadConversation('chat_kb_race'))?.kbFed).toBe(true)
   })
 
   it('sanitises interrupted expansions when loading', async () => {

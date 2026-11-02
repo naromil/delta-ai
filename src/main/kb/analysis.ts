@@ -74,7 +74,7 @@ export function buildSingleMaterial(record: ConversationRecord): string {
         parts.push('  Answer: ' + es.answer)
       }
       if (es.prompt) {
-        parts.push('  Prompt: "' + es.prompt + '"')
+        parts.push('  User asked: "' + es.prompt + '"')
       }
     }
     parts.push('')

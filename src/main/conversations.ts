@@ -117,11 +117,14 @@ async function writeConversation(
   const filePath = conversationPath(record.id)
   if (!filePath) return
   await ensureConversationsDir()
-  // `kbFed` is owned by the KB flow in main; an auto-save from the renderer
-  // must not reset it. Pass `preserveKbFed: false` from the KB writers.
+  // `kbFed` is owned by the KB flow in main, so a renderer auto-save cannot set it.
+  // A newer `updatedAt` means new turns or expansions the curator has not seen, which
+  // reopens the conversation; a fold or rename keeps the timestamp and stays fed.
   const next = preserveKbFed
     ? await readRecordFile(filePath).then((existing) =>
-        existing ? { ...record, kbFed: existing.kbFed } : record
+        existing
+          ? { ...record, kbFed: existing.kbFed && record.updatedAt <= existing.updatedAt }
+          : record
       )
     : record
   await writeFileAtomic(filePath, JSON.stringify(next, null, 2))
@@ -305,17 +308,16 @@ export async function searchConversations(
   return results.slice(0, SEARCH_RESULT_LIMIT)
 }
 
-export async function markConversationKbFed(id: string): Promise<void> {
-  let lookup = false
+/**
+ * `curatedUpdatedAt` is the version the curator actually read: a save that landed
+ * during the pass leaves the conversation unfed, so its new content is curated next.
+ */
+export async function markConversationKbFed(id: string, curatedUpdatedAt?: string): Promise<void> {
   await mutateConversation(id, (record) => {
-    if (record.source === 'lookup') {
-      lookup = true
-      return false
-    }
+    if (curatedUpdatedAt !== undefined && record.updatedAt !== curatedUpdatedAt) return false
     record.kbFed = true
     return true
   })
-  if (lookup) await deleteConversation(id)
 }
 
 export async function listUnfedConversations(): Promise<ConversationMeta[]> {

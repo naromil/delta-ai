@@ -56,7 +56,7 @@ describe('buildSingleMaterial', () => {
     expect(material).toContain('- Context: Alpha beta')
     expect(material).toContain('  Term: "beta"')
     expect(material).toContain('  Answer: beta one')
-    expect(material).toContain('  Prompt: "more"')
+    expect(material).toContain('  User asked: "more"')
     expect(material).toContain('  Term: "one"')
     expect(material).toContain('  Answer: child answer')
   })

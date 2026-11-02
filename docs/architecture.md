@@ -39,7 +39,7 @@ Both windows talk to the same main process. Everything the app knows about the u
 | `src/shared/expand-prompt.ts`                                     | `buildExpandMessages({ answer, selection, prompt? })`                                                                                                                                                                                                                                                                                                        |
 | `src/shared/context-budget.ts`                                    | Pure budgeting: `estimateTokens` (4 chars/token), `budgetFor` (85% of the window minus a capped output reserve, floor 1024), `trimMessages` (drops the oldest non-system messages, never the last)                                                                                                                                                           |
 | `src/main/index.ts`                                               | App lifecycle, main window, tray, streaming IPC (`chat-send`, `chat-expand`, `chat-cancel`) with `safeSend` + owner-scoped cancellation, lookup grow/transfer, conversation CRUD + search/export channels                                                                                                                                                    |
-| `src/main/context-budget.ts`                                      | `applyContextBudget(messages, role)`: trims chat sends using the cached models.dev entry (`getCachedModel`, no network); returns the input untouched on any missing input or error                                                                                                                                                                           |
+| `src/main/context-budget.ts`                                      | `applyContextBudget(messages, role)`: trims sends using the cached models.dev entry (`getCachedModel`, no network); returns the input untouched on any missing input or error                                                                                                                                                                                |
 | `src/main/conversation-export.ts`                                 | `renderConversationMarkdown` (turns + quoted expansions, each reply nested one quote level deeper) and `exportConversationToFile` (save dialog, atomic write, `{ok,path}` / `{ok:false,error}`)                                                                                                                                                              |
 | `src/main/transfer.ts`                                            | `prepareTransferredState`: finalizes in-flight frames and folds screen context into a user turn before persist/forward                                                                                                                                                                                                                                       |
 | `src/main/provider.ts`                                            | The single dispatch point: role → connection → backend. `callProviderStream(…, signal?)` is the only primitive; `callProvider` drains it; an abort ends the stream                                                                                                                                                                                           |
@@ -191,10 +191,10 @@ record, and resets `expansionIdCounter` past the max imported id.
   blank assistant placeholders.
 - The memories document base maintains itself. `onConversationSaved` in `conversations.ts` notifies
   `kb/maintenance.ts` after every successful write; a 20s debounce after the last chat activity
-  starts a bounded pass (`AUTO_BATCH_SIZE`, newest first, chat only). The pass curates each
+  starts a bounded pass (`AUTO_BATCH_SIZE`, newest first, chat and lookup alike). The pass curates each
   conversation into `{userData}/memories/` through the `kb-maintenance` role and marks it fed **per
-  conversation**, so an interrupted run keeps its progress. Empty conversations and standalone
-  look-ups are marked fed and skipped rather than retried forever. A model that cannot use tools
+  conversation**, so an interrupted run keeps its progress. Empty conversations
+  are marked fed and skipped rather than retried forever. A model that cannot use tools
   fails the pass, leaving the conversation unfed.
 - Pacing lives in `kb/schedule.ts`: 45s between passes while a backlog remains, 10-minute
   interval across restarts, exponential backoff (2m → 30m) after a failure. Every run is
@@ -423,7 +423,7 @@ These are load-bearing; breaking one causes a bug that is hard to trace:
 - Streaming patches only an expansion's `answer` (children and offsets are untouched);
   `status` stays `'loading'` until `done`, and a `done` with no output becomes an error. Every
   save/load runs `finalizeTurns`, so a persisted conversation never contains a `'loading'` frame.
-- Autosaves are serialised per conversation id in main, `kbFed` is preserved on renderer saves,
+- Autosaves are serialised per conversation id in main, `kbFed` is preserved on renderer saves unless `updatedAt` advanced (new content reopens it for the curator),
   and every successful write also replaces the `{id}.meta.json` sidecar. Reads never trust a
   stale sidecar: list/search backfill it from the body.
 - Read-modify-write goes through `mutateConversation`; never `loadConversation` + `saveConversation`

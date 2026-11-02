@@ -49,21 +49,21 @@ describe('selectAutoBatch', () => {
     kbFed = false
   ): { id: string; source: 'chat' | 'lookup'; kbFed: boolean } => ({ id, source, kbFed })
 
-  it('takes only unfed chat conversations, newest first, up to the batch size', () => {
+  it('takes unfed conversations from either window, newest first, up to the batch size', () => {
     const metas = [
       meta('chat_new'),
       meta('lookup_x', 'lookup'),
       meta('chat_fed', 'chat', true),
+      meta('lookup_fed', 'lookup', true),
       meta('chat_older'),
       meta('chat_3'),
-      meta('chat_4'),
-      meta('chat_5')
+      meta('chat_4')
     ]
     expect(selectAutoBatch(metas).map((item) => item.id)).toEqual([
       'chat_new',
+      'lookup_x',
       'chat_older',
-      'chat_3',
-      'chat_4'
+      'chat_3'
     ])
     expect(selectAutoBatch(metas)).toHaveLength(AUTO_BATCH_SIZE)
   })

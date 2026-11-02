@@ -38,8 +38,8 @@ async function updateMemories(material: string, signal?: AbortSignal): Promise<v
  * Curates conversations into the document base one at a time, marking each fed
  * as it finishes so an interrupted run keeps its progress.
  *
- * Conversations that carry no learning signal — standalone look-ups and empty
- * records — are marked fed and skipped rather than being retried forever.
+ * Empty records carry no learning signal, so they are marked fed and skipped
+ * rather than being retried forever.
  */
 export async function runKbAnalysis(
   metas: Array<Pick<ConversationMeta, 'id'>>,
@@ -55,13 +55,13 @@ export async function runKbAnalysis(
     // that won the queue already curated this conversation.
     if (options.markFed && record.kbFed) continue
 
-    if (record.source === 'lookup' || !hasLearningMaterial(record)) {
+    if (!hasLearningMaterial(record)) {
       if (options.markFed) await markConversationKbFed(meta.id)
       continue
     }
 
     await updateMemories(buildSingleMaterial(record), options.signal)
-    if (options.markFed) await markConversationKbFed(meta.id)
+    if (options.markFed) await markConversationKbFed(meta.id, record.updatedAt)
     analyzed++
   }
 

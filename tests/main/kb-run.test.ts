@@ -62,7 +62,10 @@ describe('runKbAnalysis', () => {
     expect(usedAgent).toBe(agent)
     expect(messages[0].content).toMatch(/primary writer/)
     expect(JSON.stringify(messages)).toContain('What is a finite state machine?')
-    expect(markConversationKbFed.mock.calls).toEqual([['chat_a'], ['chat_b']])
+    expect(markConversationKbFed.mock.calls).toEqual([
+      ['chat_a', '2026-01-02T00:00:00.000Z'],
+      ['chat_b', '2026-01-02T00:00:00.000Z']
+    ])
   })
 
   it('marks empty conversations fed without spending a model call', async () => {
@@ -84,15 +87,14 @@ describe('runKbAnalysis', () => {
     expect(markConversationKbFed).toHaveBeenCalledWith('chat_empty')
   })
 
-  it('does not learn from standalone look-up records', async () => {
+  it('curates a look-up exactly like a chat', async () => {
     loadConversation.mockResolvedValueOnce(record('lookup_a', { source: 'lookup' }))
 
     const result = await runKbAnalysis([{ id: 'lookup_a' }], { markFed: true })
 
-    expect(result.conversationsAnalyzed).toBe(0)
-    expect(callProvider).not.toHaveBeenCalled()
-    // markConversationKbFed also deletes look-up records, so the queue drains.
-    expect(markConversationKbFed).toHaveBeenCalledWith('lookup_a')
+    expect(result.conversationsAnalyzed).toBe(1)
+    expect(callProvider).toHaveBeenCalledTimes(1)
+    expect(markConversationKbFed).toHaveBeenCalledWith('lookup_a', '2026-01-02T00:00:00.000Z')
   })
 
   it('does not relearn a conversation that was fed while it was queued', async () => {

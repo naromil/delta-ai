@@ -38,17 +38,13 @@ export function autoFollowUpDelayMs(input: {
   return input.pending ? AUTO_BACKLOG_INTERVAL_MS : 0
 }
 
-/**
- * The next batch of learning material. Only chat conversations that have not
- * been curated yet: standalone look-ups are screen-context noise, and an
- * already-fed conversation must not be re-curated by a later save.
- */
-export function selectAutoBatch<T extends { source: 'chat' | 'lookup'; kbFed: boolean }>(
+/** The conversations to curate next, newest first; the caller's list is already sorted. */
+export function selectAutoBatch<T extends { kbFed: boolean }>(
   metas: T[],
   limit: number = AUTO_BATCH_SIZE
 ): T[] {
   const size = Number.isFinite(limit) ? Math.max(0, Math.trunc(limit)) : AUTO_BATCH_SIZE
-  return metas.filter((meta) => meta.source === 'chat' && !meta.kbFed).slice(0, size)
+  return metas.filter((meta) => !meta.kbFed).slice(0, size)
 }
 
 /** Startup pacing: honour the steady-state interval, never launch sooner than the floor. */

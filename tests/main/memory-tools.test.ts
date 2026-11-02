@@ -25,7 +25,7 @@ vi.mock('../../src/main/config', () => ({
 vi.mock('../../src/main/services/model-catalog', () => ({ getCachedModel }))
 
 import { memoriesDir } from '../../src/main/memory/store'
-import { memoryAgentFor } from '../../src/main/memory/tools'
+import { memoryAgentFor, withAutoLoadedMemories } from '../../src/main/memory/tools'
 import { KB_MEMORY_SYSTEM_PROMPT } from '../../src/shared/prompts'
 import { callProvider, callProviderStream } from '../../src/main/provider'
 import type { ProviderMessage } from '../../src/main/provider'
@@ -123,6 +123,26 @@ describe('memoryAgentFor', () => {
     await callProvider(MESSAGES, 'chat', undefined, agent)
     expect(toolNames(bodies[0])).toEqual(expect.arrayContaining(WRITE_TOOLS))
     expect(JSON.stringify(bodies[0].messages[0])).toContain('(empty)')
+  })
+
+  it('adds the auto-loaded memories to an expand prompt, and nothing else', () => {
+    writeFileSync(join(memoriesDir(), 'index-learning.md'), 'prefers examples first')
+    mkdirSync(join(memoriesDir(), 'work'))
+    writeFileSync(join(memoriesDir(), 'work', 'index.md'), 'nested secret plan')
+    writeFileSync(join(memoriesDir(), 'notes.md'), 'unrelated note')
+
+    const [system, user] = withAutoLoadedMemories(MESSAGES)
+
+    expect(system.content.startsWith('sys\n\n')).toBe(true)
+    expect(system.content).toContain('prefers examples first')
+    expect(system.content).not.toContain('nested secret plan')
+    expect(system.content).not.toContain('unrelated note')
+    expect(system.content).not.toContain('memory_')
+    expect(user).toEqual(MESSAGES[1])
+  })
+
+  it('leaves an expand prompt untouched when no auto-loaded memory exists', () => {
+    expect(withAutoLoadedMemories(MESSAGES)).toEqual(MESSAGES)
   })
 
   it('lets every role write, but only the curator is told to do the routine upkeep', () => {

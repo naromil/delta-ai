@@ -385,8 +385,16 @@ describe('automatic KB pass scheduling', () => {
     await settle()
 
     savedListener?.(record('chat_a', { kbFed: true }))
-    savedListener?.(record('lookup_a', { source: 'lookup' }))
+    savedListener?.(record('lookup_a', { source: 'lookup', kbFed: true }))
     expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('schedules a pass when a look-up is saved', async () => {
+    startKbAutoMaintenance()
+    await settle()
+
+    savedListener?.(record('lookup_a', { source: 'lookup' }))
+    expect(vi.getTimerCount()).toBe(1)
   })
 
   it('does not let startup pacing defer a pass scheduled by a save', async () => {
