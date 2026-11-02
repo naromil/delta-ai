@@ -23,12 +23,17 @@ function readFileAsBase64(file: File): Promise<string | null> {
   })
 }
 
+const OCR_READ_ERROR = "Couldn't read the pasted image."
+const OCR_NO_TEXT_ERROR = 'No text was found in the pasted image.'
+const OCR_FAILED_ERROR = 'Text recognition failed. Try pasting the image again.'
+
 function LookupApp(): React.JSX.Element {
   const [grown, setGrown] = useState(false)
   const [contextText, setContextText] = useState('Waiting for context…')
   const [contextHint, setContextHint] = useState(true)
   const [flash, setFlash] = useState(false)
   const [ocrProcessing, setOcrProcessing] = useState(false)
+  const [ocrError, setOcrError] = useState<string | null>(null)
   const [input, setInput] = useState('')
   const flashTimerRef = useRef<number | null>(null)
   const askRef = useRef<HTMLInputElement>(null)
@@ -186,32 +191,42 @@ function LookupApp(): React.JSX.Element {
       if (grown) {
         if (imageItem) {
           e.preventDefault()
+          setOcrError(null)
           setOcrProcessing(true)
+          const fail = (message: string): void => {
+            setOcrProcessing(false)
+            setOcrError(message)
+          }
           const file = imageItem.getAsFile()
           if (!file) {
-            setOcrProcessing(false)
+            fail(OCR_READ_ERROR)
             return
           }
           readFileAsBase64(file).then((b64) => {
             if (!b64) {
-              setOcrProcessing(false)
+              fail(OCR_READ_ERROR)
               return
             }
             window.api
               .lookupOcrImage(b64)
               .then((result) => {
-                setOcrProcessing(false)
-                if (result.text && !result.error) {
-                  setInput((prev) => {
-                    const el = askRef.current
-                    const start = el?.selectionStart ?? prev.length
-                    const end = el?.selectionEnd ?? prev.length
-                    const newVal = prev.slice(0, start) + result.text + prev.slice(end)
-                    return newVal
-                  })
+                if (result.error) {
+                  fail(`Couldn't read text from the image: ${result.error}`)
+                  return
                 }
+                if (!result.text.trim()) {
+                  fail(OCR_NO_TEXT_ERROR)
+                  return
+                }
+                setOcrProcessing(false)
+                setInput((prev) => {
+                  const el = askRef.current
+                  const start = el?.selectionStart ?? prev.length
+                  const end = el?.selectionEnd ?? prev.length
+                  return prev.slice(0, start) + result.text + prev.slice(end)
+                })
               })
-              .catch(() => setOcrProcessing(false))
+              .catch(() => fail(OCR_FAILED_ERROR))
           })
         }
         return
@@ -322,7 +337,10 @@ function LookupApp(): React.JSX.Element {
             aria-label="Ask Delta AI"
             autoComplete="off"
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              setInput(e.target.value)
+              setOcrError(null)
+            }}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 if (e.nativeEvent.isComposing) return
@@ -333,6 +351,11 @@ function LookupApp(): React.JSX.Element {
           />
           {ocrProcessing && (
             <div className="ocr-hint visible">Recognizing pasted image through OCR…</div>
+          )}
+          {ocrError && (
+            <div className="ocr-hint ocr-error visible" role="alert">
+              {ocrError}
+            </div>
           )}
         </div>
         <div ref={scrollRef} className={`lookup-conversation${grown ? ' visible' : ''}`}>

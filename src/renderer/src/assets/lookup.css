@@ -172,6 +172,10 @@ body {
   display: block;
 }
 
+.ocr-hint.ocr-error {
+  color: var(--error);
+}
+
 .ask-wrap {
   flex-shrink: 0;
   margin-bottom: 8px;
