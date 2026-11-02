@@ -126,7 +126,8 @@ export function useCanvas(): {
   /** `null` means there was nothing to measure, so the card stays as it is. */
   fitCard: (id: string, contentHeight: number | null) => void
   exportCanvas: () => Promise<{ ok: true; path: string } | { ok: false; error: string }>
-  ask: (rect: CanvasRect, question: string, parentId: string | undefined) => void
+  /** Returns the new card's id. */
+  ask: (rect: CanvasRect, question: string, parentId: string | undefined) => string
   expand: (
     turnId: number,
     target: ExpansionTarget,
@@ -337,7 +338,7 @@ export function useCanvas(): {
   )
 
   const ask = useCallback(
-    (rect: CanvasRect, question: string, parentId: string | undefined): void => {
+    (rect: CanvasRect, question: string, parentId: string | undefined): string => {
       const userTurnId = nextTurnId++
       const turnId = nextTurnId++
       const card: CanvasCard = {
@@ -361,6 +362,7 @@ export function useCanvas(): {
       }))
       sendCard(card)
       requestSave(true)
+      return card.id
     },
     [requestSave, sendCard, updateDoc, updateMeta]
   )

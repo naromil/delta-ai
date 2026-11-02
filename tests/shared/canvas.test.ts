@@ -10,15 +10,20 @@ import {
   cascadeCardIds,
   clampRectInside,
   containsRect,
+  continuationCandidates,
   continuationParent,
   estimateWords,
   fitCardHeight,
   fitViewport,
+  fitsOnScreen,
   linkPath,
   movingCardIds,
+  nearestCardInDirection,
   normalizeCanvasLayout,
+  rectAgainst,
   resolveMove,
   rectClearBelow,
+  rectClearOf,
   rectFromPoints,
   rectsOverlap,
   revealRect,
@@ -26,7 +31,10 @@ import {
   sharesSide,
   snapEdges,
   snapMove,
+  sourceCardId,
   turnsThroughCard,
+  unionRect,
+  visibleWorldRect,
   wheelZoomFactor,
   withCanvasFit,
   zoomAt
@@ -469,5 +477,78 @@ describe('fitCardHeight', () => {
       message('blocker', 5, rect(300, 100, 300, 200))
     ]
     expect(fitCardHeight(cards, 'a', 150)).toEqual([])
+  })
+})
+
+describe('touching several sessions', () => {
+  // Two unrelated sessions, and a rectangle drawn in the gap between them.
+  const older = message('old', 1, rect(0, 100))
+  const newer = message('new', 3, rect(200, 100))
+  const between = rect(100, 100)
+
+  it('continues only the newest, and offers the others in that order', () => {
+    expect(continuationCandidates(between, [older, newer]).map((card) => card.id)).toEqual([
+      'new',
+      'old'
+    ])
+    expect(continuationParent(between, [older, newer])?.id).toBe('new')
+  })
+
+  it('sends only the chosen session', () => {
+    const turns: Turn[] = [
+      turn(1, 'user', 'about cats'),
+      turn(2, 'assistant', 'cats'),
+      turn(3, 'user', 'about tax'),
+      turn(4, 'assistant', 'tax'),
+      turn(5, 'user', 'next'),
+      turn(6, 'assistant', '')
+    ]
+    const asked = message('asked', 5, between, 'new')
+    const sent = turnsThroughCard([older, newer, asked], turns, 'asked').map((t) => t.content)
+    expect(sent).toEqual(['about tax', 'tax', 'next', ''])
+  })
+})
+
+describe('navigation', () => {
+  const a = message('a', 1, rect(0, 0))
+  const b = message('b', 3, rect(0, 100), 'a')
+  const c = message('c', 5, rect(100, 0), 'a')
+  const far = message('far', 7, rect(400, 600))
+  const e = expansion('e', 9, 2, 'b', false, rect(300, 120))
+  const cards: CanvasCard[] = [a, b, c, far, e]
+
+  it('goes to the nearest card in a direction, preferring a straight line', () => {
+    expect(nearestCardInDirection(cards, 'a', 'bottom')?.id).toBe('b')
+    expect(nearestCardInDirection(cards, 'a', 'right')?.id).toBe('c')
+    expect(nearestCardInDirection(cards, 'b', 'top')?.id).toBe('a')
+    expect(nearestCardInDirection(cards, 'a', 'left')).toBeUndefined()
+    expect(nearestCardInDirection(cards, 'missing', 'left')).toBeUndefined()
+  })
+
+  it('goes back to the term an expansion explains, or the card a message continues', () => {
+    expect(sourceCardId(e)).toBe('b')
+    expect(sourceCardId(b)).toBe('a')
+    expect(sourceCardId(a)).toBeUndefined()
+  })
+
+  it('places a rectangle of any size against a side', () => {
+    expect(rectAgainst(rect(0, 0), 'bottom', { w: 50, h: 30 })).toEqual(rect(0, 100, 50, 30))
+    expect(rectAgainst(rect(0, 0), 'left', { w: 50, h: 30 })).toEqual(rect(-50, 0, 50, 30))
+    expect(sharesSide(rectAgainst(rect(0, 0), 'top', { w: 80, h: 30 }), rect(0, 0))).toBe(true)
+  })
+
+  it('keeps a gap from everything when opening a new session', () => {
+    const placed = rectClearOf(rect(0, 0), [rect(0, 0)], 48)
+    expect(placed.y).toBe(148)
+    expect(sharesSide(placed, rect(0, 0))).toBe(false)
+  })
+
+  it('knows what is on screen and what fits there', () => {
+    const size = { width: 1000, height: 800 }
+    expect(visibleWorldRect({ x: -100, y: 0, zoom: 2 }, size)).toEqual(rect(50, 0, 500, 400))
+    expect(unionRect(rect(0, 0), rect(100, 300))).toEqual(rect(0, 0, 200, 400))
+    expect(fitsOnScreen(rect(0, 0, 800, 600), 1, size)).toBe(true)
+    expect(fitsOnScreen(rect(0, 0, 800, 700), 1, size)).toBe(false)
+    expect(fitsOnScreen(rect(0, 0, 800, 700), 0.5, size)).toBe(true)
   })
 })

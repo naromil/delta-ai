@@ -105,6 +105,29 @@ export function rectClearBelow(rect: CanvasRect, others: CanvasRect[]): CanvasRe
   return hit ? rectClearBelow({ ...rect, y: hit.y + hit.h }, others) : rect
 }
 
+/** `rect` moved straight down until it keeps at least `gap` from each of `others`. */
+export function rectClearOf(rect: CanvasRect, others: CanvasRect[], gap: number): CanvasRect {
+  const grown = others.map((other) => ({
+    x: other.x - gap,
+    y: other.y - gap,
+    w: other.w + gap * 2,
+    h: other.h + gap * 2
+  }))
+  return rectClearBelow(rect, grown)
+}
+
+/** The smallest rectangle holding both. */
+export function unionRect(a: CanvasRect, b: CanvasRect): CanvasRect {
+  const x = Math.min(a.x, b.x)
+  const y = Math.min(a.y, b.y)
+  return {
+    x,
+    y,
+    w: Math.max(a.x + a.w, b.x + b.w) - x,
+    h: Math.max(a.y + a.h, b.y + b.h) - y
+  }
+}
+
 export function containsRect(outer: CanvasRect, inner: CanvasRect): boolean {
   return (
     inner.x >= outer.x - SIDE_EPSILON &&
@@ -284,26 +307,84 @@ export function topLevelRects(cards: CanvasCard[], except?: ReadonlySet<string>)
   return cards.filter((card) => isTopLevel(card) && !except?.has(card.id)).map((card) => card.rect)
 }
 
-/** The newest card sharing a side with `rect`; none means `rect` starts a new session. */
-export function continuationParent(rect: CanvasRect, cards: CanvasCard[]): CanvasCard | undefined {
-  return cards.findLast((card) => isTopLevel(card) && sharesSide(rect, card.rect))
+/**
+ * Every card `rect` could continue, newest first. A rectangle touching several
+ * sessions continues only one: the history of the others is not sent.
+ */
+export function continuationCandidates(rect: CanvasRect, cards: CanvasCard[]): CanvasCard[] {
+  return cards.filter((card) => isTopLevel(card) && sharesSide(rect, card.rect)).reverse()
 }
 
-/** The same-sized spot against one side of a card, or null when something is in the way. */
+/** The newest card sharing a side with `rect`; none means `rect` starts a new session. */
+export function continuationParent(rect: CanvasRect, cards: CanvasCard[]): CanvasCard | undefined {
+  return continuationCandidates(rect, cards)[0]
+}
+
+/** A rectangle of `size` against one side of `rect`, sharing its top or left edge. */
+export function rectAgainst(
+  rect: CanvasRect,
+  side: CanvasSide,
+  size: { w: number; h: number }
+): CanvasRect {
+  const { x, y, w, h } = rect
+  const slots: Record<CanvasSide, CanvasRect> = {
+    right: { x: x + w, y, w: size.w, h: size.h },
+    bottom: { x, y: y + h, w: size.w, h: size.h },
+    left: { x: x - size.w, y, w: size.w, h: size.h },
+    top: { x, y: y - size.h, w: size.w, h: size.h }
+  }
+  return slots[side]
+}
+
+/** A spot against one side of a card (its own size by default), or null when something is in the way. */
 export function adjacentSlot(
   card: CanvasCard,
   side: CanvasSide,
-  cards: CanvasCard[]
+  cards: CanvasCard[],
+  size: { w: number; h: number } = card.rect
 ): CanvasRect | null {
-  const { x, y, w, h } = card.rect
-  const slots: Record<CanvasSide, CanvasRect> = {
-    right: { x: x + w, y, w, h },
-    bottom: { x, y: y + h, w, h },
-    left: { x: x - w, y, w, h },
-    top: { x, y: y - h, w, h }
-  }
-  const slot = slots[side]
+  const slot = rectAgainst(card.rect, side, size)
   return topLevelRects(cards).some((other) => rectsOverlap(slot, other)) ? null : slot
+}
+
+/** The card a card came from: an expansion's host, or the card a message continues. */
+export function sourceCardId(card: CanvasCard): string | undefined {
+  return card.kind === 'expansion' ? card.hostId : card.parentId
+}
+
+function rectCenter(rect: CanvasRect): CanvasPoint {
+  return { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 }
+}
+
+/**
+ * The card arrow-key navigation lands on: the nearest one whose centre lies that
+ * way, where sideways distance counts double so a straight line wins over a diagonal.
+ */
+export function nearestCardInDirection(
+  cards: CanvasCard[],
+  id: string,
+  side: CanvasSide
+): CanvasCard | undefined {
+  const from = cardById(cards, id)
+  if (!from) return undefined
+  const origin = rectCenter(from.rect)
+  let best: CanvasCard | undefined
+  let bestScore = Infinity
+  for (const card of cards) {
+    if (card.id === id) continue
+    const center = rectCenter(card.rect)
+    const dx = center.x - origin.x
+    const dy = center.y - origin.y
+    const ahead = { right: dx, left: -dx, bottom: dy, top: -dy }[side]
+    const sideways = side === 'right' || side === 'left' ? Math.abs(dy) : Math.abs(dx)
+    if (ahead <= SIDE_EPSILON) continue
+    const score = ahead + sideways * 2
+    if (score < bestScore) {
+      best = card
+      bestScore = score
+    }
+  }
+  return best
 }
 
 /**
@@ -633,6 +714,26 @@ export function revealRect(
     x: axis(viewport.x, rect.x, rect.w, size.width),
     y: axis(viewport.y, rect.y, rect.h, size.height)
   }
+}
+
+/** The part of the plane currently on screen. */
+export function visibleWorldRect(
+  viewport: CanvasViewport,
+  size: { width: number; height: number }
+): CanvasRect {
+  const topLeft = screenToWorld(viewport, { x: 0, y: 0 })
+  return { ...topLeft, w: size.width / viewport.zoom, h: size.height / viewport.zoom }
+}
+
+/** Whether a rectangle fits on screen at `zoom`, inside the margin `revealRect` keeps. */
+export function fitsOnScreen(
+  rect: CanvasRect,
+  zoom: number,
+  size: { width: number; height: number }
+): boolean {
+  return (
+    rect.w * zoom <= size.width - FIT_MARGIN * 2 && rect.h * zoom <= size.height - FIT_MARGIN * 2
+  )
 }
 
 /* ---- Load boundary ---- */

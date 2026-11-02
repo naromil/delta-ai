@@ -127,6 +127,23 @@
   animation: canvas-pulse 860ms var(--canvas-ease);
 }
 
+.canvas-card:focus {
+  outline: none;
+}
+
+.canvas-card:focus-visible .canvas-card-surface {
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring-inset), var(--shadow-2);
+}
+
+/* What a rectangle being drawn, or a waiting draft, continues. */
+.canvas-card.is-continued .canvas-card-surface {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 3px var(--accent-ring),
+    var(--shadow-2);
+}
+
 .canvas-card-header {
   flex: none;
   display: flex;
@@ -181,6 +198,7 @@
 }
 
 .canvas-card:hover .canvas-card-actions,
+.canvas-card:focus-visible .canvas-card-actions,
 .canvas-card.is-streaming .canvas-card-actions,
 .canvas-card.is-failed .canvas-card-actions,
 .canvas-card-actions:has(:focus-visible) {
@@ -284,6 +302,10 @@
   transition: background var(--dur-2) var(--ease-out);
 }
 
+.canvas-term.is-pulsing {
+  animation: canvas-term-pulse 900ms var(--canvas-ease);
+}
+
 .canvas-card-edit {
   display: flex;
   flex-direction: column;
@@ -380,6 +402,7 @@
 }
 
 .canvas-card:hover .canvas-continue,
+.canvas-card:focus-visible .canvas-continue,
 .canvas-continue:focus-visible {
   opacity: 1;
   transform: scale(1);
@@ -431,8 +454,43 @@
 
 .canvas-draft-actions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 6px;
+}
+
+.canvas-draft-session {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.canvas-draft-session select {
+  min-width: 0;
+  max-width: 220px;
+  height: 22px;
+  padding: 0 4px;
+  font: inherit;
+  color: var(--text-1);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  outline: none;
+}
+
+.canvas-draft-session select:focus-visible {
+  box-shadow: var(--focus-ring-inset);
+}
+
+.canvas-draft-waiting {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--text-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ---- Links, from a term to its expansion ---- */
@@ -480,6 +538,25 @@
 .canvas-links.is-dragging .canvas-link-line,
 .canvas-links.is-dragging .canvas-link-dot {
   transition: none;
+}
+
+/* A wide invisible stroke, so a thin link is easy to click. */
+.canvas-link-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: calc(14px / var(--canvas-zoom));
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+.canvas-links--under g:hover .canvas-link-line {
+  stroke-width: calc(3px / var(--canvas-zoom));
+}
+
+.canvas-surface.is-drawing .canvas-link-hit,
+.canvas-surface.is-panning .canvas-link-hit,
+.canvas-links.is-dragging .canvas-link-hit {
+  pointer-events: none;
 }
 
 /* ---- Drawing ---- */
@@ -630,12 +707,26 @@
   color: var(--text-2);
 }
 
-.canvas-hint {
+/* Hints and the way back to the composer, stacked at the bottom. */
+.canvas-bottom {
   position: absolute;
   bottom: 16px;
   left: 50%;
   z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
   max-width: 60%;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.canvas-bottom > * {
+  pointer-events: auto;
+}
+
+.canvas-hint {
   padding: 8px 14px;
   font-size: 13px;
   line-height: 18px;
@@ -643,8 +734,104 @@
   background: var(--surface-3);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-2);
-  transform: translateX(-50%);
   animation: canvas-hint-in 240ms var(--canvas-ease-out) both;
+}
+
+.canvas-jump {
+  height: 30px;
+  padding: 0 14px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--accent-contrast);
+  background: var(--accent);
+  border: 0;
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-2);
+  cursor: pointer;
+  animation: canvas-hint-in 240ms var(--canvas-ease-out) both;
+}
+
+.canvas-jump:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* ---- Keyboard map ---- */
+
+.canvas-shortcuts {
+  position: absolute;
+  right: 12px;
+  bottom: 60px;
+  z-index: 11;
+  width: 340px;
+  max-width: calc(100% - 24px);
+  max-height: calc(100% - 132px);
+  overflow: auto;
+  padding: 10px 14px 12px;
+  font-size: 12.5px;
+  line-height: 18px;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-3);
+  animation: canvas-hint-in 200ms var(--canvas-ease-out) both;
+}
+
+.canvas-shortcuts-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.canvas-shortcuts-header h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.canvas-shortcuts dl {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+}
+
+.canvas-shortcut {
+  display: grid;
+  grid-template-columns: 112px 1fr;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.canvas-shortcut dt {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.canvas-shortcut dd {
+  margin: 0;
+}
+
+.canvas-shortcut kbd {
+  min-width: 18px;
+  padding: 0 5px;
+  font-family: inherit;
+  font-size: 11.5px;
+  line-height: 18px;
+  text-align: center;
+  color: var(--text-1);
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+}
+
+.canvas-shortcuts-note {
+  margin: 10px 0 0;
+  color: var(--text-3);
 }
 
 .canvas-empty {
@@ -757,10 +944,20 @@
 @keyframes canvas-hint-in {
   from {
     opacity: 0;
-    transform: translate(-50%, 8px);
+    transform: translateY(8px);
   }
   to {
     opacity: 1;
-    transform: translate(-50%, 0);
+    transform: translateY(0);
+  }
+}
+
+@keyframes canvas-term-pulse {
+  0%,
+  100% {
+    background: transparent;
+  }
+  30% {
+    background: var(--accent-ring);
   }
 }

@@ -8,6 +8,8 @@ interface CanvasLinksProps {
   surfaceRef: RefObject<HTMLDivElement | null>
   /** Links of cards being dragged follow the pointer instead of easing after it. */
   dragging: boolean
+  /** A click on a link, which travels to whichever end is farther from the click. */
+  onFollow: (e: React.MouseEvent, id: string, term: CanvasPoint) => void
 }
 
 type TermOffsets = Readonly<Record<string, CanvasPoint>>
@@ -62,7 +64,12 @@ function LinkLine({ d }: { d: string }): React.JSX.Element {
 }
 
 /** Draws a link from each expanded term to its expansion once it stands on its own. */
-function CanvasLinks({ cards, surfaceRef, dragging }: CanvasLinksProps): React.JSX.Element {
+function CanvasLinks({
+  cards,
+  surfaceRef,
+  dragging,
+  onFollow
+}: CanvasLinksProps): React.JSX.Element {
   const [offsets, setOffsets] = useState<TermOffsets>({})
 
   const measure = (): void => {
@@ -100,12 +107,18 @@ function CanvasLinks({ cards, surfaceRef, dragging }: CanvasLinksProps): React.J
   const dragClass = dragging ? ' is-dragging' : ''
 
   // Drawn twice: strong under the cards for open space, and faint over them so a
-  // link can be traced back to its term without striking through the text.
+  // link can be traced back to its term without striking through the text. Only the
+  // part under the cards takes clicks, so a link never steals one meant for text.
   return (
     <>
       <svg className={`canvas-links canvas-links--under${dragClass}`} aria-hidden="true">
-        {links.map(({ id, d }) => (
-          <LinkLine key={id} d={d} />
+        {links.map(({ id, d, from }) => (
+          <g key={id}>
+            <LinkLine d={d} />
+            <path className="canvas-link-hit" d={d} onClick={(e) => onFollow(e, id, from)}>
+              <title>Follow this link</title>
+            </path>
+          </g>
         ))}
       </svg>
       <svg className={`canvas-links canvas-links--over${dragClass}`} aria-hidden="true">

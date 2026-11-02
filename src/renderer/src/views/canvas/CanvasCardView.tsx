@@ -1,9 +1,10 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { CanvasCard, CanvasRect, CanvasSide } from '../../../../shared/canvas'
 import type { ExpansionNode } from '../../../../shared/rich-text'
 import { flattenMarkdown } from '../../../../shared/rich-text'
 import Markdown from '../../components/conversation/Markdown'
 import { OriginalText } from '../../components/conversation/ExpansionFrame'
+import { nextPinned } from '../../hooks/useStickToBottom'
 
 export type CanvasCardStatus = 'streaming' | 'done' | 'failed'
 
@@ -20,6 +21,10 @@ export interface CanvasCardActions {
   onContinue: (id: string, side: CanvasSide) => void
   onContextMenu: (e: React.MouseEvent) => void
   onOpenExpansion: (expansionId: number) => void
+  /** Back along the session: an expansion's term, or the card a message continues. */
+  onGoToSource: (id: string) => void
+  /** Keys pressed while the card itself has focus (not a button or field inside it). */
+  onCardKeyDown: (e: React.KeyboardEvent, id: string) => void
 }
 
 interface CanvasCardViewProps extends CanvasCardActions {
@@ -37,6 +42,10 @@ interface CanvasCardViewProps extends CanvasCardActions {
   invalid: boolean
   pulsing: boolean
   dimmed: boolean
+  /** The card a rectangle being drawn, or a waiting draft, would continue. */
+  continued: boolean
+  /** An expanded term in this card to flash, after navigating back to it. */
+  pulseTermId: number | null
 }
 
 /** Expansions here are cards, so a term has nothing to fold. */
@@ -80,7 +89,13 @@ function CardQuestionEditor({
   onCancel: () => void
 }): React.JSX.Element {
   const [draft, setDraft] = useState(question)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
   const trimmed = draft.trim()
+
+  // Not autoFocus: that scrolls the clipped plane, which only the viewport may move.
+  useEffect(() => {
+    inputRef.current?.focus({ preventScroll: true })
+  }, [])
   return (
     <form
       className="canvas-card-edit"
@@ -90,10 +105,10 @@ function CardQuestionEditor({
       }}
     >
       <textarea
+        ref={inputRef}
         className="canvas-draft-input"
         aria-label="Edit question"
         value={draft}
-        autoFocus
         onChange={(e) => setDraft(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Escape') {
@@ -120,12 +135,43 @@ function CardQuestionEditor({
 
 function CanvasCardView(props: CanvasCardViewProps): React.JSX.Element {
   const { card, rect, caption, question, answer, expansions, status, failure } = props
-  const { dragging, invalid, pulsing, dimmed } = props
+  const { dragging, invalid, pulsing, dimmed, continued, pulseTermId } = props
   const { onDragStart, onResizeStart, onStop, onRegenerate, onEdit, onDelete, onContinue } = props
-  const { onAskAnother, onContextMenu, onOpenExpansion } = props
+  const { onAskAnother, onContextMenu, onOpenExpansion, onGoToSource, onCardKeyDown } = props
   const [editing, setEditing] = useState(false)
   const [copied, setCopied] = useState(false)
   const copiedTimerRef = useRef<number | null>(null)
+  const articleRef = useRef<HTMLElement>(null)
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const pinnedRef = useRef(true)
+  const lastTopRef = useRef(0)
+  const lastStatusRef = useRef(status)
+
+  // An answer that outgrows its card while streaming follows its newest line, as a
+  // chat does; scrolling up lets go until the reader returns to the end.
+  useLayoutEffect(() => {
+    const body = bodyRef.current
+    const started = status === 'streaming' && lastStatusRef.current !== 'streaming'
+    lastStatusRef.current = status
+    if (started) pinnedRef.current = true
+    if (!body || status !== 'streaming' || !pinnedRef.current) return
+    body.scrollTop = body.scrollHeight
+    lastTopRef.current = body.scrollTop
+  }, [answer, status])
+
+  const handleBodyScroll = (): void => {
+    const body = bodyRef.current
+    if (!body) return
+    const top = body.scrollTop
+    const distance = Math.max(0, body.scrollHeight - top - body.clientHeight)
+    pinnedRef.current = nextPinned(pinnedRef.current, lastTopRef.current, top, distance)
+    lastTopRef.current = top
+  }
+
+  const finishEditing = (): void => {
+    setEditing(false)
+    articleRef.current?.focus({ preventScroll: true })
+  }
 
   useEffect(() => {
     return () => {
@@ -152,7 +198,7 @@ function CanvasCardView(props: CanvasCardViewProps): React.JSX.Element {
       const flat = flattenMarkdown(node.originalText).slice(0, 80)
       return (
         <span
-          className="queried canvas-term"
+          className={`queried canvas-term${group.some((item) => item.id === pulseTermId) ? ' is-pulsing' : ''}`}
           data-expansion-id={node.id}
           data-canvas-terms={group.map((item) => item.id).join(' ')}
           role="button"
@@ -170,7 +216,7 @@ function CanvasCardView(props: CanvasCardViewProps): React.JSX.Element {
         </span>
       )
     },
-    [onOpenExpansion]
+    [onOpenExpansion, pulseTermId]
   )
 
   const classes = [
@@ -182,19 +228,42 @@ function CanvasCardView(props: CanvasCardViewProps): React.JSX.Element {
     dragging ? 'is-dragging' : '',
     invalid ? 'is-invalid' : '',
     pulsing ? 'is-pulsing' : '',
-    dimmed ? 'is-dimmed' : ''
+    dimmed ? 'is-dimmed' : '',
+    continued ? 'is-continued' : ''
   ]
     .filter(Boolean)
     .join(' ')
   const canContinue = (card.kind === 'message' || !card.inset) && status === 'done'
   const waiting = status === 'streaming' && answer === ''
   const expansionId = card.kind === 'expansion' ? card.expansionId : undefined
+  const hasSource = card.kind === 'expansion' || card.parentId !== undefined
+  const label = question ? `${caption}: ${question}` : caption
 
   return (
     <article
+      ref={articleRef}
       className={classes}
       data-canvas-card={card.id}
+      tabIndex={0}
+      aria-label={`${card.kind === 'expansion' ? 'Expansion' : 'Question'}: ${label.slice(0, 120)}`}
+      aria-busy={status === 'streaming'}
       style={{ transform: `translate(${rect.x}px, ${rect.y}px)`, width: rect.w, height: rect.h }}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget || e.ctrlKey || e.metaKey || e.altKey) return
+        if ((e.key === 'e' || e.key === 'E') && card.kind === 'message' && status !== 'streaming') {
+          e.preventDefault()
+          setEditing(true)
+          return
+        }
+        // Arrows move between cards, so paging is how a long answer is read.
+        if ((e.key === 'PageDown' || e.key === 'PageUp') && bodyRef.current) {
+          e.preventDefault()
+          const page = bodyRef.current.clientHeight * 0.85
+          bodyRef.current.scrollBy({ top: e.key === 'PageDown' ? page : -page, behavior: 'smooth' })
+          return
+        }
+        onCardKeyDown(e, card.id)
+      }}
     >
       <div className="canvas-card-surface">
         <header
@@ -204,11 +273,25 @@ function CanvasCardView(props: CanvasCardViewProps): React.JSX.Element {
         >
           <div className="canvas-card-caption">
             {card.kind === 'expansion' ? <span className="canvas-card-kind">Expansion</span> : null}
-            <span title={question ?? caption}>
-              {question ? `${caption}: ${question}` : caption}
-            </span>
+            <span title={question ?? caption}>{label}</span>
           </div>
           <div className="canvas-card-actions">
+            {hasSource ? (
+              <button
+                type="button"
+                className="canvas-icon-btn"
+                aria-label={
+                  card.kind === 'expansion' ? 'Back to the term (B)' : 'Previous card (B)'
+                }
+                title={card.kind === 'expansion' ? 'Back to the term (B)' : 'Previous card (B)'}
+                onClick={() => onGoToSource(card.id)}
+              >
+                <ActionIcon>
+                  <path d="M9 14L4 9l5-5" />
+                  <path d="M4 9h10.5a5.5 5.5 0 010 11H11" />
+                </ActionIcon>
+              </button>
+            ) : null}
             {status === 'streaming' ? (
               <button type="button" className="canvas-icon-btn" onClick={() => onStop(card.id)}>
                 Stop
@@ -247,8 +330,8 @@ function CanvasCardView(props: CanvasCardViewProps): React.JSX.Element {
               <button
                 type="button"
                 className="canvas-icon-btn"
-                aria-label="Edit and resend"
-                title="Edit and resend"
+                aria-label="Edit and resend (E)"
+                title="Edit and resend (E)"
                 onClick={() => setEditing(true)}
               >
                 <ActionIcon>
@@ -287,8 +370,8 @@ function CanvasCardView(props: CanvasCardViewProps): React.JSX.Element {
             <button
               type="button"
               className="canvas-icon-btn canvas-icon-btn--close"
-              aria-label="Delete"
-              title="Delete"
+              aria-label="Delete (Delete)"
+              title="Delete (Delete)"
               onClick={() => onDelete(card.id)}
             >
               ×
@@ -297,17 +380,19 @@ function CanvasCardView(props: CanvasCardViewProps): React.JSX.Element {
         </header>
         <div className="canvas-card-progress" aria-hidden="true" />
         <div
+          ref={bodyRef}
           className="canvas-card-body"
           data-turn-id={card.turnId}
           data-expansion-id={expansionId}
           onContextMenu={onContextMenu}
+          onScroll={handleBodyScroll}
         >
           {editing ? (
             <CardQuestionEditor
               question={caption}
-              onCancel={() => setEditing(false)}
+              onCancel={finishEditing}
               onSubmit={(question) => {
-                if (onEdit(card.id, question)) setEditing(false)
+                if (onEdit(card.id, question)) finishEditing()
               }}
             />
           ) : (
@@ -337,8 +422,8 @@ function CanvasCardView(props: CanvasCardViewProps): React.JSX.Element {
           <button
             type="button"
             className="canvas-continue canvas-continue--right"
-            aria-label="Continue on the right"
-            title="Continue this session here"
+            aria-label="Continue on the right (Shift+Enter)"
+            title="Continue this session here (Shift+Enter)"
             onClick={() => onContinue(card.id, 'right')}
           >
             +
@@ -346,8 +431,8 @@ function CanvasCardView(props: CanvasCardViewProps): React.JSX.Element {
           <button
             type="button"
             className="canvas-continue canvas-continue--bottom"
-            aria-label="Continue below"
-            title="Continue this session here"
+            aria-label="Reply below (Enter)"
+            title="Continue this session here (Enter)"
             onClick={() => onContinue(card.id, 'bottom')}
           >
             +

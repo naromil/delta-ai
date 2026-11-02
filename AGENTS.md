@@ -153,7 +153,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | Chat hook        | `hooks/useChatStreaming.ts`                                | Owns ConversationState, stop/retry/regenerate/rename, routes requests via `hooks/chat/*`, auto-saves                                 |
 | Chat requests    | `hooks/chat/{requests,persistence,transport}.ts`           | Pure request book (pending ids, `activeSendId`, drain helpers), autosave effect, IPC subscriptions + stale-id drops                  |
 | Canvas state     | `hooks/useCanvas.ts`                                       | Open canvas, its streams and autosave; lives in `App` so answers survive a view change                                               |
-| Canvas view      | `views/canvas/*`                                           | `CanvasView` (gestures, tools, placement), `CanvasCardView`, `CanvasDraft`, `CanvasLinks`; styles in `assets/canvas.css`             |
+| Canvas view      | `views/canvas/*`                                           | `CanvasView` (gestures, keys, follow), `CanvasCardView`, `CanvasDraft`, `CanvasLinks`, `CanvasShortcuts`; styles in `canvas.css`     |
 | Scroll following | `hooks/useStickToBottom.ts`                                | Pins chat/popup views to the bottom while a response streams; an upward scroll unpins                                                |
 | Conversation     | `components/conversation/Conversation.tsx`                 | Message list, composer + Stop button (Esc), toolbar (export/delete), context menu                                                    |
 | Turn             | `components/conversation/Turn.tsx`                         | Single message (user/assistant) with avatar, markdown body, retry, inline edit-and-resend                                            |
@@ -222,6 +222,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | Canvas card buttons                    | `views/canvas/CanvasCardView.tsx`, `hooks/useCanvas.ts` (`regenerateCard`, `editCard`)                 |
 | Canvas streaming and saving            | `hooks/useCanvas.ts`                                                                                   |
 | Canvas sizing instruction              | `shared/prompts.ts` (`buildCanvasFitNote`)                                                             |
+| Canvas keys, composer, follow, links   | `views/canvas/CanvasView.tsx` (+ `CanvasShortcuts.tsx` list, `nearestCardInDirection` in `canvas.ts`)  |
 | Provider config form                   | `components/settings/models/ModelsTab.tsx` (+ `RoleRow.tsx`, `ConnectionCard.tsx`)                     |
 | Model picker / catalog                 | `shared/model-catalog.ts` (pure), `services/model-catalog.ts` (fetch+cache)                            |
 | Change the model-config schema         | `models/config-schema.ts` — add a vN→vN+1 step, bump `MODEL_CONFIG_VERSION`                            |
@@ -378,9 +379,25 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   Like chat it drops what came after: every card in `cascadeCardIds`. Anything that takes other cards
   along, delete included, confirms twice (`confirmCascade`).
 - **Sides are sessions.** Drawing with a side against a card (`continuationParent`, snapped by
-  `snapEdges`) continues it; anywhere else starts a new session. Dragging moves the whole session
+  `snapEdges`) continues it; anywhere else starts a new session. A rectangle touching several cards
+  continues one only (`continuationCandidates`, newest first) and sends only that history; the
+  drawing highlights it (`is-continued`) and the draft's "Continues" picker can switch to another
+  candidate or to a new session. Dragging moves the whole session
   (`movingCardIds`) so sides stay shared; anything standing on the plane may not overlap, and a
   refused drop springs back through the card's own transform transition.
+- **The draft is the canvas's composer, and the viewport follows it like a pinned chat.** Sending
+  opens the next draft against the new card's bottom (else right), kept there through `Draft.side`
+  as the card grows or moves; it cannot send while the answer it continues is streaming or failed.
+  `followRef` keeps the draft and its parent on screen (or just the draft, under the answer's newest
+  lines, when both do not fit); any manual pan, wheel or zoom lets go, typing in the draft or "Back
+  to your question" re-pins. A streaming card body sticks to its newest line (`nextPinned`).
+- **Canvas is keyboard-drivable.** Cards are focusable: arrows move to `nearestCardInDirection`,
+  Enter/Shift+Enter continue below/right, B goes back (`sourceCardId`; an expansion returns to its
+  term, flashed and scrolled into its card), E edits, Delete deletes, PgUp/PgDn scroll. With no card
+  focused, Enter opens the composer, N a new session, arrows pan, +/−/0 zoom, `?` lists them all.
+  Clicking a link travels to its farther end. Focus never scrolls the plane: drafts and editors
+  focus with `preventScroll`, and the surface resets any scroll a focus causes; only the viewport
+  moves it.
 - **Canvas gestures cancel `mousedown`, never `pointerdown`.** Cancelling `pointerdown` suppresses the
   `mousedown` that `ContextMenu` and `ExpandPrompt` use to notice an outside click, so they would stay
   open. `claimPress` marks the press, and `handleSurfaceMouseDown` cancels it and releases focus.

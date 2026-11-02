@@ -15,16 +15,21 @@ import {
   MIN_MESSAGE_SIZE,
   adjacentSlot,
   cascadeCardIds,
+  clampPointInside,
   clampRectInside,
   containsPoint,
   containsRect,
-  continuationParent,
+  continuationCandidates,
   estimateWords,
   fitViewport,
+  fitsOnScreen,
   isTopLevel,
   movingCardIds,
+  nearestCardInDirection,
+  rectAgainst,
   rectCenteredAt,
   rectClearBelow,
+  rectClearOf,
   rectFromPoints,
   rectsOverlap,
   resolveMove,
@@ -32,7 +37,10 @@ import {
   screenToWorld,
   snapEdges,
   snapMove,
+  sourceCardId,
   topLevelRects,
+  unionRect,
+  visibleWorldRect,
   wheelZoomFactor,
   zoomAt
 } from '../../../../shared/canvas'
@@ -49,6 +57,7 @@ import CanvasCardView from './CanvasCardView'
 import type { CanvasCardActions, CanvasCardStatus } from './CanvasCardView'
 import CanvasDraft from './CanvasDraft'
 import CanvasLinks from './CanvasLinks'
+import CanvasShortcuts from './CanvasShortcuts'
 
 type Canvas = ReturnType<typeof useCanvas>
 type Tool = 'move' | 'select'
@@ -59,9 +68,17 @@ type Gesture =
   | { type: 'drag'; id: string; ids: Set<string>; start: CanvasPoint; pointer: CanvasPoint }
   | { type: 'resize'; id: string; start: CanvasPoint; pointer: CanvasPoint }
 
+/** A rectangle waiting for its question: the canvas's composer. */
 interface Draft {
+  /** A fresh draft is a fresh composer, so typed text never carries over. */
+  key: number
+  /** Where it stands, or only its size when it is kept against `side` of its parent. */
   rect: CanvasRect
   parentId?: string
+  /** Kept against this side of its parent, so the parent growing or moving carries it along. */
+  side?: CanvasSide
+  /** The cards it could continue, newest first; the user picks one in the draft. */
+  sessions: string[]
 }
 
 /** A chosen expansion waiting for the rectangle that decides its size. */
@@ -96,11 +113,40 @@ const REFUSE_IN_MESSAGE =
   'To draw inside a message, select some text in it and choose Expand first.'
 const REFUSE_MOVE = 'There is something in the way, so the card went back.'
 const NO_ROOM = 'There is no room on that side. Draw the next rectangle by hand.'
+const NO_CONTINUE_INSET = 'Drag this expansion clear of its message to continue it.'
+const NO_CONTINUE_FAILED = 'Retry this answer before continuing it.'
+const WAITING_PARENT = 'Waiting for the answer it continues…'
+const FAILED_PARENT = 'The answer it continues failed. Retry it first.'
+
+/** How far an arrow key pans, in screen pixels; Shift pans further. */
+const PAN_STEP = 80
+const PAN_STEP_LARGE = 320
+/** Space kept around a new session opened from the keyboard. */
+const NEW_SESSION_GAP = 48
+/** How much of the plane around a term is brought on screen when returning to it. */
+const TERM_REVEAL = { w: 360, h: 220 }
+
+const ARROW_SIDES: Readonly<Record<string, CanvasSide>> = {
+  ArrowRight: 'right',
+  ArrowLeft: 'left',
+  ArrowDown: 'bottom',
+  ArrowUp: 'top'
+}
 
 function isTyping(target: EventTarget | null): boolean {
   return (
     target instanceof HTMLElement &&
     (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
+  )
+}
+
+/** Keys on these belong to them: Enter presses a button, arrows move a caret or scroll text. */
+function ownsKeys(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element &&
+    target.closest(
+      'button, a, select, [role="button"], [data-canvas-card], [data-canvas-draft]'
+    ) !== null
   )
 }
 
@@ -136,6 +182,15 @@ function measureCardHeight(surface: HTMLElement, id: string): number | null {
     content.offsetHeight
   body.style.overflowY = overflowY
   return height
+}
+
+/** Scrolls a card body so `el` sits in its middle, without moving anything around it. */
+function scrollIntoBody(el: Element, scale: number): void {
+  const body = el.closest<HTMLElement>('.canvas-card-body')
+  if (!body) return
+  const offset =
+    (el.getBoundingClientRect().top - body.getBoundingClientRect().top) / scale + body.scrollTop
+  body.scrollTop = offset - body.clientHeight / 2
 }
 
 function dependentsPhrase(count: number): string {
@@ -203,8 +258,19 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
   const [spaceHeld, setSpaceHeld] = useState(false)
   const [listMenu, setListMenu] = useState<ContextMenuState | null>(null)
   const [exportState, setExportState] = useState<'idle' | 'exporting' | 'saved'>('idle')
+  const [helpOpen, setHelpOpen] = useState(false)
+  const [pulseTerm, setPulseTerm] = useState<{ cardId: string; expansionId: number } | null>(null)
+  const [surfaceBox, setSurfaceBox] = useState({ width: 0, height: 0 })
   const noticeTimerRef = useRef<number | null>(null)
   const pulseTimerRef = useRef<number | null>(null)
+  const draftKeyRef = useRef(0)
+  /** The card Enter replies to when no card has focus: the last one touched or asked. */
+  const currentIdRef = useRef<string | null>(null)
+  /**
+   * Like a chat pinned to its bottom: while true, the viewport keeps the waiting
+   * draft and the answer it follows on screen. Moving the view by hand lets go.
+   */
+  const followRef = useRef(true)
   const animationTimerRef = useRef<number | null>(null)
   const exportTimerRef = useRef<number | null>(null)
 
@@ -212,6 +278,16 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
   useEffect(() => {
     viewportRef.current = viewport
   }, [viewport])
+
+  // Callbacks read the turns through this, so card actions stay stable while text streams.
+  const canvasRef = useRef(canvas)
+  useEffect(() => {
+    canvasRef.current = canvas
+  }, [canvas])
+
+  const unfollow = useCallback((): void => {
+    followRef.current = false
+  }, [])
 
   useEffect(() => {
     return () => {
@@ -230,6 +306,21 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
   const surfaceSize = useCallback((): { width: number; height: number } => {
     const box = surfaceRef.current?.getBoundingClientRect()
     return { width: box?.width ?? 0, height: box?.height ?? 0 }
+  }, [])
+
+  useEffect(() => {
+    const surface = surfaceRef.current
+    if (!surface) return
+    const observer = new ResizeObserver(() => {
+      const box = surface.getBoundingClientRect()
+      setSurfaceBox((prev) =>
+        prev.width === box.width && prev.height === box.height
+          ? prev
+          : { width: box.width, height: box.height }
+      )
+    })
+    observer.observe(surface)
+    return () => observer.disconnect()
   }, [])
 
   /** Eases to a viewport; panning and wheel zoom set it directly instead. */
@@ -354,8 +445,14 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
         setTool('move')
         return
       }
-      const parent = continuationParent(outcome.rect, cards)
-      setDraft({ rect: outcome.rect, ...(parent ? { parentId: parent.id } : {}) })
+      const sessions = continuationCandidates(outcome.rect, cards).map((card) => card.id)
+      followRef.current = true
+      setDraft({
+        key: ++draftKeyRef.current,
+        rect: outcome.rect,
+        ...(sessions.length > 0 ? { parentId: sessions[0] } : {}),
+        sessions
+      })
       setTool('move')
     },
     [canvas, cards, drawnRect, placing, showNotice]
@@ -386,9 +483,11 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     const target = e.target as Element
     const startPan = e.button === 1 || (e.button === 0 && spaceHeld)
     const drawing = tool === 'select' || placing !== null
+    if (!startPan && !drawing && target.closest('.canvas-link-hit')) return
     if (startPan || (e.button === 0 && !drawing && !target.closest('.canvas-card'))) {
       window.getSelection()?.removeAllRanges()
       claimPress(e)
+      unfollow()
       setGesture({ type: 'pan', pointer: pointerOnSurface(e), origin: viewport })
       return
     }
@@ -505,6 +604,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       if (e.button !== 0 || (e.target as Element).closest('button')) return
       const start = pointerInWorld(e)
       claimPress(e)
+      currentIdRef.current = id
       setGesture({
         type: 'drag',
         id,
@@ -535,6 +635,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       const current = viewportRef.current
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault()
+        followRef.current = false
         const box = surface.getBoundingClientRect()
         const anchor = { x: e.clientX - box.left, y: e.clientY - box.top }
         const zoom = current.zoom * wheelZoomFactor(e.deltaY)
@@ -544,6 +645,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       const body = (e.target as Element).closest('.canvas-card-body')
       if (body && canScrollBy(body, e.deltaX, e.deltaY)) return
       e.preventDefault()
+      followRef.current = false
       setViewport({ ...current, x: current.x - e.deltaX, y: current.y - e.deltaY })
     }
     surface.addEventListener('wheel', handleWheel, { passive: false })
@@ -562,41 +664,6 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       fitCard(id, measureCardHeight(surface, id))
     }
   }, [fitCard, fitCardIds, gesture])
-
-  /* ---- Keyboard ---- */
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent): void => {
-      if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return
-      if (e.key === 'Escape') {
-        if (gesture) setGesture(null)
-        else if (placing) setPlacing(null)
-        else if (draft) setDraft(null)
-        else if (tool === 'select') setTool('move')
-        return
-      }
-      if (isTyping(e.target)) return
-      if (e.key === ' ') {
-        // Space still presses whatever button has focus.
-        if ((e.target as Element).closest?.('button, [role="button"]')) return
-        e.preventDefault()
-        setSpaceHeld(true)
-      } else if (e.key === 'r' || e.key === 'R') {
-        setTool('select')
-      } else if (e.key === 'v' || e.key === 'V') {
-        setTool('move')
-      }
-    }
-    const handleKeyUp = (e: KeyboardEvent): void => {
-      if (e.key === ' ') setSpaceHeld(false)
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    window.addEventListener('keyup', handleKeyUp)
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown)
-      window.removeEventListener('keyup', handleKeyUp)
-    }
-  }, [draft, gesture, placing, tool])
 
   /* ---- Card actions ---- */
 
@@ -658,18 +725,87 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     setExportState('idle')
   }
 
-  const handleContinue = useCallback(
-    (id: string, side: CanvasSide): void => {
+  /* ---- Moving between cards ---- */
+
+  /** The smallest glide that brings a rectangle on screen; none when it already is. */
+  const revealOnScreen = useCallback(
+    (rect: CanvasRect): void => {
+      const next = revealRect(viewportRef.current, rect, surfaceSize())
+      if (next.x !== viewportRef.current.x || next.y !== viewportRef.current.y) glideTo(next)
+    },
+    [glideTo, surfaceSize]
+  )
+
+  /** Flashes a card, or one expanded term inside it. */
+  const flash = useCallback((cardId: string, expansionId?: number): void => {
+    setPulseId(expansionId === undefined ? cardId : null)
+    setPulseTerm(expansionId === undefined ? null : { cardId, expansionId })
+    if (pulseTimerRef.current !== null) window.clearTimeout(pulseTimerRef.current)
+    pulseTimerRef.current = window.setTimeout(() => {
+      setPulseId(null)
+      setPulseTerm(null)
+    }, PULSE_MS)
+  }, [])
+
+  /** Every keyboard and link jump lands here: the card gets focus and comes on screen. */
+  const focusCard = useCallback(
+    (id: string, pulse = false): void => {
       const card = cardsRef.current.find((item) => item.id === id)
-      const slot = card ? adjacentSlot(card, side, cardsRef.current) : null
-      if (!slot) {
-        showNotice(NO_ROOM)
+      if (!card) return
+      unfollow()
+      currentIdRef.current = id
+      revealOnScreen(card.rect)
+      surfaceRef.current
+        ?.querySelector<HTMLElement>(`[data-canvas-card="${id}"]`)
+        ?.focus({ preventScroll: true })
+      if (pulse) flash(id)
+    },
+    [flash, revealOnScreen, unfollow]
+  )
+
+  /** From an expansion back to the term it explains, scrolled into its card and flashed. */
+  const returnToTerm = useCallback(
+    (id: string): void => {
+      const card = cardsRef.current.find((item) => item.id === id)
+      if (card?.kind !== 'expansion') return
+      const host = cardsRef.current.find((item) => item.id === card.hostId)
+      const hostEl = surfaceRef.current?.querySelector<HTMLElement>(
+        `[data-canvas-card="${card.hostId}"] .canvas-card-surface`
+      )
+      const term = hostEl?.querySelector<HTMLElement>(`[data-canvas-terms~="${card.expansionId}"]`)
+      if (!host || !hostEl || !term) {
+        focusCard(card.hostId, true)
         return
       }
-      setDraft({ rect: slot, parentId: id })
-      glideTo(revealRect(viewportRef.current, slot, surfaceSize()))
+      unfollow()
+      const scale = hostEl.getBoundingClientRect().width / host.rect.w
+      scrollIntoBody(term, scale)
+      const hostBox = hostEl.getBoundingClientRect()
+      const termBox = term.getBoundingClientRect()
+      const center = {
+        x: host.rect.x + (termBox.left + termBox.width / 2 - hostBox.left) / scale,
+        y: host.rect.y + (termBox.top + termBox.height / 2 - hostBox.top) / scale
+      }
+      revealOnScreen(rectCenteredAt(center, TERM_REVEAL))
+      currentIdRef.current = host.id
+      term.focus({ preventScroll: true })
+      flash(host.id, card.expansionId)
     },
-    [glideTo, showNotice, surfaceSize]
+    [flash, focusCard, revealOnScreen, unfollow]
+  )
+
+  const goToSource = useCallback(
+    (id: string): void => {
+      const card = cardsRef.current.find((item) => item.id === id)
+      if (!card) return
+      if (card.kind === 'expansion') {
+        returnToTerm(id)
+        return
+      }
+      const source = sourceCardId(card)
+      if (source !== undefined) focusCard(source, true)
+    },
+    [focusCard, returnToTerm]
   )
 
   const handleOpenExpansion = useCallback(
@@ -677,15 +813,246 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       const card = cardsRef.current.find(
         (item) => item.kind === 'expansion' && item.expansionId === expansionId
       )
-      if (!card) return
-      const next = revealRect(viewportRef.current, card.rect, surfaceSize())
-      if (next.x !== viewportRef.current.x || next.y !== viewportRef.current.y) glideTo(next)
-      setPulseId(card.id)
-      if (pulseTimerRef.current !== null) window.clearTimeout(pulseTimerRef.current)
-      pulseTimerRef.current = window.setTimeout(() => setPulseId(null), PULSE_MS)
+      if (card) focusCard(card.id, true)
     },
-    [glideTo, surfaceSize]
+    [focusCard]
   )
+
+  /** A link click travels to whichever end is farther from where it was clicked. */
+  const handleFollowLink = useCallback(
+    (e: React.MouseEvent, id: string, term: CanvasPoint): void => {
+      const card = cardsRef.current.find((item) => item.id === id)
+      if (!card) return
+      const at = pointerInWorld(e)
+      const onCard = clampPointInside(at, card.rect)
+      const toCard = Math.hypot(at.x - onCard.x, at.y - onCard.y)
+      const toTerm = Math.hypot(at.x - term.x, at.y - term.y)
+      if (toTerm < toCard) focusCard(id, true)
+      else returnToTerm(id)
+    },
+    [focusCard, pointerInWorld, returnToTerm]
+  )
+
+  /* ---- The composer: drafts, and the conversation they follow ---- */
+
+  const openDraft = useCallback((next: Omit<Draft, 'key'>): void => {
+    followRef.current = true
+    setPlacing(null)
+    setTool('move')
+    setDraft({ ...next, key: ++draftKeyRef.current })
+  }, [])
+
+  /** A draft against the first free side of `sides`, sized like the card it continues. */
+  const continueCard = useCallback(
+    (id: string, sides: CanvasSide[]): void => {
+      const card = cardsRef.current.find((item) => item.id === id)
+      if (!card) return
+      if (!isTopLevel(card)) {
+        showNotice(NO_CONTINUE_INSET)
+        return
+      }
+      if (cardContent(card, canvasRef.current).status === 'failed') {
+        showNotice(NO_CONTINUE_FAILED)
+        return
+      }
+      const side = sides.find((item) => adjacentSlot(card, item, cardsRef.current) !== null)
+      if (side === undefined) {
+        showNotice(NO_ROOM)
+        return
+      }
+      currentIdRef.current = id
+      openDraft({ rect: card.rect, parentId: id, side, sessions: [id] })
+    },
+    [openDraft, showNotice]
+  )
+
+  const handleContinue = useCallback(
+    (id: string, side: CanvasSide): void => continueCard(id, [side]),
+    [continueCard]
+  )
+
+  /** A new session in open space near the middle of the screen. */
+  const newSession = useCallback((): void => {
+    const size = surfaceSize()
+    const center = screenToWorld(viewportRef.current, { x: size.width / 2, y: size.height / 2 })
+    const rect = rectClearOf(
+      rectCenteredAt(center, DEFAULT_MESSAGE_SIZE),
+      topLevelRects(cardsRef.current),
+      NEW_SESSION_GAP
+    )
+    openDraft({ rect, sessions: [] })
+  }, [openDraft, surfaceSize])
+
+  const followRectRef = useRef<CanvasRect | null>(null)
+
+  /** Pins the view to the composer again and brings it on screen. */
+  const refollow = useCallback((): void => {
+    followRef.current = true
+    if (followRectRef.current) revealOnScreen(followRectRef.current)
+  }, [revealOnScreen])
+
+  /** Enter with no card focused: the composer if one is open, else a reply to the current card. */
+  const compose = useCallback((): void => {
+    const input = surfaceRef.current?.querySelector<HTMLTextAreaElement>(
+      '[data-canvas-draft] textarea'
+    )
+    if (input) {
+      refollow()
+      input.focus({ preventScroll: true })
+      return
+    }
+    const all = cardsRef.current
+    const current =
+      all.find((card) => card.id === currentIdRef.current && isTopLevel(card)) ??
+      all.findLast((card) => card.kind === 'message')
+    if (current) continueCard(current.id, ['bottom', 'right'])
+    else newSession()
+  }, [continueCard, newSession, refollow])
+
+  const zoomBy = useCallback(
+    (factor: number): void => {
+      const { width, height } = surfaceSize()
+      const current = viewportRef.current
+      unfollow()
+      glideTo(zoomAt(current, { x: width / 2, y: height / 2 }, current.zoom * factor))
+    },
+    [glideTo, surfaceSize, unfollow]
+  )
+
+  const showEverything = useCallback((): void => {
+    unfollow()
+    glideTo(
+      fitViewport(
+        cardsRef.current.map((card) => card.rect),
+        surfaceSize()
+      )
+    )
+  }, [glideTo, surfaceSize, unfollow])
+
+  /* ---- Keyboard ---- */
+
+  const handleCardKeyDown = useCallback(
+    (e: React.KeyboardEvent, id: string): void => {
+      const side = ARROW_SIDES[e.key]
+      if (side) {
+        e.preventDefault()
+        const next = nearestCardInDirection(cardsRef.current, id, side)
+        if (next) focusCard(next.id)
+      } else if (e.key === 'Enter') {
+        e.preventDefault()
+        continueCard(id, e.shiftKey ? ['right'] : ['bottom', 'right'])
+      } else if (e.key === 'b' || e.key === 'B') {
+        e.preventDefault()
+        goToSource(id)
+      } else if (e.key === 'Delete') {
+        e.preventDefault()
+        handleDelete(id)
+      }
+    },
+    [continueCard, focusCard, goToSource, handleDelete]
+  )
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent): void => {
+      if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return
+      if (e.key === 'Escape') {
+        if (gesture) setGesture(null)
+        else if (helpOpen) setHelpOpen(false)
+        else if (placing) setPlacing(null)
+        else if (draft) setDraft(null)
+        else if (tool === 'select') setTool('move')
+        return
+      }
+      if (isTyping(e.target)) return
+      const side = ARROW_SIDES[e.key]
+      if (e.key === ' ') {
+        // Space still presses whatever button has focus.
+        if ((e.target as Element).closest?.('button, [role="button"]')) return
+        e.preventDefault()
+        setSpaceHeld(true)
+      } else if (e.key === '?') {
+        e.preventDefault()
+        setHelpOpen((open) => !open)
+      } else if (e.key === 'r' || e.key === 'R') {
+        setTool('select')
+      } else if (e.key === 'v' || e.key === 'V') {
+        setTool('move')
+      } else if (e.key === 'n' || e.key === 'N') {
+        e.preventDefault()
+        newSession()
+      } else if (e.key === '+' || e.key === '=') {
+        zoomBy(ZOOM_STEP)
+      } else if (e.key === '-') {
+        zoomBy(1 / ZOOM_STEP)
+      } else if (e.key === '0') {
+        showEverything()
+      } else if (ownsKeys(e.target)) {
+        return
+      } else if (e.key === 'Enter') {
+        e.preventDefault()
+        compose()
+      } else if (side) {
+        e.preventDefault()
+        unfollow()
+        const step = e.shiftKey ? PAN_STEP_LARGE : PAN_STEP
+        const current = viewportRef.current
+        const dx = side === 'left' ? step : side === 'right' ? -step : 0
+        const dy = side === 'top' ? step : side === 'bottom' ? -step : 0
+        glideTo({ ...current, x: current.x + dx, y: current.y + dy })
+      }
+    }
+    const handleKeyUp = (e: KeyboardEvent): void => {
+      if (e.key === ' ') setSpaceHeld(false)
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('keyup', handleKeyUp)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keyup', handleKeyUp)
+    }
+  }, [
+    compose,
+    draft,
+    gesture,
+    glideTo,
+    helpOpen,
+    newSession,
+    placing,
+    showEverything,
+    tool,
+    unfollow,
+    zoomBy
+  ])
+
+  /* ---- Focus never scrolls the plane ---- */
+
+  useEffect(() => {
+    const surface = surfaceRef.current
+    if (!surface) return
+    // Focus scrolls the nearest clipped ancestor, but only the viewport may move the plane.
+    const handleScroll = (): void => {
+      if (surface.scrollTop !== 0) surface.scrollTop = 0
+      if (surface.scrollLeft !== 0) surface.scrollLeft = 0
+    }
+    // Tabbing to a card off screen brings it on screen; a click lands where it already is.
+    const handleFocusIn = (e: FocusEvent): void => {
+      const target = e.target as HTMLElement
+      const cardEl = target.closest<HTMLElement>('[data-canvas-card]')
+      if (!cardEl) return
+      const card = cardsRef.current.find((item) => item.id === cardEl.dataset.canvasCard)
+      if (!card) return
+      currentIdRef.current = card.id
+      if (!target.matches(':focus-visible')) return
+      followRef.current = false
+      revealOnScreen(card.rect)
+    }
+    surface.addEventListener('scroll', handleScroll)
+    surface.addEventListener('focusin', handleFocusIn)
+    return () => {
+      surface.removeEventListener('scroll', handleScroll)
+      surface.removeEventListener('focusin', handleFocusIn)
+    }
+  }, [revealOnScreen])
 
   const openCanvasMenu = (e: React.MouseEvent): void => {
     const box = e.currentTarget.getBoundingClientRect()
@@ -741,16 +1108,90 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     return cards
   }, [cards, dragDelta, gesture, resizedRect])
 
-  // A card that grew or was dropped over a waiting rectangle moves it out of the way.
-  const draftRect = useMemo(
-    () => (draft ? rectClearBelow(draft.rect, topLevelRects(cards)) : null),
-    [cards, draft]
+  const draftParent = useMemo(
+    () =>
+      draft?.parentId === undefined
+        ? undefined
+        : displayed.find((card) => card.id === draft.parentId),
+    [displayed, draft]
   )
+
+  // A draft kept against its parent follows it as it grows or moves; one that a card
+  // grew or was dropped over moves out of the way.
+  const draftRect = useMemo(() => {
+    if (!draft) return null
+    const base =
+      draft.side && draftParent ? rectAgainst(draftParent.rect, draft.side, draft.rect) : draft.rect
+    return rectClearBelow(base, topLevelRects(displayed))
+  }, [displayed, draft, draftParent])
+
+  // The answer being continued and its composer, both when they fit; else the composer,
+  // with the newest lines of the answer just above it, as in a chat.
+  const followRect = useMemo((): CanvasRect | null => {
+    if (!draftRect) return null
+    if (!draftParent) return draftRect
+    const both = unionRect(draftParent.rect, draftRect)
+    return fitsOnScreen(both, viewport.zoom, surfaceBox) ? both : draftRect
+  }, [draftParent, draftRect, surfaceBox, viewport.zoom])
+
+  useEffect(() => {
+    followRectRef.current = followRect
+    if (!followRef.current || !followRect || gesture || surfaceBox.width === 0) return
+    revealOnScreen(followRect)
+  }, [followRect, gesture, revealOnScreen, surfaceBox.width])
+
+  const draftHidden =
+    draftRect !== null &&
+    surfaceBox.width > 0 &&
+    !rectsOverlap(draftRect, visibleWorldRect(viewport, surfaceBox))
+
+  const submitDraft = (question: string): void => {
+    if (!draftRect) return
+    const id = canvas.ask(draftRect, question, draftParent?.id)
+    currentIdRef.current = id
+    // Like a chat, the next question can be typed at once, under the answer being written.
+    const obstacles = topLevelRects(cards)
+    const side = (['bottom', 'right'] as const).find((item) => {
+      const slot = rectAgainst(draftRect, item, draftRect)
+      return !obstacles.some((rect) => rectsOverlap(slot, rect))
+    })
+    if (side) openDraft({ rect: draftRect, parentId: id, side, sessions: [id] })
+    else setDraft(null)
+  }
+
+  const cancelDraft = (): void => {
+    const parentId = draftParent?.id
+    setDraft(null)
+    if (parentId !== undefined) focusCard(parentId)
+  }
+
+  const changeDraftParent = (parentId: string | undefined): void => {
+    if (!draft || !draftRect) return
+    // Choosing another session pins the rectangle where it stands now.
+    setDraft({
+      key: draft.key,
+      rect: draftRect,
+      ...(parentId !== undefined ? { parentId } : {}),
+      sessions: draft.sessions
+    })
+  }
+
+  const draftSessions = (draft?.sessions ?? []).flatMap((id) => {
+    const card = cards.find((item) => item.id === id)
+    if (!card) return []
+    const content = cardContent(card, canvas)
+    return [
+      { id, label: content.question ? `${content.caption}: ${content.question}` : content.caption }
+    ]
+  })
+  const parentStatus = draftParent ? cardContent(draftParent, canvas).status : undefined
 
   const drawing = gesture?.type === 'draw' ? drawnRect(gesture.start, gesture.end) : null
   const drawCaption = placing?.label.length ?? 0
-  const drawParent =
-    drawing && !placing && !drawing.refusal ? continuationParent(drawing.rect, cards) : undefined
+  const drawSessions =
+    drawing && !placing && !drawing.refusal ? continuationCandidates(drawing.rect, cards) : []
+  const drawParent = drawSessions.at(0)
+  const continuedId = drawing ? drawParent?.id : draftParent?.id
   const activeGuides =
     gesture?.type === 'drag'
       ? { x: dragDelta.guidesX, y: dragDelta.guidesY }
@@ -769,10 +1210,14 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       onDelete: handleDelete,
       onContinue: handleContinue,
       onContextMenu: selection.handleContextMenu,
-      onOpenExpansion: handleOpenExpansion
+      onOpenExpansion: handleOpenExpansion,
+      onGoToSource: goToSource,
+      onCardKeyDown: handleCardKeyDown
     }),
     [
       askAnotherExpansion,
+      goToSource,
+      handleCardKeyDown,
       handleContinue,
       handleDelete,
       handleDragStart,
@@ -839,6 +1284,8 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
                 invalid={invalid}
                 pulsing={pulseId === card.id}
                 dimmed={placing !== null && placing.hostId !== card.id}
+                continued={continuedId === card.id}
+                pulseTermId={pulseTerm?.cardId === card.id ? pulseTerm.expansionId : null}
               />
             )
           })}
@@ -846,16 +1293,25 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
             cards={displayed}
             surfaceRef={surfaceRef}
             dragging={gesture?.type === 'drag' || gesture?.type === 'resize'}
+            onFollow={handleFollowLink}
           />
           {draft && draftRect ? (
             <CanvasDraft
+              key={draft.key}
               rect={draftRect}
-              continues={draft.parentId !== undefined}
-              onCancel={() => setDraft(null)}
-              onSubmit={(question) => {
-                canvas.ask(draftRect, question, draft.parentId)
-                setDraft(null)
-              }}
+              sessions={draftSessions}
+              parentId={draftParent?.id}
+              waiting={
+                parentStatus === 'streaming'
+                  ? WAITING_PARENT
+                  : parentStatus === 'failed'
+                    ? FAILED_PARENT
+                    : null
+              }
+              onParentChange={changeDraftParent}
+              onActivity={refollow}
+              onCancel={cancelDraft}
+              onSubmit={submitDraft}
             />
           ) : null}
           {activeGuides.x.map((x) => (
@@ -875,7 +1331,11 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
             >
               <span className="canvas-draw-badge">
                 ≈ {estimateWords(drawing.rect, drawCaption)} words
-                {drawParent ? ' · continues session' : ''}
+                {drawParent
+                  ? drawSessions.length > 1
+                    ? ` · continues the newest of ${drawSessions.length} sessions`
+                    : ' · continues session'
+                  : ''}
               </span>
             </div>
           ) : null}
@@ -883,7 +1343,10 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
         {cards.length === 0 && !draft && !drawing ? (
           <div className="canvas-empty">
             <h2>Draw a rectangle</h2>
-            <p>Delta writes an answer sized to fit it. Draw against a side to continue.</p>
+            <p>
+              Delta writes an answer sized to fit it. Draw against a side to continue, or press N to
+              type a question right away.
+            </p>
           </div>
         ) : null}
       </div>
@@ -951,11 +1414,9 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
         <button
           type="button"
           className="canvas-tool"
-          aria-label="Zoom out"
-          onClick={() => {
-            const { width, height } = surfaceSize()
-            glideTo(zoomAt(viewport, { x: width / 2, y: height / 2 }, viewport.zoom / ZOOM_STEP))
-          }}
+          aria-label="Zoom out (−)"
+          title="Zoom out (−)"
+          onClick={() => zoomBy(1 / ZOOM_STEP)}
         >
           −
         </button>
@@ -963,41 +1424,61 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
         <button
           type="button"
           className="canvas-tool"
-          aria-label="Zoom in"
-          onClick={() => {
-            const { width, height } = surfaceSize()
-            glideTo(zoomAt(viewport, { x: width / 2, y: height / 2 }, viewport.zoom * ZOOM_STEP))
-          }}
+          aria-label="Zoom in (+)"
+          title="Zoom in (+)"
+          onClick={() => zoomBy(ZOOM_STEP)}
         >
           +
         </button>
         <button
           type="button"
           className="canvas-tool"
-          title="Show everything"
-          onClick={() =>
-            glideTo(
-              fitViewport(
-                cards.map((card) => card.rect),
-                surfaceSize()
-              )
-            )
-          }
+          title="Show everything (0)"
+          onClick={showEverything}
         >
           Fit
         </button>
+        <button
+          type="button"
+          className={`canvas-tool${helpOpen ? ' is-active' : ''}`}
+          aria-label="Keyboard shortcuts (?)"
+          aria-expanded={helpOpen}
+          title="Keyboard shortcuts (?)"
+          onClick={() => setHelpOpen((open) => !open)}
+        >
+          ?
+        </button>
       </div>
 
-      {placing || message ? (
-        <div className="canvas-hint" role="status">
-          {message ?? (
-            <>
-              Draw inside the message to size the answer to “{placing?.label}”, or click for the
-              default size. Esc cancels.
-            </>
-          )}
-        </div>
-      ) : null}
+      {helpOpen ? <CanvasShortcuts onClose={() => setHelpOpen(false)} /> : null}
+
+      <div className="canvas-bottom">
+        {placing || message ? (
+          <div className="canvas-hint" role="status">
+            {message ?? (
+              <>
+                Draw inside the message to size the answer to “{placing?.label}”, or click for the
+                default size. Esc cancels.
+              </>
+            )}
+          </div>
+        ) : null}
+        {draftHidden ? (
+          <button
+            type="button"
+            className="canvas-jump"
+            title="Bring your question box back into view (Enter)"
+            onClick={() => {
+              refollow()
+              surfaceRef.current
+                ?.querySelector<HTMLTextAreaElement>('[data-canvas-draft] textarea')
+                ?.focus({ preventScroll: true })
+            }}
+          >
+            Back to your question
+          </button>
+        ) : null}
+      </div>
 
       <ContextMenu
         state={selection.ctxMenu ?? listMenu}
