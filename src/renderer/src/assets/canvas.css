@@ -1,0 +1,766 @@
+/* ---- Canvas: an infinite plane of answer rectangles ---- */
+
+.canvas-view {
+  --canvas-ease: cubic-bezier(0.2, 0, 0, 1);
+  --canvas-ease-out: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --canvas-settle: 320ms;
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.canvas-surface {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  background-image: radial-gradient(circle, var(--border-strong) 1px, transparent 1.2px);
+}
+
+.canvas-surface.is-drawing {
+  cursor: crosshair;
+}
+
+.canvas-surface.is-panning {
+  cursor: grabbing;
+}
+
+/* In these modes the plane takes the pointer, so nothing inside can be clicked. */
+.canvas-surface.is-drawing .canvas-world,
+.canvas-surface.is-panning .canvas-world {
+  pointer-events: none;
+}
+
+.canvas-world {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  transform-origin: 0 0;
+}
+
+.canvas-world.is-animating {
+  transition: transform var(--canvas-settle) var(--canvas-ease);
+}
+
+/* ---- Cards ---- */
+
+.canvas-card {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  cursor: default;
+  transition:
+    transform var(--canvas-settle) var(--canvas-ease),
+    width var(--canvas-settle) var(--canvas-ease),
+    height var(--canvas-settle) var(--canvas-ease),
+    opacity var(--dur-2) var(--ease-out);
+}
+
+.canvas-card.is-inset {
+  z-index: 3;
+}
+
+.canvas-card.is-dragging {
+  z-index: 5;
+  transition: opacity var(--dur-2) var(--ease-out);
+}
+
+.canvas-card.is-dimmed {
+  opacity: 0.4;
+}
+
+.canvas-card-surface {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--surface-1);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-shadow: var(--shadow-1);
+  animation: canvas-card-in 380ms var(--canvas-ease-out) both;
+  transition:
+    box-shadow var(--canvas-settle) var(--canvas-ease),
+    border-color var(--dur-2) var(--ease-out),
+    transform var(--canvas-settle) var(--canvas-ease);
+}
+
+/* The ink of a card landing on the plane. */
+.canvas-card-surface::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at center, var(--accent-soft), transparent 70%);
+  opacity: 0;
+  pointer-events: none;
+  animation: canvas-ink 620ms var(--canvas-ease) both;
+}
+
+.canvas-card:hover .canvas-card-surface {
+  box-shadow: var(--shadow-2);
+}
+
+.canvas-card.is-inset .canvas-card-surface {
+  background: var(--surface-2);
+  border-color: var(--accent);
+  box-shadow: var(--shadow-2);
+}
+
+.canvas-card.is-dragging .canvas-card-surface {
+  box-shadow: var(--shadow-3);
+  transform: scale(1.012);
+}
+
+.canvas-card.is-invalid .canvas-card-surface {
+  border-color: var(--error);
+}
+
+.canvas-card.is-pulsing .canvas-card-surface {
+  animation: canvas-pulse 860ms var(--canvas-ease);
+}
+
+.canvas-card-header {
+  flex: none;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  /* The padding and line height are in estimateWords (shared/canvas.ts). */
+  padding: 10px 12px 10px 16px;
+  font-size: 12.5px;
+  line-height: 18px;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.canvas-card.is-dragging .canvas-card-header {
+  cursor: grabbing;
+}
+
+.canvas-card-caption {
+  flex: 1;
+  min-width: 0;
+  display: -webkit-box;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.canvas-card-kind {
+  margin-right: 6px;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Floats over the caption instead of taking its width, which estimateWords assumes. */
+.canvas-card-actions {
+  position: absolute;
+  top: 7px;
+  right: 8px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  opacity: 0;
+  transition: opacity var(--dur-1) var(--ease-out);
+}
+
+.canvas-card:hover .canvas-card-actions,
+.canvas-card.is-streaming .canvas-card-actions,
+.canvas-card.is-failed .canvas-card-actions,
+.canvas-card-actions:has(:focus-visible) {
+  opacity: 1;
+}
+
+.canvas-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  min-width: 24px;
+  padding: 0 6px;
+  font-size: 12px;
+  color: var(--text-2);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition:
+    background var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
+}
+
+.canvas-icon-btn:hover {
+  color: var(--text-1);
+  background: var(--surface-3);
+}
+
+.canvas-icon-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+.canvas-icon-btn--close {
+  font-size: 16px;
+}
+
+.canvas-card-progress {
+  flex: none;
+  position: relative;
+  height: 2px;
+  margin-top: -2px;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.canvas-card.is-streaming .canvas-card-progress::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 40%;
+  background: var(--accent);
+  animation: canvas-progress 1300ms var(--canvas-ease) infinite;
+}
+
+.canvas-card-body {
+  flex: 1;
+  min-height: 0;
+  /* The padding is in estimateWords (shared/canvas.ts). */
+  padding: 12px 16px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  cursor: text;
+  user-select: text;
+}
+
+.canvas-card-body .message-content {
+  padding: 0;
+  font-size: 14px;
+  line-height: 22px;
+  animation: canvas-text-in 260ms var(--ease-out) both;
+}
+
+.canvas-card-body .markdown-body {
+  font-size: 14px;
+  line-height: 22px;
+}
+
+.canvas-card-body .markdown-body > :first-child {
+  margin-top: 0;
+}
+
+.canvas-card-body .markdown-body > :last-child {
+  margin-bottom: 0;
+}
+
+.canvas-card-body .markdown-body p {
+  margin: 0 0 8px;
+}
+
+.canvas-card-body .markdown-body h1,
+.canvas-card-body .markdown-body h2,
+.canvas-card-body .markdown-body h3 {
+  margin: 10px 0 6px;
+  font-size: 15px;
+  line-height: 22px;
+}
+
+.canvas-term {
+  transition: background var(--dur-2) var(--ease-out);
+}
+
+.canvas-card-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  height: 100%;
+}
+
+.canvas-card-failure {
+  margin: 0;
+  color: var(--error);
+}
+
+.canvas-card-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  touch-action: none;
+  opacity: 0;
+  background: linear-gradient(
+    135deg,
+    transparent 55%,
+    var(--text-3) 55% 62%,
+    transparent 62% 74%,
+    var(--text-3) 74% 81%,
+    transparent 81%
+  );
+  transition: opacity var(--dur-1) var(--ease-out);
+}
+
+.canvas-card:hover .canvas-card-resize {
+  opacity: 1;
+}
+
+.canvas-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.canvas-skeleton span {
+  height: 10px;
+  border-radius: 5px;
+  background: var(--surface-3);
+  animation: canvas-shimmer 1400ms ease-in-out infinite;
+}
+
+.canvas-skeleton span:nth-child(2) {
+  width: 88%;
+}
+
+.canvas-skeleton span:nth-child(3) {
+  width: 94%;
+}
+
+.canvas-skeleton span:nth-child(4) {
+  width: 60%;
+}
+
+/* ---- Continue handles, sitting on the shared side ---- */
+
+.canvas-continue {
+  position: absolute;
+  z-index: 2;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--accent-contrast);
+  background: var(--accent);
+  border: 0;
+  border-radius: 50%;
+  box-shadow: var(--shadow-2);
+  cursor: pointer;
+  opacity: 0;
+  transform: scale(0.6);
+  transition:
+    opacity var(--dur-2) var(--ease-out),
+    transform var(--dur-2) var(--canvas-ease);
+}
+
+.canvas-continue--right {
+  top: calc(50% - 13px);
+  right: -13px;
+}
+
+.canvas-continue--bottom {
+  left: calc(50% - 13px);
+  bottom: -13px;
+}
+
+.canvas-card:hover .canvas-continue,
+.canvas-continue:focus-visible {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.canvas-continue:hover {
+  transform: scale(1.12);
+}
+
+.canvas-card.is-dragging .canvas-continue {
+  opacity: 0;
+}
+
+/* ---- A rectangle waiting for its question ---- */
+
+.canvas-card--draft {
+  z-index: 4;
+}
+
+.canvas-draft {
+  padding: 10px 12px;
+  gap: 6px;
+  border-color: var(--accent);
+  box-shadow: var(--shadow-3);
+}
+
+.canvas-draft-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.canvas-draft-input {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  padding: 4px;
+  font: inherit;
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--text-1);
+  background: transparent;
+  border: 0;
+  outline: none;
+  resize: none;
+}
+
+.canvas-draft-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+/* ---- Links, from a term to its expansion ---- */
+
+.canvas-links {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.canvas-links--under {
+  z-index: 0;
+}
+
+.canvas-links--over {
+  z-index: 2;
+}
+
+.canvas-links--over .canvas-link-line {
+  stroke-opacity: 0.28;
+}
+
+.canvas-link-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: calc(1.5px / var(--canvas-zoom));
+  stroke-linecap: round;
+  stroke-dasharray: 1;
+  animation: canvas-link-draw 520ms var(--canvas-ease) both;
+  transition: d var(--canvas-settle) var(--canvas-ease);
+}
+
+.canvas-link-dot {
+  fill: var(--accent);
+  animation: canvas-dot-in 300ms var(--canvas-ease-out) both;
+  transition:
+    cx var(--canvas-settle) var(--canvas-ease),
+    cy var(--canvas-settle) var(--canvas-ease);
+}
+
+.canvas-links.is-dragging .canvas-link-line,
+.canvas-links.is-dragging .canvas-link-dot {
+  transition: none;
+}
+
+/* ---- Drawing ---- */
+
+.canvas-draw-rect {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 6;
+  background: var(--accent-soft);
+  outline: calc(1.5px / var(--canvas-zoom)) dashed var(--accent);
+  border-radius: 6px;
+  pointer-events: none;
+}
+
+.canvas-draw-rect.is-invalid {
+  background: var(--danger-soft);
+  outline-color: var(--error);
+}
+
+.canvas-draw-badge {
+  position: absolute;
+  top: 0;
+  left: 0;
+  padding: 2px 8px;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+  color: var(--accent-contrast);
+  background: var(--accent);
+  border-radius: var(--radius-pill);
+  transform: translateY(calc(-100% - 6px)) scale(calc(1 / var(--canvas-zoom)));
+  transform-origin: 0 100%;
+}
+
+.canvas-draw-rect.is-invalid .canvas-draw-badge {
+  color: var(--text-1);
+  background: var(--error);
+}
+
+.canvas-guide {
+  position: absolute;
+  z-index: 6;
+  background: var(--accent);
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.canvas-guide--x {
+  top: -100000px;
+  width: calc(1px / var(--canvas-zoom));
+  height: 200000px;
+}
+
+.canvas-guide--y {
+  left: -100000px;
+  width: 200000px;
+  height: calc(1px / var(--canvas-zoom));
+}
+
+/* ---- Floating chrome ---- */
+
+.canvas-toolbar {
+  position: absolute;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
+}
+
+.canvas-toolbar--tools {
+  top: 12px;
+  left: 12px;
+}
+
+.canvas-toolbar--title {
+  top: 12px;
+  left: 50%;
+  max-width: 36%;
+  transform: translateX(-50%);
+}
+
+.canvas-toolbar--zoom {
+  right: 12px;
+  bottom: 12px;
+}
+
+.canvas-tool {
+  height: 28px;
+  min-width: 28px;
+  padding: 0 10px;
+  font-size: 13px;
+  color: var(--text-2);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition:
+    background var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
+}
+
+.canvas-tool:hover {
+  color: var(--text-1);
+  background: var(--surface-3);
+}
+
+.canvas-tool.is-active {
+  color: var(--accent-contrast);
+  background: var(--accent);
+}
+
+.canvas-tool:focus-visible,
+.canvas-continue:focus-visible,
+.canvas-icon-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.canvas-title {
+  width: 240px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-1);
+  text-overflow: ellipsis;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  outline: none;
+}
+
+.canvas-title:focus {
+  box-shadow: var(--focus-ring-inset);
+}
+
+.canvas-zoom-value {
+  min-width: 44px;
+  font-size: 12px;
+  text-align: center;
+  color: var(--text-2);
+}
+
+.canvas-hint {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  z-index: 10;
+  max-width: 60%;
+  padding: 8px 14px;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-1);
+  background: var(--surface-3);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
+  transform: translateX(-50%);
+  animation: canvas-hint-in 240ms var(--canvas-ease-out) both;
+}
+
+.canvas-empty {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: min(420px, 80%);
+  text-align: center;
+  color: var(--text-2);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  animation: canvas-text-in 420ms var(--canvas-ease) both;
+}
+
+.canvas-empty h2 {
+  margin: 0 0 6px;
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 500;
+  color: var(--text-1);
+}
+
+.canvas-empty p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 21px;
+}
+
+/* ---- Motion ---- */
+
+@keyframes canvas-card-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes canvas-ink {
+  0% {
+    opacity: 0.9;
+    transform: scale(0.2);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.5);
+  }
+}
+
+@keyframes canvas-pulse {
+  0%,
+  100% {
+    box-shadow: var(--shadow-1);
+    transform: scale(1);
+  }
+  35% {
+    box-shadow:
+      0 0 0 3px var(--accent-ring),
+      var(--shadow-3);
+    transform: scale(1.02);
+  }
+}
+
+@keyframes canvas-progress {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(260%);
+  }
+}
+
+@keyframes canvas-text-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes canvas-shimmer {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes canvas-link-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes canvas-dot-in {
+  from {
+    r: 0;
+  }
+}
+
+@keyframes canvas-hint-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}

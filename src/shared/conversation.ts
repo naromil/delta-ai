@@ -1,4 +1,5 @@
 import type { ImageAttachment } from './attachments'
+import type { CanvasLayout } from './canvas'
 import type { ProviderMessage } from './models'
 import { getSystemPrompt, buildScreenContextMessage } from './prompts'
 import type { ExpansionNode, LegacyTurn, RichTextTurn } from './rich-text'
@@ -13,10 +14,15 @@ export interface Turn extends RichTextTurn {
   attachments?: ImageAttachment[]
 }
 
+/** Where a conversation started. Canvases have their own list; history shows only chats. */
+export type ConversationSource = 'chat' | 'lookup' | 'canvas'
+
 export interface ConversationState {
   context?: string
   systemNote?: string
   turns: Turn[]
+  /** Where each turn and expansion sits, on a record with `source: 'canvas'`. */
+  canvas?: CanvasLayout
 }
 
 export interface ConversationRecord {
@@ -24,7 +30,7 @@ export interface ConversationRecord {
   title: string
   createdAt: string
   updatedAt: string
-  source: 'chat' | 'lookup'
+  source: ConversationSource
   state: ConversationState
   kbFed: boolean
 }
@@ -34,7 +40,7 @@ export interface ConversationMeta {
   title: string
   createdAt: string
   updatedAt: string
-  source: 'chat' | 'lookup'
+  source: ConversationSource
   kbFed: boolean
   turnCount: number
 }

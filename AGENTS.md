@@ -1,7 +1,8 @@
 # Delta AI
 
-Electron desktop app (BYOK) with a ChatGPT-like chat UI (React 19) and an
-always-on-top lookup popup that performs OCR on screen captures via global hotkey.
+Electron desktop app (BYOK) with a ChatGPT-like chat UI (React 19), an infinite canvas of
+answer rectangles, and an always-on-top lookup popup that performs OCR on screen captures via
+global hotkey.
 Targets Linux (X11 + KDE Wayland first-class), macOS/Windows secondary.
 
 ## Commands
@@ -81,6 +82,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | `conversation-save` / `-load` / `-delete` | Renderer → Main | Conversation CRUD to `{userData}/conversations/` (atomic writes)                                |
 | `conversation-list`                       | Renderer → Main | List chat-source conversations (metadata sorted by updatedAt desc)                              |
 | `conversation-search`                     | Renderer → Main | Search chat titles/content; results extend meta with `matchedIn`/`snippet`                      |
+| `canvas-list`                             | Renderer → Main | List canvases (`source: 'canvas'` metadata sorted by updatedAt desc)                            |
 | `conversation-list-unfed` / `-kb-fed`     | Renderer → Main | KB model integration: list unfed; mark fed                                                      |
 | `conversation-export`                     | Renderer → Main | Save a conversation as markdown (`{ok,path}` or `{ok:false,error}`; cancel is `'Canceled.'`)    |
 
@@ -101,6 +103,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | `expand-prompt.ts`   | `buildExpandRequest(state, turn, parentId, range, role, prompt?)` — system prompt, recent history, ancestor chain, instruction; `buildExpandMessages` assembles them                                                          |
 | `suggested-terms.ts` | `parseSuggestedTerms` (defensive reply parsing, must occur in the answer), `MAX_SUGGESTED_TERMS`                                                                                                                              |
 | `attachments.ts`     | `ImageAttachment`, per-message/size limits, `isImageInput` / `isImageAttachment` validation, `scaledImageSize`                                                                                                                |
+| `canvas.ts`          | Pure canvas model: card types, rectangles, snapping, `estimateWords`, `withCanvasFit`, `resolveMove`, session walks (`turnsThroughCard`), `linkPath`, viewport math, `normalizeCanvasLayout`                                  |
 | `prompts.ts`         | All LLM-facing prompt/instruction strings: system prompts, context template, lookup default, expand instructions                                                                                                              |
 
 ##### Main process (`src/main/`)
@@ -145,10 +148,12 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | ---------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | Entry point      | `main.tsx`                                                 | createRoot, imports CSS, mounts Root                                                                                                 |
 | Root router      | `Root.tsx`                                                 | Routes App (main window) vs LookupApp (popup) by `?role=lookup`                                                                      |
-| App shell        | `App.tsx`                                                  | Sidebar + 5-view routing, global Ctrl+N/Ctrl+K, search modal, composer draft                                                         |
+| App shell        | `App.tsx`                                                  | Sidebar + 6-view routing, global Ctrl+N/Ctrl+K, search modal, composer draft                                                         |
 | Lookup popup     | `LookupApp.tsx`                                            | Header, context panel, ask input, paste handling, grow transitions                                                                   |
 | Chat hook        | `hooks/useChatStreaming.ts`                                | Owns ConversationState, stop/retry/regenerate/rename, routes requests via `hooks/chat/*`, auto-saves                                 |
 | Chat requests    | `hooks/chat/{requests,persistence,transport}.ts`           | Pure request book (pending ids, `activeSendId`, drain helpers), autosave effect, IPC subscriptions + stale-id drops                  |
+| Canvas state     | `hooks/useCanvas.ts`                                       | Open canvas, its streams and autosave; lives in `App` so answers survive a view change                                               |
+| Canvas view      | `views/canvas/*`                                           | `CanvasView` (gestures, tools, placement), `CanvasCardView`, `CanvasDraft`, `CanvasLinks`; styles in `assets/canvas.css`             |
 | Scroll following | `hooks/useStickToBottom.ts`                                | Pins chat/popup views to the bottom while a response streams; an upward scroll unpins                                                |
 | Conversation     | `components/conversation/Conversation.tsx`                 | Message list, composer + Stop button (Esc), toolbar (export/delete), context menu                                                    |
 | Turn             | `components/conversation/Turn.tsx`                         | Single message (user/assistant) with avatar, markdown body, retry, inline edit-and-resend                                            |
@@ -211,6 +216,12 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | Agent memory tools / document base     | `memory/store.ts` (ops + confinement), `memory/tools.ts` (tool set), `shared/prompts.ts` (rules)       |
 | What the curator saves                 | `shared/prompts.ts` (`KB_MEMORY_SYSTEM_PROMPT`), `kb/run.ts` (`updateMemories`)                        |
 | Memory updated indicator               | `components/MemoryIndicator.tsx`, `memory/tools.ts` (`broadcastMemoryUpdated`)                         |
+| Canvas geometry, sessions, word fit    | `shared/canvas.ts` (+ `estimateWords` constants mirror `assets/canvas.css`)                            |
+| Canvas gestures, tools, expansion flow | `views/canvas/CanvasView.tsx`                                                                          |
+| Canvas card height and pushing         | `shared/canvas.ts` (`fitCardHeight`), measured in `CanvasView.tsx`                                     |
+| Canvas card buttons                    | `views/canvas/CanvasCardView.tsx`, `hooks/useCanvas.ts` (`regenerateCard`, `editCard`)                 |
+| Canvas streaming and saving            | `hooks/useCanvas.ts`                                                                                   |
+| Canvas sizing instruction              | `shared/prompts.ts` (`buildCanvasFitNote`)                                                             |
 | Provider config form                   | `components/settings/models/ModelsTab.tsx` (+ `RoleRow.tsx`, `ConnectionCard.tsx`)                     |
 | Model picker / catalog                 | `shared/model-catalog.ts` (pure), `services/model-catalog.ts` (fetch+cache)                            |
 | Change the model-config schema         | `models/config-schema.ts` — add a vN→vN+1 step, bump `MODEL_CONFIG_VERSION`                            |
@@ -348,6 +359,37 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   - **Indicator.** A successful mutation broadcasts `memory-updated` to every window, and
     `MemoryIndicator` shows a transient pill. It is not on a turn because curator writes happen with
     no reply on screen.
+- **A canvas is a conversation record with a layout.** `source: 'canvas'` plus `state.canvas`
+  (`CanvasLayout`: cards and viewport), so storage, atomic writes and the curator need nothing new,
+  and history and search stay chat-only. `state.turns` is a pool rather than a line: a card's history
+  is `turnsThroughCard`, following `parentId`, so branches do not see each other. `normalizeCanvasLayout`
+  distrusts the stored layout at load. An emptied canvas is deleted from disk.
+- **A rectangle decides the answer's length.** `estimateWords(rect, captionChars)` mirrors the card
+  typography in `canvas.css`; change them together. `withCanvasFit` appends the size to the newest
+  user message at request time only, so turns never store it, and the note overrides the system
+  prompt's concision and expand's four-sentence limit.
+- **A finished answer then fits its card's height, never its width.** `useCanvas` marks a card when
+  its answer completes normally (not stopped, not failed), and `CanvasBoard` measures it on screen
+  and applies `fitCardHeight`, so an answer that finished in another view fits on return. Bottom
+  continuations follow and anything in the way is pushed down. A body still scrolls when the card
+  cannot change: an inset card capped by its host (refitted when dragged out), or a card that
+  cannot shrink because what hangs below cannot follow.
+- **Regenerate and Retry are one action sized by the card's current rectangle** (`regenerateCard`).
+  Like chat it drops what came after: every card in `cascadeCardIds`. Anything that takes other cards
+  along, delete included, confirms twice (`confirmCascade`).
+- **Sides are sessions.** Drawing with a side against a card (`continuationParent`, snapped by
+  `snapEdges`) continues it; anywhere else starts a new session. Dragging moves the whole session
+  (`movingCardIds`) so sides stay shared; anything standing on the plane may not overlap, and a
+  refused drop springs back through the card's own transform transition.
+- **Canvas gestures cancel `mousedown`, never `pointerdown`.** Cancelling `pointerdown` suppresses the
+  `mousedown` that `ContextMenu` and `ExpandPrompt` use to notice an outside click, so they would stay
+  open. `claimPress` marks the press, and `handleSurfaceMouseDown` cancels it and releases focus.
+- **Canvas expansions are `ExpansionNode`s shown as cards.** `useExpansionContextMenu` chooses the
+  term, then `CanvasView` holds it as `Placing` until a rectangle is drawn or clicked. Inside the
+  host the card is `inset`; dragged clear (`resolveMove`) it stands alone and `CanvasLinks` draws
+  the link, under the cards and faintly over them so it never strikes through text. Offsets are
+  measured relative to the scaled `.canvas-card-surface`, which stays correct mid-animation.
+  `folded` has no meaning on a canvas.
 - **Chat and lookup are one assistant.** Only the window differs: same memory tools, curation and
   context budget, one `DELTA_SYSTEM_PROMPT` (`LOOKUP_WINDOW_NOTE` adds only a length limit), plus a
   one-way transfer. `source` records where a conversation started; history lists still show only

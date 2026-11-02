@@ -464,3 +464,20 @@ These are load-bearing; breaking one causes a bug that is hard to trace:
 - `kb-reanalyze` has no progress reporting and an automatic pass reports only its start/finish
   through `kb-status`; a long run shows no per-conversation progress.
 - No auto-update path; releases are manual downloads.
+
+## Canvas
+
+A canvas is a conversation record (`source: 'canvas'`) with a `state.canvas` layout. Each card is
+either a message (one question and its answer) or an expansion (an `ExpansionNode` in a turn).
+
+- **Drawing** a rectangle opens a draft inside it; its area sets the word count sent to the model.
+- **Sessions** are `parentId` chains. A rectangle sharing a side with a card continues it, so a canvas
+  can branch, and each branch sends only its own history.
+- **Expanding** selects a term as usual, then asks for a rectangle. Drawn inside the message it is
+  `inset`; dragged clear of the message it becomes a separate card, linked from the term.
+- **Finished answers** set the card's height, never its width (`fitCardHeight`): continuations below
+  follow and anything else in the way is pushed down.
+- **Regenerate** uses the card's current rectangle and removes what depended on the old answer.
+
+Geometry and session rules are pure and live in `src/shared/canvas.ts`, state and streams in
+`hooks/useCanvas.ts`, and pointer gestures in `views/canvas/CanvasView.tsx`.

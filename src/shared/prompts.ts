@@ -127,6 +127,17 @@ export function buildScreenContextMessage(context: string): string {
   return `The following context was extracted from my screen:\n\n"${context}"`
 }
 
+/* ---- Canvas ---- */
+
+/** A canvas answer fills a rectangle the user drew, so its size replaces every other length rule. */
+export function buildCanvasFitNote(words: number): string {
+  return [
+    `Your answer appears inside a fixed rectangle that holds about ${words} words (about ${words * 3} characters in Chinese, Japanese or Korean).`,
+    'Write close to that length: use the space, and do not run past it.',
+    'This replaces any other instruction about length. Do not mention the rectangle.'
+  ].join(' ')
+}
+
 /* ---- Expand Instructions ---- */
 
 const EXPAND_SHARED_CONSTRAINTS = [

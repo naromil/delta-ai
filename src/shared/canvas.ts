@@ -1,0 +1,706 @@
+/**
+ * Canvas model: where each message and expansion sits on an infinite plane.
+ *
+ * A canvas is an ordinary conversation record (`source: 'canvas'`) whose turns
+ * and expansions keep their usual shape, so saving, the curator and export need
+ * nothing new. This layout is the only addition. Everything here is pure.
+ */
+import type { Turn } from './conversation'
+import { buildExpandAncestorQuestion, buildCanvasFitNote } from './prompts'
+import type { ProviderMessage } from './models'
+import { expansionPath, findExpansionInTurns } from './rich-text'
+
+export interface CanvasPoint {
+  x: number
+  y: number
+}
+
+export interface CanvasRect extends CanvasPoint {
+  w: number
+  h: number
+}
+
+/** Screen position = world position * zoom + (x, y). */
+export interface CanvasViewport extends CanvasPoint {
+  zoom: number
+}
+
+/** One question and its answer. */
+export interface CanvasMessageCard {
+  kind: 'message'
+  id: string
+  rect: CanvasRect
+  userTurnId: number
+  turnId: number
+  /** The card this one continues; its session history is what the model sees. */
+  parentId?: string
+}
+
+/** One expansion, drawn over its host's text (`inset`) or dragged out and linked. */
+export interface CanvasExpansionCard {
+  kind: 'expansion'
+  id: string
+  rect: CanvasRect
+  turnId: number
+  expansionId: number
+  /** The card whose text holds the expanded term. */
+  hostId: string
+  inset: boolean
+}
+
+export type CanvasCard = CanvasMessageCard | CanvasExpansionCard
+
+export interface CanvasLayout {
+  cards: CanvasCard[]
+  viewport: CanvasViewport
+}
+
+export type CanvasSide = 'right' | 'bottom' | 'left' | 'top'
+
+export const MIN_ZOOM = 0.25
+export const MAX_ZOOM = 2
+export const DEFAULT_VIEWPORT: CanvasViewport = { x: 0, y: 0, zoom: 1 }
+
+export const MIN_MESSAGE_SIZE = { w: 200, h: 120 }
+export const MIN_EXPANSION_SIZE = { w: 140, h: 84 }
+export const DEFAULT_MESSAGE_SIZE = { w: 400, h: 280 }
+export const DEFAULT_EXPANSION_SIZE = { w: 280, h: 150 }
+
+/** Below this many world pixels of drag, a gesture counts as a click. */
+export const CLICK_DRAG_LIMIT = 6
+
+/** Sides this close count as shared, so a rounded rectangle cannot break a session. */
+const SIDE_EPSILON = 1
+/** Two rectangles must meet along at least this much of a side to share it. */
+const MIN_SHARED_LENGTH = 24
+
+/* ---- Rectangles ---- */
+
+export function rectFromPoints(a: CanvasPoint, b: CanvasPoint): CanvasRect {
+  return {
+    x: Math.min(a.x, b.x),
+    y: Math.min(a.y, b.y),
+    w: Math.abs(a.x - b.x),
+    h: Math.abs(a.y - b.y)
+  }
+}
+
+export function rectCenteredAt(point: CanvasPoint, size: { w: number; h: number }): CanvasRect {
+  return { x: point.x - size.w / 2, y: point.y - size.h / 2, w: size.w, h: size.h }
+}
+
+/** Touching along a side is not overlapping: that is how a session is laid out. */
+export function rectsOverlap(a: CanvasRect, b: CanvasRect): boolean {
+  return (
+    a.x + a.w - b.x > SIDE_EPSILON &&
+    b.x + b.w - a.x > SIDE_EPSILON &&
+    a.y + a.h - b.y > SIDE_EPSILON &&
+    b.y + b.h - a.y > SIDE_EPSILON
+  )
+}
+
+/** `rect` moved straight down until it overlaps none of `others`. */
+export function rectClearBelow(rect: CanvasRect, others: CanvasRect[]): CanvasRect {
+  const hit = others.find((other) => rectsOverlap(rect, other))
+  return hit ? rectClearBelow({ ...rect, y: hit.y + hit.h }, others) : rect
+}
+
+export function containsRect(outer: CanvasRect, inner: CanvasRect): boolean {
+  return (
+    inner.x >= outer.x - SIDE_EPSILON &&
+    inner.y >= outer.y - SIDE_EPSILON &&
+    inner.x + inner.w <= outer.x + outer.w + SIDE_EPSILON &&
+    inner.y + inner.h <= outer.y + outer.h + SIDE_EPSILON
+  )
+}
+
+export function containsPoint(rect: CanvasRect, point: CanvasPoint): boolean {
+  return (
+    point.x >= rect.x &&
+    point.x <= rect.x + rect.w &&
+    point.y >= rect.y &&
+    point.y <= rect.y + rect.h
+  )
+}
+
+/** Moves `rect` inside `bounds`, shrinking it only when it cannot otherwise fit. */
+export function clampRectInside(rect: CanvasRect, bounds: CanvasRect): CanvasRect {
+  const w = Math.min(rect.w, bounds.w)
+  const h = Math.min(rect.h, bounds.h)
+  return {
+    x: Math.min(Math.max(rect.x, bounds.x), bounds.x + bounds.w - w),
+    y: Math.min(Math.max(rect.y, bounds.y), bounds.y + bounds.h - h),
+    w,
+    h
+  }
+}
+
+export function clampPointInside(point: CanvasPoint, bounds: CanvasRect): CanvasPoint {
+  return {
+    x: Math.min(Math.max(point.x, bounds.x), bounds.x + bounds.w),
+    y: Math.min(Math.max(point.y, bounds.y), bounds.y + bounds.h)
+  }
+}
+
+function overlapLength(aStart: number, aLength: number, bStart: number, bLength: number): number {
+  return Math.min(aStart + aLength, bStart + bLength) - Math.max(aStart, bStart)
+}
+
+export function sharesSide(a: CanvasRect, b: CanvasRect): boolean {
+  const touchesVertically =
+    Math.abs(a.x + a.w - b.x) <= SIDE_EPSILON || Math.abs(b.x + b.w - a.x) <= SIDE_EPSILON
+  if (touchesVertically && overlapLength(a.y, a.h, b.y, b.h) >= MIN_SHARED_LENGTH) return true
+  const touchesHorizontally =
+    Math.abs(a.y + a.h - b.y) <= SIDE_EPSILON || Math.abs(b.y + b.h - a.y) <= SIDE_EPSILON
+  return touchesHorizontally && overlapLength(a.x, a.w, b.x, b.w) >= MIN_SHARED_LENGTH
+}
+
+/* ---- Snapping ---- */
+
+export interface SnapResult {
+  rect: CanvasRect
+  guidesX: number[]
+  guidesY: number[]
+}
+
+function nearestCandidate(
+  value: number,
+  candidates: number[],
+  threshold: number
+): number | undefined {
+  let best: number | undefined
+  let bestDistance = threshold
+  for (const candidate of candidates) {
+    const distance = Math.abs(candidate - value)
+    if (distance <= bestDistance) {
+      best = candidate
+      bestDistance = distance
+    }
+  }
+  return best
+}
+
+function edgeCandidates(others: CanvasRect[]): { xs: number[]; ys: number[] } {
+  return {
+    xs: others.flatMap((rect) => [rect.x, rect.x + rect.w]),
+    ys: others.flatMap((rect) => [rect.y, rect.y + rect.h])
+  }
+}
+
+/** Pulls each edge of a rectangle being drawn or resized onto a nearby card edge. */
+export function snapEdges(rect: CanvasRect, others: CanvasRect[], threshold: number): SnapResult {
+  const { xs, ys } = edgeCandidates(others)
+  const left = nearestCandidate(rect.x, xs, threshold)
+  const right = nearestCandidate(rect.x + rect.w, xs, threshold)
+  const top = nearestCandidate(rect.y, ys, threshold)
+  const bottom = nearestCandidate(rect.y + rect.h, ys, threshold)
+  const x = left ?? rect.x
+  const y = top ?? rect.y
+  return {
+    rect: { x, y, w: (right ?? rect.x + rect.w) - x, h: (bottom ?? rect.y + rect.h) - y },
+    guidesX: [left, right].filter((value) => value !== undefined),
+    guidesY: [top, bottom].filter((value) => value !== undefined)
+  }
+}
+
+/** Slides a whole rectangle so one of its edges lands on a nearby card edge. */
+export function snapMove(rect: CanvasRect, others: CanvasRect[], threshold: number): SnapResult {
+  const { xs, ys } = edgeCandidates(others)
+  const axis = (start: number, length: number, candidates: number[]): number | undefined => {
+    const near = nearestCandidate(start, candidates, threshold)
+    const far = nearestCandidate(start + length, candidates, threshold)
+    if (near === undefined) return far === undefined ? undefined : far - length
+    if (far === undefined) return near
+    return Math.abs(near - start) <= Math.abs(far - (start + length)) ? near : far - length
+  }
+  const x = axis(rect.x, rect.w, xs)
+  const y = axis(rect.y, rect.h, ys)
+  const snapped = { ...rect, x: x ?? rect.x, y: y ?? rect.y }
+  return {
+    rect: snapped,
+    guidesX: x === undefined ? [] : [xs.includes(x) ? x : x + rect.w],
+    guidesY: y === undefined ? [] : [ys.includes(y) ? y : y + rect.h]
+  }
+}
+
+/* ---- Words that fit ---- */
+
+/*
+ * Mirrors the card typography in canvas.css. Fitting is an estimate either way,
+ * and the card body scrolls if the model overshoots.
+ */
+const CARD_PADDING_X = 32
+const CARD_PADDING_Y = 24
+const HEADER_PADDING_Y = 20
+const HEADER_LINE_HEIGHT = 18
+const HEADER_CHAR_WIDTH = 6.4
+const HEADER_MAX_LINES = 2
+const BODY_LINE_HEIGHT = 22
+const BODY_CHAR_WIDTH = 7
+const CHARS_PER_WORD = 6
+/** Paragraph gaps and list indents use up some of the area. */
+const AREA_FILL = 0.85
+const MIN_WORDS = 10
+
+function headerLines(width: number, captionChars: number): number {
+  const lines = Math.ceil((captionChars * HEADER_CHAR_WIDTH) / Math.max(width, 1))
+  return Math.min(Math.max(lines, 1), HEADER_MAX_LINES)
+}
+
+/** Roughly how many words of body text fit in a card, below its one or two line caption. */
+export function estimateWords(rect: CanvasRect, captionChars = 0): number {
+  const width = rect.w - CARD_PADDING_X
+  const chrome =
+    CARD_PADDING_Y + HEADER_PADDING_Y + headerLines(width, captionChars) * HEADER_LINE_HEIGHT
+  const lines = Math.max(rect.h - chrome, 0) / BODY_LINE_HEIGHT
+  const chars = (lines * Math.max(width, 0)) / BODY_CHAR_WIDTH
+  const words = (chars / CHARS_PER_WORD) * AREA_FILL
+  return Math.max(Math.round(words / 5) * 5, MIN_WORDS)
+}
+
+/** Adds the length to the newest user message, so stored turns never carry it. */
+export function withCanvasFit(messages: ProviderMessage[], words: number): ProviderMessage[] {
+  const index = messages.findLastIndex((message) => message.role === 'user')
+  if (index < 0) return messages
+  return messages.map((message, i) =>
+    i === index
+      ? { ...message, content: `${message.content}\n\n${buildCanvasFitNote(words)}` }
+      : message
+  )
+}
+
+/* ---- Card relationships ---- */
+
+function cardById(cards: CanvasCard[], id: string | undefined): CanvasCard | undefined {
+  return id === undefined ? undefined : cards.find((card) => card.id === id)
+}
+
+/** A card that stands on the plane itself, rather than sitting over another card's text. */
+export function isTopLevel(card: CanvasCard): boolean {
+  return card.kind === 'message' || !card.inset
+}
+
+export function topLevelRects(cards: CanvasCard[], except?: ReadonlySet<string>): CanvasRect[] {
+  return cards.filter((card) => isTopLevel(card) && !except?.has(card.id)).map((card) => card.rect)
+}
+
+/** The newest card sharing a side with `rect`; none means `rect` starts a new session. */
+export function continuationParent(rect: CanvasRect, cards: CanvasCard[]): CanvasCard | undefined {
+  return cards.findLast((card) => isTopLevel(card) && sharesSide(rect, card.rect))
+}
+
+/** The same-sized spot against one side of a card, or null when something is in the way. */
+export function adjacentSlot(
+  card: CanvasCard,
+  side: CanvasSide,
+  cards: CanvasCard[]
+): CanvasRect | null {
+  const { x, y, w, h } = card.rect
+  const slots: Record<CanvasSide, CanvasRect> = {
+    right: { x: x + w, y, w, h },
+    bottom: { x, y: y + h, w, h },
+    left: { x: x - w, y, w, h },
+    top: { x, y: y - h, w, h }
+  }
+  const slot = slots[side]
+  return topLevelRects(cards).some((other) => rectsOverlap(slot, other)) ? null : slot
+}
+
+/**
+ * The cards that travel with `id` when it is dragged: its session, so shared
+ * sides stay shared, and whatever is drawn over their text. Expansions dragged
+ * outward stay put and their links follow.
+ */
+export function movingCardIds(cards: CanvasCard[], id: string): Set<string> {
+  const moving = new Set<string>()
+  const visit = (cardId: string): void => {
+    if (moving.has(cardId)) return
+    const card = cardById(cards, cardId)
+    if (!card) return
+    moving.add(cardId)
+    if (card.kind === 'message' && card.parentId !== undefined) visit(card.parentId)
+    for (const other of cards) {
+      if (other.kind === 'message' && other.parentId === cardId) visit(other.id)
+      if (other.kind === 'expansion' && other.inset && other.hostId === cardId) visit(other.id)
+    }
+  }
+  visit(id)
+  return moving
+}
+
+/** Everything that depends on a card: its continuations and its expansions. */
+export function cascadeCardIds(cards: CanvasCard[], id: string): Set<string> {
+  const cascade = new Set<string>()
+  const visit = (cardId: string): void => {
+    if (cascade.has(cardId)) return
+    cascade.add(cardId)
+    for (const other of cards) {
+      if (other.kind === 'message' && other.parentId === cardId) visit(other.id)
+      if (other.kind === 'expansion' && other.hostId === cardId) visit(other.id)
+    }
+  }
+  visit(id)
+  return cascade
+}
+
+/* ---- Dropping a dragged card ---- */
+
+export interface CanvasMoveUpdate {
+  id: string
+  rect: CanvasRect
+  inset?: boolean
+}
+
+export type CanvasMoveResult = { ok: true; updates: CanvasMoveUpdate[] } | { ok: false }
+
+/**
+ * Where a drag lands. An expansion stays over its host's text while it fits
+ * inside, and becomes a separate linked card once it clears it. Nothing that
+ * stands on the plane may overlap, so a drop halfway across an edge is refused.
+ */
+export function resolveMove(
+  cards: CanvasCard[],
+  draggedId: string,
+  moving: ReadonlySet<string>,
+  dx: number,
+  dy: number
+): CanvasMoveResult {
+  const shifted = (rect: CanvasRect): CanvasRect => ({ ...rect, x: rect.x + dx, y: rect.y + dy })
+  const dragged = cardById(cards, draggedId)
+  const host = dragged?.kind === 'expansion' ? cardById(cards, dragged.hostId) : undefined
+  const staysInset =
+    dragged !== undefined && host !== undefined && containsRect(host.rect, shifted(dragged.rect))
+
+  const obstacles = topLevelRects(cards, new Set([...moving, draggedId]))
+  for (const card of cards) {
+    if (!moving.has(card.id)) continue
+    const standsOnPlane = card.id === draggedId ? !staysInset : isTopLevel(card)
+    if (standsOnPlane && obstacles.some((rect) => rectsOverlap(shifted(card.rect), rect))) {
+      return { ok: false }
+    }
+  }
+  return {
+    ok: true,
+    updates: cards
+      .filter((card) => moving.has(card.id))
+      .map((card) => ({
+        id: card.id,
+        rect: shifted(card.rect),
+        ...(card.id === draggedId && card.kind === 'expansion' ? { inset: staysInset } : {})
+      }))
+  }
+}
+
+/* ---- Fitting a card's height to its answer ---- */
+
+/** The cards that keep their shared side with `id` when it moves: its continuations alongside. */
+function continuationsAlongside(cards: CanvasCard[], id: string, rect: CanvasRect): CanvasCard[] {
+  return cards.filter(
+    (card) => card.kind === 'message' && card.parentId === id && sharesSide(card.rect, rect)
+  )
+}
+
+/** The top-level card an inset card ultimately sits on. */
+function standingCard(cards: CanvasCard[], card: CanvasCard): CanvasCard | undefined {
+  if (isTopLevel(card)) return card
+  return card.kind === 'expansion'
+    ? standingCard(cards, cardById(cards, card.hostId) ?? card)
+    : undefined
+}
+
+/**
+ * The moves that give a card the height its answer needs; its width never changes.
+ * An inset card stays inside its host and a host never shrinks past what sits on
+ * its text. Continuations hanging off the bottom follow, and anything else in the
+ * way is pushed down, so nothing overlaps. A card shrinks only if what hangs below
+ * can follow it. An empty result means nothing changes, and the body scrolls.
+ */
+export function fitCardHeight(
+  cards: CanvasCard[],
+  id: string,
+  contentHeight: number
+): CanvasMoveUpdate[] {
+  const card = cardById(cards, id)
+  if (!card) return []
+  const minimum = card.kind === 'message' ? MIN_MESSAGE_SIZE.h : MIN_EXPANSION_SIZE.h
+  const insetBottoms = cards.flatMap((other) =>
+    other.kind === 'expansion' && other.inset && other.hostId === id
+      ? [other.rect.y + other.rect.h - card.rect.y]
+      : []
+  )
+  const wanted = Math.max(Math.ceil(contentHeight), minimum, ...insetBottoms)
+
+  if (!isTopLevel(card)) {
+    const host = card.kind === 'expansion' ? cardById(cards, card.hostId) : undefined
+    const height = host ? Math.min(wanted, host.rect.y + host.rect.h - card.rect.y) : wanted
+    if (height === card.rect.h || height < minimum) return []
+    return [{ id, rect: { ...card.rect, h: height } }]
+  }
+
+  const delta = wanted - card.rect.h
+  if (delta === 0) return []
+
+  const rects = new Map(
+    cards.filter(isTopLevel).map((item): [string, CanvasRect] => [item.id, item.rect])
+  )
+  const resized = { ...card.rect, h: wanted }
+  rects.set(id, resized)
+  const moved: string[] = []
+  const shift = (cardId: string, dy: number): void => {
+    const before = rects.get(cardId)
+    if (!before) return
+    rects.set(cardId, { ...before, y: before.y + dy })
+    moved.push(cardId)
+    for (const other of continuationsAlongside(cards, cardId, before)) {
+      // Compared where it stands now, as an earlier push may have moved it already.
+      const now = rects.get(other.id)
+      if (now && sharesSide(now, before)) shift(other.id, dy)
+    }
+  }
+
+  const oldBottom = card.rect.y + card.rect.h
+  for (const other of continuationsAlongside(cards, id, card.rect)) {
+    if (Math.abs(other.rect.y - oldBottom) <= SIDE_EPSILON) shift(other.id, delta)
+  }
+
+  if (delta > 0) {
+    // Everything moves down and lands clear of what pushed it, so this settles;
+    // the budget only guards against a stored layout that never could.
+    let budget = cards.length * cards.length * 4
+    const queue = [id, ...moved]
+    while (queue.length > 0) {
+      if (budget-- <= 0) return []
+      const pusherId = queue.shift() as string
+      const pusher = rects.get(pusherId) as CanvasRect
+      for (const [otherId, other] of rects) {
+        if (otherId === pusherId || !rectsOverlap(pusher, other)) continue
+        moved.length = 0
+        shift(otherId, pusher.y + pusher.h - other.y)
+        queue.push(...moved)
+      }
+    }
+  } else {
+    const following = new Set(moved)
+    for (const movedId of following) {
+      const rect = rects.get(movedId) as CanvasRect
+      for (const [otherId, other] of rects) {
+        if (otherId !== movedId && !following.has(otherId) && rectsOverlap(rect, other)) return []
+      }
+    }
+  }
+
+  return cards.flatMap((item): CanvasMoveUpdate[] => {
+    if (item.id === id) return [{ id, rect: rects.get(id) as CanvasRect }]
+    const standing = standingCard(cards, item)
+    const now = standing ? rects.get(standing.id) : undefined
+    if (!standing || !now) return []
+    const dy = now.y - standing.rect.y
+    // The resized card's top stays where it is, so what sits on it does too.
+    return dy === 0 ? [] : [{ id: item.id, rect: { ...item.rect, y: item.rect.y + dy } }]
+  })
+}
+
+/* ---- Session history ---- */
+
+function expansionHistory(turns: Turn[], card: CanvasExpansionCard): Turn[] {
+  const turn = turns.find((item) => item.id === card.turnId)
+  const path = turn ? expansionPath(turn.expansions, card.expansionId) : null
+  if (!path) return []
+  return path.flatMap((node): Turn[] => [
+    {
+      id: -node.id,
+      role: 'user',
+      content: buildExpandAncestorQuestion(node.originalText, node.prompt),
+      expansions: []
+    },
+    { id: -node.id, role: 'assistant', content: node.answer, expansions: [] }
+  ])
+}
+
+/**
+ * The linear conversation leading up to and including a card. Session history
+ * follows `parentId`, so a canvas can branch without its branches seeing each other.
+ */
+export function turnsThroughCard(cards: CanvasCard[], turns: Turn[], id: string): Turn[] {
+  const card = cardById(cards, id)
+  if (!card) return []
+  if (card.kind === 'message') {
+    const before = card.parentId === undefined ? [] : turnsThroughCard(cards, turns, card.parentId)
+    const own = turns.filter((turn) => turn.id === card.userTurnId || turn.id === card.turnId)
+    return [...before, ...own]
+  }
+  const message = cards.find((other) => other.kind === 'message' && other.turnId === card.turnId)
+  return [
+    ...(message ? turnsThroughCard(cards, turns, message.id) : []),
+    ...expansionHistory(turns, card)
+  ]
+}
+
+/* ---- Links ---- */
+
+/** A curve from a term to the facing side of its expansion, leaving and arriving squarely. */
+export function linkPath(from: CanvasPoint, to: CanvasRect): string {
+  const centerX = to.x + to.w / 2
+  const centerY = to.y + to.h / 2
+  const horizontal = Math.abs(from.x - centerX) / to.w >= Math.abs(from.y - centerY) / to.h
+  const end = horizontal
+    ? { x: from.x < centerX ? to.x : to.x + to.w, y: centerY }
+    : { x: centerX, y: from.y < centerY ? to.y : to.y + to.h }
+  const reach = Math.max(Math.hypot(end.x - from.x, end.y - from.y) * 0.4, 24)
+  const c1 = horizontal
+    ? { x: from.x + Math.sign(end.x - from.x) * reach, y: from.y }
+    : { x: from.x, y: from.y + Math.sign(end.y - from.y) * reach }
+  const c2 = horizontal
+    ? { x: end.x - Math.sign(end.x - from.x) * reach, y: end.y }
+    : { x: end.x, y: end.y - Math.sign(end.y - from.y) * reach }
+  return `M ${from.x} ${from.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${end.x} ${end.y}`
+}
+
+/* ---- Viewport ---- */
+
+export function screenToWorld(viewport: CanvasViewport, point: CanvasPoint): CanvasPoint {
+  return { x: (point.x - viewport.x) / viewport.zoom, y: (point.y - viewport.y) / viewport.zoom }
+}
+
+/** Zooms while keeping the world point under `anchor` where it is on screen. */
+export function zoomAt(
+  viewport: CanvasViewport,
+  anchor: CanvasPoint,
+  zoom: number
+): CanvasViewport {
+  const next = Math.min(Math.max(zoom, MIN_ZOOM), MAX_ZOOM)
+  const world = screenToWorld(viewport, anchor)
+  return { x: anchor.x - world.x * next, y: anchor.y - world.y * next, zoom: next }
+}
+
+/*
+ * Chromium reports a pinch as Ctrl+wheel with deltaY = 100 * ln(scale), so this rate
+ * follows the fingers. A mouse notch reports far more, so the clamp holds it to one step.
+ */
+const WHEEL_ZOOM_RATE = 0.01
+const MAX_WHEEL_ZOOM_DELTA = 25
+
+/** What one Ctrl+wheel event or pinch update multiplies the zoom by. */
+export function wheelZoomFactor(deltaY: number): number {
+  const delta = Math.min(Math.max(deltaY, -MAX_WHEEL_ZOOM_DELTA), MAX_WHEEL_ZOOM_DELTA)
+  return Math.exp(-delta * WHEEL_ZOOM_RATE)
+}
+
+const FIT_MARGIN = 64
+
+/** The viewport showing every rectangle, never zoomed in past 100%. */
+export function fitViewport(
+  rects: CanvasRect[],
+  size: { width: number; height: number }
+): CanvasViewport {
+  if (rects.length === 0) return DEFAULT_VIEWPORT
+  const left = Math.min(...rects.map((rect) => rect.x))
+  const top = Math.min(...rects.map((rect) => rect.y))
+  const right = Math.max(...rects.map((rect) => rect.x + rect.w))
+  const bottom = Math.max(...rects.map((rect) => rect.y + rect.h))
+  const zoom = Math.max(
+    Math.min(
+      (size.width - FIT_MARGIN * 2) / Math.max(right - left, 1),
+      (size.height - FIT_MARGIN * 2) / Math.max(bottom - top, 1),
+      1
+    ),
+    MIN_ZOOM
+  )
+  return {
+    x: (size.width - (right - left) * zoom) / 2 - left * zoom,
+    y: (size.height - (bottom - top) * zoom) / 2 - top * zoom,
+    zoom
+  }
+}
+
+/** The smallest pan that brings a rectangle on screen; the same viewport when it already is. */
+export function revealRect(
+  viewport: CanvasViewport,
+  rect: CanvasRect,
+  size: { width: number; height: number }
+): CanvasViewport {
+  const axis = (offset: number, start: number, length: number, available: number): number => {
+    const low = start * viewport.zoom + offset
+    const high = low + length * viewport.zoom
+    if (low >= FIT_MARGIN && high <= available - FIT_MARGIN) return offset
+    if (high - low > available - FIT_MARGIN * 2 || low < FIT_MARGIN) {
+      return offset + FIT_MARGIN - low
+    }
+    return offset + available - FIT_MARGIN - high
+  }
+  return {
+    ...viewport,
+    x: axis(viewport.x, rect.x, rect.w, size.width),
+    y: axis(viewport.y, rect.y, rect.h, size.height)
+  }
+}
+
+/* ---- Load boundary ---- */
+
+function isRect(value: unknown): value is CanvasRect {
+  if (typeof value !== 'object' || value === null) return false
+  const { x, y, w, h } = value as Record<string, unknown>
+  return (
+    Number.isFinite(x) &&
+    Number.isFinite(y) &&
+    Number.isFinite(w) &&
+    Number.isFinite(h) &&
+    (w as number) > 0 &&
+    (h as number) > 0
+  )
+}
+
+function isCardSound(value: unknown, turns: Turn[]): value is CanvasCard {
+  if (typeof value !== 'object' || value === null) return false
+  const card = value as Partial<CanvasMessageCard> & Partial<CanvasExpansionCard>
+  if (typeof card.id !== 'string' || !isRect(card.rect)) return false
+  const hasTurn = (id: unknown): boolean => turns.some((turn) => turn.id === id)
+  if (card.kind === 'message') return hasTurn(card.userTurnId) && hasTurn(card.turnId)
+  return (
+    card.kind === 'expansion' &&
+    typeof card.hostId === 'string' &&
+    typeof card.inset === 'boolean' &&
+    typeof card.expansionId === 'number' &&
+    findExpansionInTurns(turns, card.expansionId)?.turn.id === card.turnId
+  )
+}
+
+function dropOrphans(cards: CanvasCard[]): CanvasCard[] {
+  const ids = new Set(cards.map((card) => card.id))
+  const kept = cards.filter((card) => card.kind === 'message' || ids.has(card.hostId))
+  return kept.length === cards.length ? cards : dropOrphans(kept)
+}
+
+/** A stored layout is never trusted: a card that lost its turn or host is left out. */
+export function normalizeCanvasLayout(raw: unknown, turns: Turn[]): CanvasLayout {
+  const value = (typeof raw === 'object' && raw !== null ? raw : {}) as Partial<CanvasLayout>
+  const cards = dropOrphans(
+    (Array.isArray(value.cards) ? value.cards : []).filter((card) => isCardSound(card, turns))
+  )
+  const ids = new Set(cards.map((card) => card.id))
+  const viewport = value.viewport
+  const viewportOk =
+    Number.isFinite(viewport?.x) && Number.isFinite(viewport?.y) && Number.isFinite(viewport?.zoom)
+  return {
+    cards: cards.map((card) => {
+      if (card.kind !== 'message' || card.parentId === undefined || ids.has(card.parentId)) {
+        return card
+      }
+      // The session it continued is gone; it stands on its own now.
+      return {
+        kind: 'message',
+        id: card.id,
+        rect: card.rect,
+        userTurnId: card.userTurnId,
+        turnId: card.turnId
+      }
+    }),
+    viewport: viewportOk
+      ? {
+          x: viewport!.x,
+          y: viewport!.y,
+          zoom: Math.min(Math.max(viewport!.zoom, MIN_ZOOM), MAX_ZOOM)
+        }
+      : DEFAULT_VIEWPORT
+  }
+}

@@ -40,7 +40,7 @@ function popupPointBelow(element: Element): FramePopupAt {
 }
 
 /** The target as written: a pill or header may show bold, code or a whole code block. */
-function OriginalText({ text }: { text: string }): React.JSX.Element {
+export function OriginalText({ text }: { text: string }): React.JSX.Element {
   if (isPlainMarkdown(text)) return <>{text}</>
   return (
     <Markdown

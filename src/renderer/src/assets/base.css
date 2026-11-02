@@ -4,6 +4,7 @@
 @import 'settings.css';
 @import 'markdown.css';
 @import 'expand.css';
+@import 'canvas.css';
 
 :root {
   color-scheme: dark;

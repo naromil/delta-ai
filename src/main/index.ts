@@ -228,6 +228,9 @@ if (!hasSingleInstanceLock) {
     ipcMain.handle('conversation-list', async () => {
       return await listConversations('chat')
     })
+    ipcMain.handle('canvas-list', async () => {
+      return await listConversations('canvas')
+    })
     ipcMain.handle('conversation-search', async (_event, query: string) => {
       return await searchConversations(typeof query === 'string' ? query : '')
     })
