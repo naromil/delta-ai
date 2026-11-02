@@ -5,7 +5,7 @@
 - [ ] Have AI-based conversation title generation at first message.
 - [x] Surface autosave failures in the chat — `saveConversationState` only `console.warn`s a failed `conversation-save`, so a chat can silently fail to persist
 - [x] Show an error when OCR of a pasted image fails in the grown look-up — `LookupApp.tsx` drops `result.error`, so the spinner just stops and nothing happens
-- [ ] Ignore Enter during IME composition in the search modal and the Knowledge re-analyze field — Ctrl/Cmd+K opens the highlighted chat mid-composition for CJK input
+- [x] Ignore Enter during IME composition in the search modal and the Knowledge re-analyze field — Ctrl/Cmd+K opens the highlighted chat mid-composition for CJK input
 - [ ] List the keyboard shortcuts in the Look-up Guide view — Ctrl/Cmd+N, K, E, Shift+E and Esc-to-stop exist but are undiscoverable
 - [ ] Fix stale Look-up Guide text — it points to a "chat sidebar" that doesn't exist, hardcodes Ctrl+Shift+D instead of the configured hotkey, and describes Expand as definition-only
 - [ ] Ctrl/Cmd+, opens Settings — the standard desktop shortcut is missing from the app-wide handler in `App.tsx`

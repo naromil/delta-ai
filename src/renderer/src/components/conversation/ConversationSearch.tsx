@@ -55,7 +55,7 @@ function ConversationSearch({
   useEffect(() => {
     const timer = setTimeout(() => inputRef.current?.focus(), 0)
     const handleKeyDown = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape' && !e.isComposing) onClose()
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => {
@@ -95,6 +95,8 @@ function ConversationSearch({
   }
 
   const handleKeyDown = (e: React.KeyboardEvent): void => {
+    // Arrows and Enter belong to the IME while CJK input is being composed.
+    if (e.nativeEvent.isComposing) return
     if (e.key === 'ArrowDown') {
       e.preventDefault()
       if (conversations.length === 0) return

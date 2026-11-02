@@ -185,6 +185,7 @@ function KnowledgeView(): React.JSX.Element {
               value={reanalyzeCount}
               onChange={(e) => setReanalyzeCount(e.target.value)}
               onKeyDown={(e) => {
+                if (e.nativeEvent.isComposing) return
                 if (e.key === 'Enter') confirmReanalyze()
                 if (e.key === 'Escape') {
                   setShowReanalyzeInput(false)
