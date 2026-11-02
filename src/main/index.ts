@@ -39,8 +39,7 @@ import {
   isConversationRecord,
   isConversationState,
   parseProviderMessages,
-  parseStreamRole,
-  withKbPrompt
+  parseStreamRole
 } from './streaming'
 import {
   saveConversation,
@@ -53,8 +52,8 @@ import {
 } from './conversations'
 import { registerKbIpcHandlers } from './kb/handlers'
 import { startKbAutoMaintenance, stopKbAutoMaintenance } from './kb/maintenance'
+import { migrateLegacyKbPrompt } from './kb/store'
 import { registerModelCatalogIpcHandlers } from './services/model-catalog'
-import { loadKbPrompt } from './kb/store'
 import { memoryAgentFor } from './memory/tools'
 
 interface ActiveStream {
@@ -95,16 +94,14 @@ if (!hasSingleInstanceLock) {
       const request = parseStreamPayload(payload)
       if (!request) return
       const { requestId, role } = request
-      // Both windows get the learned profile. Chat sends are then trimmed to the
-      // model's window; lookup keeps its full screen context.
+      // Chat sends are trimmed to the model's window; lookup keeps its full screen context.
       const sender = event.sender
       const fitted = fitImagesToSupport(request.messages, modelImageSupport(role))
       if (!fitted) {
         safeSend(sender, 'chat-error', { requestId, error: IMAGES_UNSUPPORTED_ERROR })
         return
       }
-      const messages = withKbPrompt(fitted, loadKbPrompt())
-      const finalMessages = role === 'chat' ? applyContextBudget(messages, role) : messages
+      const finalMessages = role === 'chat' ? applyContextBudget(fitted, role) : fitted
       void streamToSender(
         sender,
         requestId,
@@ -245,6 +242,7 @@ if (!hasSingleInstanceLock) {
 
     registerConfigIpcHandlers() // includes provider-models and provider-test
     registerLookupIpcHandlers()
+    migrateLegacyKbPrompt()
     registerKbIpcHandlers()
     registerModelCatalogIpcHandlers()
 

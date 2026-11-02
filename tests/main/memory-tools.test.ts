@@ -24,7 +24,9 @@ vi.mock('../../src/main/config', () => ({
 }))
 vi.mock('../../src/main/services/model-catalog', () => ({ getCachedModel }))
 
+import { memoriesDir } from '../../src/main/memory/store'
 import { memoryAgentFor } from '../../src/main/memory/tools'
+import { KB_MEMORY_SYSTEM_PROMPT } from '../../src/shared/prompts'
 import { callProvider, callProviderStream } from '../../src/main/provider'
 import type { ProviderMessage } from '../../src/main/provider'
 import type { RoleId } from '../../src/shared/models'
@@ -133,6 +135,14 @@ describe('memoryAgentFor', () => {
     expect(agentFor('kb-maintenance').maxSteps).toBeGreaterThan(agentFor('chat').maxSteps)
   })
 
+  it('loads learning preferences into every prompt and has the curator maintain them', () => {
+    writeFileSync(join(memoriesDir(), 'index-learning.md'), 'Prefers worked examples.')
+    for (const role of ['chat', 'lookup', 'kb-maintenance'] as const) {
+      expect(agentFor(role).instructions).toContain('Prefers worked examples.')
+    }
+    expect(KB_MEMORY_SYSTEM_PROMPT).toContain('index-learning.md')
+  })
+
   it('encourages index and collection meta-files', () => {
     expect(agentFor('chat').instructions).toMatch(/index\.md/)
     expect(agentFor('kb-maintenance').instructions).toMatch(/collection files/)
@@ -153,7 +163,7 @@ describe('memoryAgentFor', () => {
   })
 })
 
-describe('root index', () => {
+describe('auto-loaded files', () => {
   function memories(): string {
     return join(paths.userData, 'memories')
   }
@@ -166,8 +176,39 @@ describe('root index', () => {
     }
   })
 
-  it('reads as missing until it exists', () => {
-    expect(agentFor('chat').instructions).toContain('(does not exist yet)')
+  it('loads only root files whose name starts with index', () => {
+    mkdirSync(join(memories(), 'work'), { recursive: true })
+    writeFileSync(join(memories(), 'index-learning.md'), 'ROOT-PREFIXED')
+    writeFileSync(join(memories(), 'work', 'index.md'), 'NESTED-INDEX')
+    writeFileSync(join(memories(), 'profile.md'), 'UNPREFIXED')
+    const { instructions } = agentFor('chat')
+    expect(instructions).toContain('ROOT-PREFIXED')
+    expect(instructions).not.toContain('NESTED-INDEX')
+    expect(instructions).not.toContain('UNPREFIXED')
+    // The rest of the tree stays discoverable by path.
+    expect(instructions).toContain('work/index.md')
+    expect(instructions).toContain('profile.md')
+  })
+
+  it('states the auto-loading rule to every writer', () => {
+    for (const role of ['chat', 'lookup', 'kb-maintenance'] as const) {
+      expect(agentFor(role).instructions).toMatch(
+        /Auto-loading rule: .*root directory.*starts with "index"/
+      )
+    }
+  })
+
+  it('caps the total across root files', () => {
+    for (const name of ['index-a.md', 'index-b.md', 'index-c.md']) {
+      writeFileSync(join(memoriesDir(), name), 'z'.repeat(7_000))
+    }
+    const { instructions } = agentFor('chat')
+    expect(instructions).toContain('truncated; read the file')
+    expect(instructions.match(/z/g)?.length ?? 0).toBeLessThan(16_200)
+  })
+
+  it('reads as missing until one exists', () => {
+    expect(agentFor('chat').instructions).toContain('(none exist yet)')
   })
 
   it('is capped, so a huge index cannot crowd out the conversation', () => {
@@ -185,7 +226,7 @@ describe('root index', () => {
     symlinkSync(outside, join(memories(), 'index.md'))
     const { instructions } = agentFor('chat')
     expect(instructions).not.toContain('SECRET')
-    expect(instructions).toContain('(does not exist yet)')
+    expect(instructions).toContain('(none exist yet)')
   })
 })
 
@@ -288,6 +329,15 @@ describe('agent loop', () => {
 })
 
 describe('tool rejection', () => {
+  it('fails a curator pass instead of retrying without tools', async () => {
+    const agent = agentFor('kb-maintenance')
+    const bodies = stubFetch([() => new Response('model does not support tools', { status: 400 })])
+    await expect(callProvider(MESSAGES, 'kb-maintenance', undefined, agent)).rejects.toThrow(
+      'API error 400'
+    )
+    expect(bodies).toHaveLength(1)
+  })
+
   it('retries a rejected request once without tools or their instructions', async () => {
     const agent = agentFor('chat')
     const bodies = stubFetch([

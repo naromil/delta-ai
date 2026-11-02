@@ -16,7 +16,6 @@ import {
   loadConversation,
   markConversationKbFed,
   mutateConversation,
-  resetKbFedFlags,
   saveConversation,
   searchConversations
 } from '../../src/main/conversations'
@@ -234,22 +233,6 @@ describe('conversation store', () => {
     expect(loaded?.state.turns.map((turn) => turn.content)).toEqual(['newer body'])
   })
 
-  it('clears kbFed on the newest body during a concurrent autosave', async () => {
-    await saveConversation(record('chat_reset_race', { kbFed: true }))
-    const newer = record('chat_reset_race', {
-      kbFed: false,
-      updatedAt: '2026-05-01T00:00:00.000Z',
-      state: { turns: [{ id: 5, role: 'user', content: 'brand new', expansions: [] }] }
-    })
-
-    await Promise.all([saveConversation(newer, { preserveKbFed: true }), resetKbFedFlags()])
-
-    const loaded = await loadConversation('chat_reset_race')
-    expect(loaded?.kbFed).toBe(false)
-    expect(loaded?.updatedAt).toBe('2026-05-01T00:00:00.000Z')
-    expect(loaded?.state.turns.map((turn) => turn.content)).toEqual(['brand new'])
-  })
-
   it('ranks title matches first and returns a snippet for content matches', async () => {
     await saveConversation(
       record('chat_old', { title: 'Unrelated', updatedAt: '2026-01-01T00:00:00.000Z' })
@@ -265,17 +248,5 @@ describe('conversation store', () => {
     expect(results[0].snippet).toBeUndefined()
     expect(results[1]).toMatchObject({ matchedIn: 'content' })
     expect(results[1].snippet).toContain('needle')
-  })
-
-  it('clears kbFed on chat conversations during a KB reset, leaving lookups alone', async () => {
-    await saveConversation(record('chat_fed', { kbFed: true }))
-    await saveConversation(record('chat_unfed', { kbFed: false }))
-    await saveConversation(record('lookup_fed', { source: 'lookup', kbFed: true }))
-
-    await resetKbFedFlags()
-
-    const chats = await listConversations('chat')
-    expect(chats.every((meta) => meta.kbFed === false)).toBe(true)
-    expect((await loadConversation('lookup_fed'))?.kbFed).toBe(true)
   })
 })

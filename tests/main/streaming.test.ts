@@ -5,7 +5,7 @@ import {
   isConversationState,
   parseProviderMessages,
   parseStreamRole,
-  withKbPrompt
+  withInstructions
 } from '../../src/main/streaming'
 
 describe('parseStreamRole', () => {
@@ -63,22 +63,22 @@ describe('conversation shape checks', () => {
   })
 })
 
-describe('withKbPrompt', () => {
-  it('appends the profile to the existing system prompt', () => {
+describe('withInstructions', () => {
+  it('appends to the existing system prompt', () => {
     const messages = [
       { role: 'system', content: 'base' },
       { role: 'user', content: 'q' }
     ]
-    expect(withKbPrompt(messages, 'profile')).toEqual([
+    expect(withInstructions(messages, 'profile')).toEqual([
       { role: 'system', content: 'base\n\nprofile' },
       { role: 'user', content: 'q' }
     ])
   })
 
-  it('adds a system message when there is none, and is a no-op without a profile', () => {
+  it('adds a system message when there is none, and is a no-op without instructions', () => {
     const messages = [{ role: 'user', content: 'q' }]
-    expect(withKbPrompt(messages, 'profile')[0]).toEqual({ role: 'system', content: 'profile' })
-    expect(withKbPrompt(messages, '')).toBe(messages)
+    expect(withInstructions(messages, 'profile')[0]).toEqual({ role: 'system', content: 'profile' })
+    expect(withInstructions(messages, '')).toBe(messages)
   })
 })
 

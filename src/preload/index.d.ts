@@ -4,8 +4,8 @@ import type {
   ConversationMeta,
   ConversationSearchResult
 } from '../shared/conversation'
-import type { CategorizedKeyword, Connection } from '../shared/models'
-import type { KbMaintenanceStatus } from '../shared/kb'
+import type { Connection } from '../shared/models'
+import type { KbMaintenanceStatus, KbRunResult } from '../shared/kb'
 import type { ModelCatalogState } from '../shared/model-catalog'
 import type { ConnectionTestResult, DiscoveredModels } from '../main/services/model-discovery'
 
@@ -104,22 +104,8 @@ declare global {
         id: string
       ) => Promise<{ ok: true; path: string } | { ok: false; error: string }>
 
-      kbLoadPrompt: () => Promise<{ prompt: string; keywords: CategorizedKeyword[] }>
-      kbSavePrompt: (content: string) => Promise<{
-        prompt: string
-        keywords: CategorizedKeyword[]
-      }>
-      kbReset: () => Promise<{ prompt: string; keywords: CategorizedKeyword[] }>
-      kbAnalyze: () => Promise<{
-        newPrompt: string
-        keywords: CategorizedKeyword[]
-        conversationsAnalyzed: number
-      }>
-      kbReanalyze: (n: number) => Promise<{
-        newPrompt: string
-        keywords: CategorizedKeyword[]
-        conversationsAnalyzed: number
-      }>
+      kbAnalyze: () => Promise<KbRunResult>
+      kbReanalyze: (n: number) => Promise<KbRunResult>
       kbGetStatus: () => Promise<KbMaintenanceStatus>
       kbOnStatus: (cb: (status: KbMaintenanceStatus) => void) => () => void
       onMemoryUpdated: (cb: () => void) => () => void

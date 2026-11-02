@@ -23,11 +23,9 @@ const h = vi.hoisted(() => {
     onAppConfigChanged: vi.fn(),
     listUnfedConversations: vi.fn(),
     onConversationSaved: vi.fn(),
-    resetKbFedFlags: vi.fn(),
     runKbAnalysis: vi.fn(),
     loadKbState: vi.fn(),
-    saveKbState: vi.fn(),
-    resetKb: vi.fn()
+    saveKbState: vi.fn()
   }
 })
 
@@ -41,19 +39,16 @@ vi.mock('../../src/main/config', () => ({
 }))
 vi.mock('../../src/main/conversations', () => ({
   listUnfedConversations: h.listUnfedConversations,
-  onConversationSaved: h.onConversationSaved,
-  resetKbFedFlags: h.resetKbFedFlags
+  onConversationSaved: h.onConversationSaved
 }))
 vi.mock('../../src/main/kb/run', () => ({ runKbAnalysis: h.runKbAnalysis }))
 vi.mock('../../src/main/kb/store', () => ({
   loadKbState: h.loadKbState,
-  saveKbState: h.saveKbState,
-  resetKb: h.resetKb
+  saveKbState: h.saveKbState
 }))
 
 import {
   resetKbMaintenanceForTests,
-  resetKbProfile,
   runKbAnalysisExclusive,
   startKbAutoMaintenance,
   stopKbAutoMaintenance
@@ -129,23 +124,16 @@ beforeEach(() => {
       savedListener = null
     }
   })
-  h.resetKbFedFlags.mockReset().mockImplementation(async () => {
-    unfed = unfed.map((meta) => ({ ...meta, kbFed: false }))
-  })
   h.runKbAnalysis.mockReset().mockImplementation(async (metas: Array<{ id: string }>) => {
     for (const meta of metas) {
       const target = unfed.find((candidate) => candidate.id === meta.id)
       if (target) target.kbFed = true
     }
-    return { newPrompt: 'learned prompt', keywords: [], conversationsAnalyzed: metas.length }
+    return { conversationsAnalyzed: metas.length }
   })
   h.loadKbState.mockReset().mockImplementation(() => ({ ...state }))
   h.saveKbState.mockReset().mockImplementation((next: KbPersistedState) => {
     state = { ...next }
-  })
-  h.resetKb.mockReset().mockImplementation(() => {
-    h.events.push('wipe')
-    state = emptyKbState()
   })
 })
 
@@ -218,7 +206,7 @@ describe('automatic KB pass scheduling', () => {
         lastError: null,
         failedAttempts: 0
       }
-      return { newPrompt: 'prompt', keywords: [], conversationsAnalyzed: 0 }
+      return { conversationsAnalyzed: 0 }
     })
 
     savedListener?.(record('chat_a'))
@@ -258,68 +246,6 @@ describe('automatic KB pass scheduling', () => {
     await settle()
 
     expect(vi.getTimerCount()).toBe(0)
-  })
-
-  it('aborts an in-flight pass, wipes state and then schedules a rebuild', async () => {
-    startKbAutoMaintenance()
-    await settle()
-    unfed = [chat('chat_a')]
-
-    const pass = Promise.withResolvers<string>()
-    let signal: AbortSignal | undefined
-    h.runKbAnalysis.mockImplementationOnce((_metas, options: { signal?: AbortSignal }) => {
-      signal = options.signal
-      signal?.addEventListener('abort', () => {
-        pass.reject(new Error('Generation stopped.'))
-      })
-      return pass.promise
-    })
-
-    savedListener?.(record('chat_a'))
-    await vi.advanceTimersByTimeAsync(AUTO_DEBOUNCE_MS)
-    expect(signal).toBeDefined()
-    expect(h.runKbAnalysis).toHaveBeenCalledTimes(1)
-
-    const reset = resetKbProfile()
-    await reset
-
-    expect(signal?.aborted).toBe(true)
-    expect(h.resetKb).toHaveBeenCalledTimes(1)
-    // Aborted work is neither a learning event nor a failure.
-    expect(h.saveKbState).not.toHaveBeenCalled()
-    // No pre-wipe idle snapshot may be published between the abort and the wipe.
-    const passAt = h.events.lastIndexOf('status:running')
-    const wipeAt = h.events.indexOf('wipe')
-    expect(passAt).toBeGreaterThanOrEqual(0)
-    expect(wipeAt).toBeGreaterThan(passAt)
-    expect(h.events.slice(passAt + 1, wipeAt)).not.toContain('status:idle')
-    expect(vi.getTimerCount()).toBe(1)
-
-    await vi.advanceTimersByTimeAsync(AUTO_DEBOUNCE_MS)
-    expect(h.runKbAnalysis).toHaveBeenCalledTimes(2)
-  })
-
-  it('discards a queue scan that began before a reset', async () => {
-    startKbAutoMaintenance()
-    await settle()
-    unfed = [chat('chat_a')]
-
-    const scan = Promise.withResolvers<ConversationMeta[]>()
-    h.listUnfedConversations.mockImplementationOnce(() => scan.promise)
-
-    savedListener?.(record('chat_a'))
-    await vi.advanceTimersByTimeAsync(AUTO_DEBOUNCE_MS)
-
-    const reset = resetKbProfile()
-    scan.resolve(unfed)
-    await reset
-    await settle()
-
-    expect(h.runKbAnalysis).not.toHaveBeenCalled()
-    expect(vi.getTimerCount()).toBe(1)
-
-    await vi.advanceTimersByTimeAsync(AUTO_DEBOUNCE_MS)
-    expect(h.runKbAnalysis).toHaveBeenCalledTimes(1)
   })
 
   it('runs exactly one debounced pass and records the learning event', async () => {
@@ -448,14 +374,10 @@ describe('automatic KB pass scheduling', () => {
       'provider exploded'
     )
 
-    h.runKbAnalysis.mockResolvedValueOnce({
-      newPrompt: 'recovered',
-      keywords: [],
+    h.runKbAnalysis.mockResolvedValueOnce({ conversationsAnalyzed: 1 })
+    await expect(runKbAnalysisExclusive([{ id: 'chat_b' }], { markFed: true })).resolves.toEqual({
       conversationsAnalyzed: 1
     })
-    await expect(
-      runKbAnalysisExclusive([{ id: 'chat_b' }], { markFed: true })
-    ).resolves.toMatchObject({ newPrompt: 'recovered' })
   })
 
   it('ignores saves that carry no learning signal', async () => {

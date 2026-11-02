@@ -13,7 +13,7 @@ Delta AI lives in two windows: a full **chat** interface and an **always-on-top 
 - **Inline expansions** — Right-click any word or selection in an assistant response to get an instant definition or custom explanation. Expansions render inline as foldable frames; nested expansions are supported.
 - **Multi-provider AI** — Bring your own key (BYOK) for Google AI Studio, OpenAI, OpenAI-compatible endpoints, Ollama, or OpenRouter. Each conversation role (chat, lookup) maps independently to a provider + model.
 - **Role-based model assignment** — Chat and Lookup use separate model connections so you can run lightweight models for lookups and heavier ones for deep conversations.
-- **Knowledge Base (KB) personalization** — Automatically folds past chats into a learning-preference profile (needs a model on the Knowledge Base Maintenance role; can be turned off in Settings → General). The profile is appended to the system prompt of both chat and lookup requests, so answers adapt to your style over time.
+- **Memory personalization** — A background curator turns past chats into private markdown notes about you (needs a tool-capable model on the Knowledge Base Maintenance role; can be turned off in Settings → General). Your learning preferences live in `index-learning.md`, and chat and lookup always load any top-level note named `index*`, so answers adapt to you over time.
 - **Conversation persistence & search** — All conversations are saved to disk automatically (body + metadata sidecar), survive restarts, and are searchable by title and message content with `Ctrl/Cmd+K` from any view. The Home view lists your most recent chats.
 - **Rename, edit, regenerate, export, delete** — Rename a conversation inline without reordering recents, edit and resend any of your messages, regenerate any answer (confirming when later messages would be dropped), export a conversation as markdown through the system save dialog, or delete the open conversation from the chat toolbar.
 - **Keyboard-friendly chat** — `Ctrl/Cmd+N` starts a new chat from anywhere, `Esc` stops a response mid-stream, the composer keeps your draft when you switch views, and code blocks have their own Copy button.
@@ -75,13 +75,12 @@ Renderer (React 19)          Preload (contextBridge)        Main process (Node)
 | `src/main/lookup/state.ts`                          | `LookupSession` interface, session management, `applyOcrResult`, IPC helpers                                                                                 |
 | `src/main/services/global-shortcut.ts`              | XDG GlobalShortcuts D-Bus portal for Wayland                                                                                                                 |
 | `src/main/services/screen-capture.ts`               | Freedesktop Screenshot D-Bus portal for KDE Wayland (silent capture)                                                                                         |
-| `src/main/kb/analysis.ts`                           | KB personalization pipeline: serialize conversations, build analysis messages, extract learning preferences                                                  |
-| `src/main/kb/keywords.ts`                           | Pure keyword parsing, merging and per-category trimming                                                                                                      |
-| `src/main/kb/run.ts`                                | Folds conversations into the learned prompt/keywords; skips empty and look-up records                                                                        |
+| `src/main/kb/analysis.ts`                           | Serializes a conversation into curator material and builds the curator messages                                                                              |
+| `src/main/kb/run.ts`                                | Curates conversations into the memories document base; skips empty and look-up records                                                                       |
 | `src/main/kb/schedule.ts`                           | Pure pacing policy: debounce, batch size, backlog interval, retry backoff, startup delay                                                                     |
-| `src/main/kb/maintenance.ts`                        | Automatic background maintenance: subscriptions, single-flight queue, status push, reset                                                                     |
-| `src/main/kb/store.ts`                              | KB prompt/keyword/state files under `{userData}/kb/`                                                                                                         |
-| `src/main/kb/handlers.ts`                           | KB IPC handlers (`kb-load-prompt`, `kb-get-status`, `kb-analyze`, `kb-reanalyze`, `kb-reset`)                                                                |
+| `src/main/kb/maintenance.ts`                        | Automatic background maintenance: subscriptions, single-flight queue, status push                                                                            |
+| `src/main/kb/store.ts`                              | Maintenance state file under `{userData}/kb/`                                                                                                                |
+| `src/main/kb/handlers.ts`                           | KB IPC handlers (`kb-get-status`, `kb-analyze`, `kb-reanalyze`)                                                                                              |
 | `src/preload/index.ts`                              | `contextBridge` API — config, lookup, chat streaming, conversation persistence, KB channels                                                                  |
 | `src/renderer/src/Root.tsx`                         | Routes between `App` (main window) and `LookupApp` (popup) via `?role=lookup`                                                                                |
 | `src/renderer/src/App.tsx`                          | App shell: sidebar navigation with 5 views (Home, Chat, Knowledge Base, Look-Up Guide, Settings)                                                             |
@@ -105,7 +104,7 @@ Renderer (React 19)          Preload (contextBridge)        Main process (Node)
 | `conversation-*`                                                                   | Renderer ↔ Main | Conversation CRUD (save/load/delete/list/search) |
 | `load-model-config` / `save-model-config`                                          | Renderer ↔ Main | Provider config                                  |
 | `load-settings` / `save-settings`                                                  | Renderer ↔ Main | App settings (hotkey, tray, context, learning)   |
-| `kb-*`                                                                             | Renderer ↔ Main | Knowledge Base learning profile and analysis     |
+| `kb-*`                                                                             | Renderer ↔ Main | Automatic memory curation status and manual runs |
 
 ---
 
@@ -164,7 +163,7 @@ Configuration files live in `{userData}/config/`:
 - `settings.json` — `hotkey`, `closeToTray`, `lookupContextMode` (`none` / `clipboard` / `fullscreen-ocr`, default `none`) , `kbAutoMaintain` (default `true`) and `theme` (`dark` / `light` / `system`, default `dark`)
 
 Conversations are stored in `{userData}/conversations/{id}.json` with a `{id}.meta.json` sidecar.
-The learned profile lives in `{userData}/kb/`.
+Memories live in `{userData}/memories/`; curation pacing state lives in `{userData}/kb/`.
 
 ---
 
@@ -187,7 +186,7 @@ On Wayland, Electron's `clipboard.readText()` reads from the XWayland clipboard 
 - **Bring your own key (BYOK)** — API keys are stored locally in `{userData}/config/providers.json`, encrypted with the OS keychain via Electron `safeStorage` (plaintext only where the platform offers no keychain). Keys stay in the main process and are never sent to the UI.
 - **All data stays local** except the AI API requests themselves.
 - **Image attachments** go to your chat model's provider with the conversation, on every later message in that chat. They are stored unencrypted in the conversation file, like the rest of your chat history.
-- **KB personalization** appends a condensed learned profile to chat and lookup requests. Building that profile sends your chat history to the model you assign to the Knowledge Base Maintenance role; turn automatic learning off in Settings → General to stop it.
+- **Memory personalization** sends your notes' index and any notes the model opens to your chat and lookup models. Curating the notes sends your chat history to the model you assign to the Knowledge Base Maintenance role; turn automatic learning off in Settings → General to stop it.
 - **No telemetry, no analytics, no accounts.**
 
 ---
@@ -213,7 +212,7 @@ src/
   shared/         # Pure TypeScript: types, conversation model, prompts, expand logic
   main/           # Electron main process: lifecycle, IPC, config, OCR, KB, services
     lookup/       # Screen capture, OCR, popup window orchestration
-    kb/           # Knowledge Base analysis, keyword extraction, storage
+    kb/           # Background curation of the memories document base
     services/     # D-Bus portal integrations (Wayland)
   preload/        # contextBridge API surface
   renderer/       # React 19 UI

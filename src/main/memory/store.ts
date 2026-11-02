@@ -3,6 +3,7 @@ import type { Stats } from 'fs'
 import { dirname, join } from 'path'
 import { app } from 'electron'
 import { writeFileAtomicSync } from '../services/atomic-file'
+import { AUTO_LOADED_MEMORY_PREFIX, type AutoLoadedMemory } from '../../shared/prompts'
 
 /* ---- Memory document base ----
  * A tree of markdown files under `{userData}/memories/`, managed by the
@@ -16,9 +17,9 @@ export const MAX_MEMORY_FILE_CHARS = 32_000
 const MAX_LISTED_ENTRIES = 200
 const MAX_GREP_MATCHES = 100
 const MAX_GREP_LINE_CHARS = 200
-/** Goes into every system prompt, so it is held well below the per-file limit. */
-const MAX_INDEX_PROMPT_CHARS = 8_000
-const MEMORY_INDEX_FILE = 'index.md'
+/** These go into every system prompt, so they are held well below the per-file limit. */
+const MAX_AUTO_LOADED_FILE_CHARS = 8_000
+const MAX_AUTO_LOADED_TOTAL_CHARS = 16_000
 
 /** A refusal worded for the model; anything else is an unexpected filesystem failure. */
 export class MemoryError extends Error {}
@@ -141,15 +142,38 @@ export function readMemory(root: string, path: string): string {
   return `${content.slice(0, MAX_MEMORY_FILE_CHARS)}\n… file truncated at ${MAX_MEMORY_FILE_CHARS} characters`
 }
 
-/** The root index for the system prompt; empty when it is missing or unreadable. */
-export function readMemoryIndex(root: string): string {
-  try {
-    const index = readMemory(root, MEMORY_INDEX_FILE)
-    if (index.length <= MAX_INDEX_PROMPT_CHARS) return index
-    return `${index.slice(0, MAX_INDEX_PROMPT_CHARS)}\n… truncated; read the file for the rest, and shorten it`
-  } catch {
-    return ''
+/** Every file named `index*` directly in the root, for the system prompt. Symlinks are skipped. */
+export function readAutoLoadedMemories(root: string): AutoLoadedMemory[] {
+  const paths = readdirSync(root, { withFileTypes: true })
+    .filter(
+      (entry) =>
+        entry.isFile() &&
+        isMarkdownName(entry.name) &&
+        entry.name.toLowerCase().startsWith(AUTO_LOADED_MEMORY_PREFIX)
+    )
+    .map((entry) => entry.name)
+    .sort((a, b) => a.localeCompare(b))
+
+  const loaded: AutoLoadedMemory[] = []
+  let remaining = MAX_AUTO_LOADED_TOTAL_CHARS
+  for (const path of paths) {
+    const limit = Math.min(MAX_AUTO_LOADED_FILE_CHARS, remaining)
+    let content: string
+    try {
+      content = readMemory(root, path)
+    } catch {
+      continue
+    }
+    remaining -= Math.min(content.length, limit)
+    loaded.push({
+      path,
+      content:
+        content.length <= limit
+          ? content
+          : `${content.slice(0, limit)}\n… truncated; read the file for the rest, and shorten it`
+    })
   }
+  return loaded
 }
 
 function clipLine(line: string): string {

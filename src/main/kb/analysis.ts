@@ -1,11 +1,6 @@
-import {
-  KB_ANALYSIS_SYSTEM_PROMPT,
-  KB_KEYWORD_SYSTEM_PROMPT,
-  KB_MEMORY_SYSTEM_PROMPT
-} from '../../shared/prompts'
+import { KB_MEMORY_SYSTEM_PROMPT } from '../../shared/prompts'
 import type { ConversationRecord } from '../../shared/conversation'
 import type { ExpansionNode } from '../../shared/rich-text'
-import type { CategorizedKeyword } from '../../shared/models'
 import type { ProviderMessage } from '../provider'
 
 function collectExpansionContexts(
@@ -88,75 +83,12 @@ export function buildSingleMaterial(record: ConversationRecord): string {
   return parts.join('\n')
 }
 
-export function buildKbAnalysisMessages(
-  currentPrompt: string,
-  materialsText: string
-): ProviderMessage[] {
-  return [
-    {
-      role: 'system',
-      content: KB_ANALYSIS_SYSTEM_PROMPT
-    },
-    {
-      role: 'user',
-      content: currentPrompt
-        ? [
-            'Current personalization prompt:',
-            '',
-            currentPrompt,
-            '',
-            'Below are new conversation summaries. Rewrite/adjust the prompt above with new insights from these conversations:',
-            '',
-            materialsText
-          ].join('\n')
-        : [
-            "Analyze these conversation summaries and generate a personalization prompt describing the user's learning preferences:",
-            '',
-            materialsText
-          ].join('\n')
-    }
-  ]
-}
-
 export function buildKbMemoryMessages(materialsText: string): ProviderMessage[] {
   return [
     { role: 'system', content: KB_MEMORY_SYSTEM_PROMPT },
     {
       role: 'user',
       content: `Update the document base from this conversation:\n\n${materialsText}`
-    }
-  ]
-}
-
-export function buildKbKeywordMessages(
-  learningPreference: string,
-  existingKeywords: CategorizedKeyword[]
-): ProviderMessage[] {
-  const existingLines = existingKeywords.map(
-    (kw) => `${kw.keyword} [${kw.category}] (count: ${kw.count})`
-  )
-  const existingBlock =
-    existingLines.length > 0
-      ? [
-          '',
-          'Existing keywords (reuse where still applicable; increment count by re-emiting):',
-          ...existingLines
-        ].join('\n')
-      : ''
-
-  return [
-    {
-      role: 'system',
-      content: KB_KEYWORD_SYSTEM_PROMPT
-    },
-    {
-      role: 'user',
-      content: [
-        "Extract categorized keywords from this user's learning preference description:",
-        '',
-        learningPreference,
-        existingBlock
-      ].join('\n')
     }
   ]
 }

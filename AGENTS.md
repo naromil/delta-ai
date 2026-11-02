@@ -82,11 +82,10 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | `conversation-search`                     | Renderer → Main | Search chat titles/content; results extend meta with `matchedIn`/`snippet`                      |
 | `conversation-list-unfed` / `-kb-fed`     | Renderer → Main | KB model integration: list unfed; mark fed (+ auto-delete lookup source)                        |
 | `conversation-export`                     | Renderer → Main | Save a conversation as markdown (`{ok,path}` or `{ok:false,error}`; cancel is `'Canceled.'`)    |
-| `kb-load-prompt` / `kb-save-prompt`       | Renderer → Main | Read the learned prompt; save an edited prompt (+ return keywords)                              |
-| `kb-reset`                                | Renderer → Main | Delete prompt + keywords + run state; clears `kbFed`; auto rebuilds when enabled                |
-| `kb-analyze` / `kb-reanalyze`             | Renderer → Main | Manual maintenance over unfed conversations / the last N                                        |
-| `kb-get-status` / `kb-status`             | Renderer ↔ Main | Automatic learning status: invoke a snapshot; main pushes every change                          |
-| `memory-updated`                          | Main → Renderer | The document base changed (any writer); every window shows a transient indicator                |
+
+| `kb-analyze` / `kb-reanalyze` | Renderer → Main | Manual curator passes over unfed conversations / the last N |
+| `kb-get-status` / `kb-status` | Renderer ↔ Main | Automatic learning status: invoke a snapshot; main pushes every change |
+| `memory-updated` | Main → Renderer | The document base changed (any writer); every window shows a transient indicator |
 
 #### Module map
 
@@ -104,38 +103,38 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 
 ##### Main process (`src/main/`)
 
-| Module              | Path                          | Role                                                                                                                                                                             |
-| ------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| App lifecycle       | `index.ts`                    | Main window, tray, streaming IPC (chat-send/expand/cancel), lookup transfer, conversation IPC                                                                                    |
-| Conversation store  | `conversations.ts`            | CRUD on `{userData}/conversations/{id}.json` + `{id}.meta.json` sidecars; per-id write chain (`saveConversation`, `mutateConversation`); title+content search, KB-fed mark/reset |
-| Image support       | `image-support.ts`            | `modelImageSupport(role)` (catalog modalities, fail-open) + `fitImagesToSupport` (refuse current, drop history images)                                                           |
-| Conversation export | `conversation-export.ts`      | `renderConversationMarkdown` (expansions quoted inline) + `exportConversationToFile` (save dialog, atomic write)                                                                 |
-| Memory store        | `memory/store.ts`             | Shell-like ops confined to `{userData}/memories/` (`listMemories`, `readMemory`, `readMemoryIndex`, `grepMemories`, `writeMemory`, `editMemory`, `moveMemory`, `removeMemory`)   |
-| Memory tools        | `memory/tools.ts`             | `memory_*` AI SDK tools + `memoryAgentFor(role)` (assistant vs curator prompt, catalog gate, fail-open) + `memory-updated` broadcast                                             |
-| Context budget      | `context-budget.ts`           | `applyContextBudget(messages, role)`: trims chat sends to the cached model's window; fail-open on any missing input                                                              |
-| Streaming helpers   | `streaming.ts`                | IPC payload validation, `withKbPrompt`, `createChunkBatcher` (32 ms token deltas)                                                                                                |
-| Window guards       | `window-guards.ts`            | `guardWindowNavigation`: deny window.open / navigation, hand http(s) links to the browser                                                                                        |
-| Secret store        | `services/secret-store.ts`    | `sealSecret` / `openSecret` for API keys (`safeStorage`, `enc:v1:` prefix, plaintext fallback)                                                                                   |
-| Lookup transfer     | `transfer.ts`                 | `prepareTransferredState`: finalizes in-flight frames + folds screen context into a user turn                                                                                    |
-| Main window ref     | `main-window.ts`              | Module-scoped getter/setter for BrowserWindow ref; `clearMainWindow()` on `closed` (used by transfer)                                                                            |
-| Config              | `config.ts`                   | Settings/config I/O (atomic), hotkey registry (register-first save, startup fallback), Wayland                                                                                   |
-| Atomic writes       | `services/atomic-file.ts`     | Temp-file + rename writes (`writeFileAtomic[Sync]`) for config, KB and conversation files                                                                                        |
-| Provider dispatch   | `provider.ts`                 | `callProvider` + `callProviderStream(…, signal?)` (resolves role → connection → backend)                                                                                         |
-| Model re-exports    | `models/registries.ts`        | Re-exports shared types/registries so main imports stay stable without crossing renderer boundary                                                                                |
-| Config schema       | `models/config-schema.ts`     | Zod schema, v1→v3 migrations, repair of dangling roles/unknown providers                                                                                                         |
-| Model catalog       | `services/model-catalog.ts`   | models.dev fetch + 24h disk cache (`{userData}/cache/models-dev.json`) + `load-model-catalog` IPC                                                                                |
-| KB handlers         | `kb/handlers.ts`              | `kb-*` handlers; `kb-reset` queues the wipe behind running passes via `resetKbProfile`                                                                                           |
-| KB scheduler        | `kb/maintenance.ts`           | Automatic learning: debounce, batching, backoff, single-flight queue, `kb-status` push                                                                                           |
-| KB run pipeline     | `kb/run.ts`                   | `runKbAnalysis(metas, { markFed, signal })` — folds conversations into prompt + keywords                                                                                         |
-| KB pacing policy    | `kb/schedule.ts`              | Pure timing/batch decisions (debounce, backlog, retry backoff, startup delay)                                                                                                    |
-| KB store            | `kb/store.ts`                 | `prompt.txt` + `keywords.json` + `state.json` I/O (atomic); `resetKb` deletes all three                                                                                          |
-| Lookup orchestrator | `lookup/lookup.ts`            | Hotkey entry point (capture + OCR + create popup)                                                                                                                                |
-| Lookup popup window | `lookup/window.ts`            | BrowserWindow + grow animation + ref-counted ocr-image handler                                                                                                                   |
-| Capture + OCR       | `lookup/capture.ts`           | Screen capture + tesseract.js worker (bundled `eng` traineddata, never downloaded)                                                                                               |
-| Handlers            | `lookup/handlers.ts`          | Paste-text and paste-image handlers only (Ask/Expand moved to streaming IPC)                                                                                                     |
-| Session state       | `lookup/state.ts`             | LookupSession interface + helpers (sendToSession, notifySessionState, isSessionAlive)                                                                                            |
-| Wayland shortcut    | `services/global-shortcut.ts` | XDG GlobalShortcuts portal                                                                                                                                                       |
-| KDE screenshot      | `services/screen-capture.ts`  | Screenshot portal (silent)                                                                                                                                                       |
+| Module              | Path                          | Role                                                                                                                                                                                  |
+| ------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| App lifecycle       | `index.ts`                    | Main window, tray, streaming IPC (chat-send/expand/cancel), lookup transfer, conversation IPC                                                                                         |
+| Conversation store  | `conversations.ts`            | CRUD on `{userData}/conversations/{id}.json` + `{id}.meta.json` sidecars; per-id write chain (`saveConversation`, `mutateConversation`); title+content search, KB-fed mark            |
+| Image support       | `image-support.ts`            | `modelImageSupport(role)` (catalog modalities, fail-open) + `fitImagesToSupport` (refuse current, drop history images)                                                                |
+| Conversation export | `conversation-export.ts`      | `renderConversationMarkdown` (expansions quoted inline) + `exportConversationToFile` (save dialog, atomic write)                                                                      |
+| Memory store        | `memory/store.ts`             | Shell-like ops confined to `{userData}/memories/` (`listMemories`, `readMemory`, `readAutoLoadedMemories`, `grepMemories`, `writeMemory`, `editMemory`, `moveMemory`, `removeMemory`) |
+| Memory tools        | `memory/tools.ts`             | `memory_*` AI SDK tools + `memoryAgentFor(role)` (assistant vs curator prompt, catalog gate, fail-open) + `memory-updated` broadcast                                                  |
+| Context budget      | `context-budget.ts`           | `applyContextBudget(messages, role)`: trims chat sends to the cached model's window; fail-open on any missing input                                                                   |
+| Streaming helpers   | `streaming.ts`                | IPC payload validation, `withInstructions`, `createChunkBatcher` (32 ms token deltas)                                                                                                 |
+| Window guards       | `window-guards.ts`            | `guardWindowNavigation`: deny window.open / navigation, hand http(s) links to the browser                                                                                             |
+| Secret store        | `services/secret-store.ts`    | `sealSecret` / `openSecret` for API keys (`safeStorage`, `enc:v1:` prefix, plaintext fallback)                                                                                        |
+| Lookup transfer     | `transfer.ts`                 | `prepareTransferredState`: finalizes in-flight frames + folds screen context into a user turn                                                                                         |
+| Main window ref     | `main-window.ts`              | Module-scoped getter/setter for BrowserWindow ref; `clearMainWindow()` on `closed` (used by transfer)                                                                                 |
+| Config              | `config.ts`                   | Settings/config I/O (atomic), hotkey registry (register-first save, startup fallback), Wayland                                                                                        |
+| Atomic writes       | `services/atomic-file.ts`     | Temp-file + rename writes (`writeFileAtomic[Sync]`) for config, KB and conversation files                                                                                             |
+| Provider dispatch   | `provider.ts`                 | `callProvider` + `callProviderStream(…, signal?)` (resolves role → connection → backend)                                                                                              |
+| Model re-exports    | `models/registries.ts`        | Re-exports shared types/registries so main imports stay stable without crossing renderer boundary                                                                                     |
+| Config schema       | `models/config-schema.ts`     | Zod schema, v1→v3 migrations, repair of dangling roles/unknown providers                                                                                                              |
+| Model catalog       | `services/model-catalog.ts`   | models.dev fetch + 24h disk cache (`{userData}/cache/models-dev.json`) + `load-model-catalog` IPC                                                                                     |
+| KB handlers         | `kb/handlers.ts`              | `kb-*` handlers: status and manual curator passes                                                                                                                                     |
+| KB scheduler        | `kb/maintenance.ts`           | Automatic learning: debounce, batching, backoff, single-flight queue, `kb-status` push                                                                                                |
+| KB run pipeline     | `kb/run.ts`                   | `runKbAnalysis(metas, { markFed, signal })` — curates conversations into the document base                                                                                            |
+| KB pacing policy    | `kb/schedule.ts`              | Pure timing/batch decisions (debounce, backlog, retry backoff, startup delay)                                                                                                         |
+| KB store            | `kb/store.ts`                 | `state.json` I/O (atomic): pacing and last error                                                                                                                                      |
+| Lookup orchestrator | `lookup/lookup.ts`            | Hotkey entry point (capture + OCR + create popup)                                                                                                                                     |
+| Lookup popup window | `lookup/window.ts`            | BrowserWindow + grow animation + ref-counted ocr-image handler                                                                                                                        |
+| Capture + OCR       | `lookup/capture.ts`           | Screen capture + tesseract.js worker (bundled `eng` traineddata, never downloaded)                                                                                                    |
+| Handlers            | `lookup/handlers.ts`          | Paste-text and paste-image handlers only (Ask/Expand moved to streaming IPC)                                                                                                          |
+| Session state       | `lookup/state.ts`             | LookupSession interface + helpers (sendToSession, notifySessionState, isSessionAlive)                                                                                                 |
+| Wayland shortcut    | `services/global-shortcut.ts` | XDG GlobalShortcuts portal                                                                                                                                                            |
+| KDE screenshot      | `services/screen-capture.ts`  | Screenshot portal (silent)                                                                                                                                                            |
 
 ##### Renderer (`src/renderer/src/`)
 
@@ -160,7 +159,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | Search           | `components/conversation/ConversationSearch.tsx`           | Ctrl/Cmd+K modal: search titles + messages, snippet, load/delete, errors                                             |
 | Settings         | `views/settings/Settings.tsx`                              | 3-tab settings orchestrator                                                                                          |
 | Memory indicator | `components/MemoryIndicator.tsx`                           | Transient "Memory updated" pill in both windows, driven by `memory-updated`                                          |
-| Views            | `views/home/`, `views/knowledge/`, `views/lookup-guide/`   | Dashboard (recent conversations + learned tags) and placeholder views                                                |
+| Views            | `views/home/`, `views/knowledge/`, `views/lookup-guide/`   | Dashboard (recent conversations) and placeholder views                                                               |
 
 #### What to touch when
 
@@ -192,9 +191,9 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | Rename / regenerate a conversation     | `useChatStreaming.ts` (`renameConversation`/`regenerate`) + `Conversation.tsx`, `Turn.tsx`             |
 | Export a conversation                  | `conversation-export.ts` + `Conversation.tsx` (button states), preload `exportConversation`            |
 | Trim chats to the model context window | `shared/context-budget.ts` (pure) + `main/context-budget.ts` (catalog lookup, fail-open)               |
-| KB prompt / fed flags                  | `kb/handlers.ts` + `conversations.ts` (`resetKbFedFlags`) + `KnowledgeView.tsx`                        |
+| KB view / fed flags                    | `kb/handlers.ts` + `conversations.ts` (`markConversationKbFed`) + `KnowledgeView.tsx`                  |
 | Automatic learning pacing              | `kb/schedule.ts` (pure) + `kb/maintenance.ts` (timers, queue, status)                                  |
-| What gets folded into the profile      | `kb/run.ts` (`runKbAnalysis`) + `kb/analysis.ts` (material/messages)                                   |
+| What the curator is given              | `kb/run.ts` (`runKbAnalysis`) + `kb/analysis.ts` (material/messages)                                   |
 | Stop/retry generation                  | `useChatStreaming.ts` (`stop`/`retry`) + `Conversation.tsx`, `Turn.tsx`                                |
 | Edit and resend a user message         | `useChatStreaming.ts` (`editMessage` → `truncateAndResend`) + `Turn.tsx`, `Conversation.tsx`           |
 | Delete the open conversation           | `useChatStreaming.ts` (`deleteConversation`) + `Conversation.tsx` toolbar                              |
@@ -312,8 +311,11 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   `chat-response { text: partial, cancelled: true }`, a cancelled expand with
   `chat-expand-chunk { text: partial, done: true, cancelled: true }`. The renderer leaves a
   settled request out of its request book, so late chunks for it are no-ops.
-- **Both roles get the KB prompt.** `chat-send` appends the learned profile (`withKbPrompt`) to
-  the system message for chat and lookup alike; `kb-maintenance` calls are untouched.
+- **The document base is the only personalization.** There is no learned prompt or keyword list:
+  chat and lookup learn about the user solely through the memory instructions and tools. A model
+  without tool support therefore gets no personalization. Learning preferences live in the root
+  `index-learning.md`, which the curator maintains. `migrateLegacyKbPrompt` moves an older
+  install's `kb/prompt.txt` there once at startup and renames the old file `prompt.migrated.txt`.
 - **A document base about the user lives in `{userData}/memories/`** (`~/.config/delta-ai/memories/` on Linux). It is a nested tree of
   markdown files managed through the `memory_*` function tools (ls, cat, grep, write, edit, mkdir, mv,
   rm). These are not a real shell and must not become one: the model can receive untrusted screen
@@ -321,22 +323,22 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   `..`, absolute paths and symlinks, and only touches `.md` files.
   - **Writers.** The background curator is the primary writer: `runKbAnalysis` runs one tool pass per
     conversation through the `kb-maintenance` role (`KB_MEMORY_SYSTEM_PROMPT`, deliberately
-    aggressive) _before_ folding `prompt.txt`, so a failed pass leaves the conversation unfed without
-    double-folding the prompt. Chat and lookup hold the same tools, but their prompt limits writes to
-    explicit requests. Expand gets no tools.
-  - **`index.md`.** The root `index.md` is injected into every memory prompt (capped at 8k chars), so
-    it is always read without a tool call; the rest of the tree is listed by path and read on demand.
-    The prompts ask for directory indexes and collection files.
+    aggressive), so a failed pass leaves the conversation unfed. Chat and lookup hold the same tools,
+    but their prompt limits writes to explicit requests. Expand gets no tools.
+  - **Auto-loading.** A file directly in the root whose name starts with `index` is injected into
+    every memory prompt (8k chars per file, 16k total). No other file ever is, including a nested
+    `index.md`: the rest of the tree is listed by path and read on demand. The prompts state this rule
+    to the agent (`AUTO_LOADED_MEMORY_PREFIX`), and still recommend subdirectory indexes and collection files.
   - **Transport.** Tools and instructions reach `callProviderStream` as one `AgentTools` value on the
     same OpenAI-compatible route for every provider, so they are not provider tools. The loop stops
     at `maxSteps` (10, curator 25), and the last step must answer in text. A model the catalog marks
     as tool-less gets no tools; for an unknown model, a 400/404/422 before any output retries once
-    without tools or their instructions, in which case the curator writes nothing.
+    without tools or their instructions. The curator sets `toolsRequired` instead: either case fails
+    the pass and surfaces in `kb-status`, so a conversation is never marked fed with nothing written.
   - **Indicator.** A successful mutation broadcasts `memory-updated` to every window, and
     `MemoryIndicator` shows a transient pill. It is not on a turn because curator writes happen with
-    no reply on screen. `kb-reset` does not delete the document base.
-- **Chat sends are context-budgeted; lookup sends are not.** After the KB prompt is inserted,
-  `applyContextBudget(messages, 'chat')` drops the oldest non-system messages until the estimate
+    no reply on screen.
+- **Chat sends are context-budgeted; lookup sends are not.** `applyContextBudget(messages, 'chat')` drops the oldest non-system messages until the estimate
   fits 85% of the model's context window minus its output reserve. It is fail-open: an unassigned
   role, unknown model, missing `contextWindow`, or any error returns the messages untouched.
   Quality of the current turn must never depend on catalog availability.
@@ -404,19 +406,12 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   idle → `Exporting…` → `Saved` (2s) or an inline error; the `'Canceled.'` error is a no-op.
 - **KB maintenance is automatic.** `kb/maintenance.ts` subscribes to `onConversationSaved`
   (`conversations.ts`) and `onAppConfigChanged` (`config.ts`). A save starts a 20s-debounced
-  pass that folds at most 4 newest unfed chat conversations into the document base and `prompt.txt` through the
+  pass that curates at most 4 newest unfed chat conversations into the document base through the
   `kb-maintenance` role; a backlog continues every 45s, failures back off 2m → 30m, and
   `kb/state.json` persists pacing/error state. All runs (manual or automatic) share one queue,
   so writes never interleave. Nothing runs without a `kb-maintenance` model, and
   `settings.json → kbAutoMaintain` (default true, Settings → General) stops it. Status is pushed
-  as `kb-status`; the Knowledge view renders it, and the Home view refreshes its tags.
-- **KB reset (`kb-reset`) is queued behind running passes.** `resetKbProfile()` aborts the
-  in-flight pass, deletes `{userData}/kb/prompt.txt` + `keywords.json` + `state.json`, and clears
-  `kbFed` on chat records via `resetKbFedFlags()` (lookup records are untouched). Conversation
-  history stays on disk, so automatic learning rebuilds the profile from it when enabled;
-  the Knowledge view refreshes its status and its confirm text says history is retained.
-  `kb-save-prompt` writes an edited prompt atomically; the next automatic pass treats it as the
-  baseline to refine rather than replacing it from scratch.
+  as `kb-status`; the Knowledge view renders it.
 - **Markdown is rendered, never flattened for display.** `Markdown.tsx` runs
   `remark-parse` + `remark-gfm` → `mdast-util-to-hast` → `hast-util-to-jsx-runtime`. Every
   mdast text node becomes `<span data-src={absoluteOffset}>text</span>`: that span _is_ the

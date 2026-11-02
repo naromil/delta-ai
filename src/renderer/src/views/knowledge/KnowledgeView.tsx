@@ -29,53 +29,36 @@ function describeStatus(status: KbMaintenanceStatus | null): string {
     const pending = `${status.pending} conversation${status.pending === 1 ? '' : 's'}`
     return `${pending} queued for automatic learning`
   }
-  if (status.lastLearnedAt) return `Learning profile updated ${formatElapsed(status.lastLearnedAt)}`
-  return 'Automatic learning is on — the profile builds as you chat.'
+  if (status.lastLearnedAt) return `Memories updated ${formatElapsed(status.lastLearnedAt)}`
+  return 'Automatic learning is on — memories build as you chat.'
 }
 
 function KnowledgeView(): React.JSX.Element {
-  const [prompt, setPrompt] = useState<string>('')
-  const [savedPrompt, setSavedPrompt] = useState<string>('')
   const [status, setStatus] = useState<KbMaintenanceStatus | null>(null)
   const [totalCount, setTotalCount] = useState<number>(0)
   const [loadingAnalyze, setLoadingAnalyze] = useState<boolean>(false)
   const [loadingReanalyze, setLoadingReanalyze] = useState<boolean>(false)
-  const [loadingSave, setLoadingSave] = useState<boolean>(false)
-  const [loadingReset, setLoadingReset] = useState<boolean>(false)
   const [error, setError] = useState<string | null>(null)
   const [lastResult, setLastResult] = useState<string | null>(null)
   const [showReanalyzeInput, setShowReanalyzeInput] = useState<boolean>(false)
   const [reanalyzeCount, setReanalyzeCount] = useState<string>('')
   const reanalyzeInputRef = useRef<HTMLInputElement>(null)
-  const promptRef = useRef(prompt)
-  const savedPromptRef = useRef(savedPrompt)
   const statusVersionRef = useRef(0)
-
-  useEffect(() => {
-    promptRef.current = prompt
-  }, [prompt])
-
-  useEffect(() => {
-    savedPromptRef.current = savedPrompt
-  }, [savedPrompt])
 
   useEffect(() => {
     let cancelled = false
     const version = statusVersionRef.current
     async function load(): Promise<void> {
       try {
-        const [{ prompt: p }, all, kbStatus] = await Promise.all([
-          window.api.kbLoadPrompt(),
+        const [all, kbStatus] = await Promise.all([
           window.api.listConversations(),
           window.api.kbGetStatus()
         ])
         if (cancelled) return
         setTotalCount(all.length)
-        // A pushed status (and its prompt read) landed while this snapshot was
-        // in flight; the subscription owns the display from now on.
+        // A pushed status landed while this snapshot was in flight; the
+        // subscription owns the display from now on.
         if (statusVersionRef.current !== version) return
-        setPrompt(p)
-        setSavedPrompt(p)
         setStatus(kbStatus)
       } catch {
         // ignore
@@ -94,19 +77,6 @@ function KnowledgeView(): React.JSX.Element {
       if (cancelled) return
       statusVersionRef.current += 1
       setStatus(next)
-
-      // A pass rewrites prompt.txt. Adopt it unless the user is editing; re-check
-      // after the read, since typing may start while it is in flight.
-      if (promptRef.current !== savedPromptRef.current) return
-      window.api
-        .kbLoadPrompt()
-        .then(({ prompt: learned }) => {
-          if (cancelled) return
-          if (promptRef.current !== savedPromptRef.current) return
-          setPrompt(learned)
-          setSavedPrompt(learned)
-        })
-        .catch(() => undefined)
     })
     return () => {
       cancelled = true
@@ -129,8 +99,6 @@ function KnowledgeView(): React.JSX.Element {
     setLastResult(null)
     try {
       const result = await window.api.kbAnalyze()
-      setPrompt(result.newPrompt)
-      setSavedPrompt(result.newPrompt)
       if (result.conversationsAnalyzed === 0) {
         setLastResult('No unfed conversations to analyze.')
       } else {
@@ -161,8 +129,6 @@ function KnowledgeView(): React.JSX.Element {
     setLastResult(null)
     try {
       const result = await window.api.kbReanalyze(reanalyzeLimit)
-      setPrompt(result.newPrompt)
-      setSavedPrompt(result.newPrompt)
       if (result.conversationsAnalyzed === 0) {
         setLastResult('No conversations found.')
       } else {
@@ -176,51 +142,9 @@ function KnowledgeView(): React.JSX.Element {
     }
   }
 
-  const handleSavePrompt = async (): Promise<void> => {
-    setLoadingSave(true)
-    setError(null)
-    setLastResult(null)
-    try {
-      const result = await window.api.kbSavePrompt(prompt)
-      setPrompt(result.prompt)
-      setSavedPrompt(result.prompt)
-      setLastResult('Prompt saved.')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setLoadingSave(false)
-    }
-  }
-
-  const handleReset = async (): Promise<void> => {
-    if (
-      !window.confirm(
-        'Delete the generated prompt and keywords? Conversation history is kept, and automatic ' +
-          'learning rebuilds the profile from it when enabled.'
-      )
-    ) {
-      return
-    }
-    setLoadingReset(true)
-    setError(null)
-    setLastResult(null)
-    try {
-      const result = await window.api.kbReset()
-      setPrompt(result.prompt)
-      setSavedPrompt(result.prompt)
-      await refreshCounts()
-      setLastResult('Knowledge base reset. Conversations are ready to be learned again.')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setLoadingReset(false)
-    }
-  }
-
-  const busy = loadingAnalyze || loadingReanalyze || loadingSave || loadingReset
+  const busy = loadingAnalyze || loadingReanalyze
   const autoRunning = status?.state === 'running'
   const pendingCount = status?.pending ?? 0
-  const promptDirty = prompt !== savedPrompt
 
   return (
     <div className="view-shell">
@@ -290,39 +214,11 @@ function KnowledgeView(): React.JSX.Element {
         )}
         {lastResult && <p className="kb-result">{lastResult}</p>}
 
-        <div className="kb-section">
-          <div className="kb-section-header">
-            <div>
-              <h3 className="settings-section-title">Personalized Lookup Prompt</h3>
-              <p className="kb-section-desc">
-                Learned from your conversation history and applied to every look-up. It refines
-                itself in the background; edits saved here are used as the baseline for the next
-                update.
-              </p>
-            </div>
-            <div className="kb-buttons">
-              <button
-                className="btn btn--primary"
-                disabled={busy || !promptDirty}
-                onClick={handleSavePrompt}
-              >
-                {loadingSave ? 'Saving...' : 'Save prompt'}
-              </button>
-              <button className="btn btn--danger" disabled={busy} onClick={handleReset}>
-                {loadingReset ? 'Resetting...' : 'Reset'}
-              </button>
-            </div>
-          </div>
-          <textarea
-            className="settings-input kb-prompt-textarea"
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            rows={12}
-            placeholder="Your learning profile appears here after a few conversations..."
-            spellCheck={false}
-          />
-          {promptDirty && <p className="kb-dirty">Unsaved changes</p>}
-        </div>
+        <p className="kb-section-desc">
+          Delta AI keeps private markdown notes about you and uses them to personalize chats and
+          look-ups. Analyze now curates chats still in the queue; Re-Analyze goes over recent chats
+          again.
+        </p>
       </div>
     </div>
   )

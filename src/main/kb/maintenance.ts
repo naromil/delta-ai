@@ -2,7 +2,7 @@ import { BrowserWindow } from 'electron'
 import type { ConversationMeta, ConversationRecord } from '../../shared/conversation'
 import type { KbMaintenanceStatus, KbRunResult } from '../../shared/kb'
 import { loadAppSettings, onAppConfigChanged, resolveRole } from '../config'
-import { listUnfedConversations, onConversationSaved, resetKbFedFlags } from '../conversations'
+import { listUnfedConversations, onConversationSaved } from '../conversations'
 import { runKbAnalysis } from './run'
 import {
   AUTO_BACKLOG_INTERVAL_MS,
@@ -11,15 +11,14 @@ import {
   selectAutoBatch,
   startupDelayMs
 } from './schedule'
-import { loadKbState, resetKb, saveKbState } from './store'
+import { loadKbState, saveKbState } from './store'
 
 /**
  * Automatic Knowledge Base maintenance.
  *
- * The profile learns itself: every saved chat conversation is a signal, a quiet
- * period after the last write starts a bounded pass, and the learned prompt is
- * rewritten in the background. Look-ups read `prompt.txt` per request, so a
- * finished pass takes effect immediately without any user action.
+ * The document base curates itself: every saved chat conversation is a signal, and
+ * a quiet period after the last write starts a bounded pass. Chat and look-up read
+ * the base per request, so a finished pass takes effect without any user action.
  *
  * Pacing rules:
  * - runs are serialized through one queue, shared with the manual Analyze buttons;
@@ -37,7 +36,7 @@ let queue: Promise<unknown> = Promise.resolve()
 let unsubscribeConversations: (() => void) | null = null
 let unsubscribeConfig: (() => void) | null = null
 let activeRunController: AbortController | null = null
-/** Invalidates startup probes and queue scans that straddle a stop or reset. */
+/** Invalidates startup probes and queue scans that straddle a stop. */
 let lifecycle = 0
 
 /* ---- Queue ---- */
@@ -141,7 +140,7 @@ async function runAutoPass(): Promise<void> {
 
   try {
     const unfed = await listUnfedConversations()
-    // A reset started while the queue was being read; it schedules its own rebuild.
+    // A stop landed while the queue was being read.
     if (generation !== lifecycle) return
     pendingCount = unfed.filter((meta) => meta.source === 'chat' && !meta.kbFed).length
     const batch = selectAutoBatch(unfed)
@@ -159,8 +158,6 @@ async function runAutoPass(): Promise<void> {
 
     const now = new Date().toISOString()
     pendingCount = await countPending()
-    // The reset's wipe may have run while the queue was recounted; never write
-    // pacing state back over it.
     if (runController.signal.aborted || generation !== lifecycle) return
     // A manual pass may have finished while this pass waited in the queue; keep
     // its learning event instead of restoring the snapshot taken before it.
@@ -190,8 +187,6 @@ async function runAutoPass(): Promise<void> {
   } finally {
     if (activeRunController === controller) activeRunController = null
     running = false
-    // An aborted pass must not publish a snapshot of the profile that a reset is
-    // about to delete; `resetKbProfile` publishes the post-wipe state instead.
     if (generation === lifecycle && !controller?.signal.aborted) publishStatus()
   }
 }
@@ -292,33 +287,4 @@ export async function recordManualKbRun(conversationsAnalyzed: number): Promise<
     })
   }
   await refreshStatus()
-}
-
-/* ---- Reset ---- */
-
-/**
- * Reset wipes the profile while a pass may still be writing it. The wipe runs
- * inside the same queue as learning passes and aborts the in-flight one, so a
- * late response cannot resurrect the deleted prompt.
- */
-export async function resetKbProfile(): Promise<void> {
-  // Invalidate any pass that is still scanning the queue: the wipe below runs
-  // first, and the reset schedules its own rebuild.
-  lifecycle++
-  if (timer !== undefined) {
-    clearTimeout(timer)
-    timer = undefined
-  }
-  activeRunController?.abort()
-
-  await runExclusive(async () => {
-    resetKb()
-    // Conversations stay on disk; clearing kbFed lets the profile be rebuilt.
-    await resetKbFedFlags()
-  })
-
-  await refreshStatus()
-  if (!loadAppSettings().kbAutoMaintain) return
-  if (!resolveRole('kb-maintenance')) return
-  schedule(AUTO_DEBOUNCE_MS)
 }

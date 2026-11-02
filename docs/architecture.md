@@ -32,7 +32,7 @@ Both windows talk to the same main process. Everything the app knows about the u
 
 | Module                                                            | Responsibility                                                                                                                                                                                                                                                                                                                                               |
 | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `src/shared/models.ts`                                            | Provider/role registries, `Connection`, `RoleAssignment`, `ModelConfig`, `ProviderMessage`, keyword types                                                                                                                                                                                                                                                    |
+| `src/shared/models.ts`                                            | Provider/role registries, `Connection`, `RoleAssignment`, `ModelConfig`, `ProviderMessage`                                                                                                                                                                                                                                                                   |
 | `src/shared/conversation.ts`                                      | `ConversationState` / `Turn` / `ConversationRecord`: a turn is markdown `content` plus `expansions: ExpansionNode[]`. `persistableTurns`, `serializeForChat`, `buildConversationTitle`, and `migrateConversationRecord` (the load-time legacy boundary)                                                                                                      |
 | `src/shared/rich-text.ts`                                         | The rich-text model and all pure operations: `ExpansionNode` (absolute `[start,end)` anchors, markdown `answer`, `status`, `folded`, nested `children`), `validateInsertion`, `insertExpansion(InTurns)`, `updateExpansion`, `setExpansionFolded`, `findExpansionIn*`, `maxExpansionId`, `expansionMessageInput`, `flattenMarkdown`, `migrateLegacySegments` |
 | `src/shared/prompts.ts`                                           | Every LLM-facing string: system prompts, screen-context template, lookup default, expand instructions, KB prompts                                                                                                                                                                                                                                            |
@@ -48,19 +48,18 @@ Both windows talk to the same main process. Everything the app knows about the u
 | `src/main/models/config-schema.ts`                                | Zod validation, schema migrations (v1→v3), repair of dangling roles/unknown providers; empty `connectionId` → `null` (unassigned)                                                                                                                                                                                                                            |
 | `src/main/services/model-catalog.ts`                              | models.dev catalog fetch, 24h disk cache, offline fallback, `load-model-catalog` IPC                                                                                                                                                                                                                                                                         |
 | `src/shared/model-catalog.ts`                                     | `CatalogModel`/`ModelCatalog` types, provider-id mapping, flattening and formatting helpers                                                                                                                                                                                                                                                                  |
-| `src/main/conversations.ts`                                       | Conversation record CRUD (atomic) under `{userData}/conversations/`: body + `{id}.meta.json` sidecar, per-id write chain, `saveConversation` / `mutateConversation` (read-modify-write in the same chain), title + content search, KB-fed marking, `resetKbFedFlags`, save notifications                                                                     |
+| `src/main/conversations.ts`                                       | Conversation record CRUD (atomic) under `{userData}/conversations/`: body + `{id}.meta.json` sidecar, per-id write chain, `saveConversation` / `mutateConversation` (read-modify-write in the same chain), title + content search, KB-fed marking, save notifications                                                                                        |
 | `src/main/lookup/lookup.ts`                                       | Hotkey entry point: clipboard → OCR fallback → popup session                                                                                                                                                                                                                                                                                                 |
 | `src/main/lookup/capture.ts`                                      | Screen capture (portal-first on KDE Wayland) and the single serialized tesseract.js worker                                                                                                                                                                                                                                                                   |
 | `src/main/lookup/window.ts`                                       | Popup `BrowserWindow`, `?role=lookup` load, grow animation, per-window channels, one-time OCR IPC handler                                                                                                                                                                                                                                                    |
 | `src/main/lookup/state.ts`                                        | `LookupSession`, `notifySessionState`, `applyOcrResult`, liveness helpers                                                                                                                                                                                                                                                                                    |
 | `src/main/lookup/handlers.ts`                                     | Paste-text / paste-image handlers                                                                                                                                                                                                                                                                                                                            |
-| `src/main/kb/analysis.ts`                                         | Structured conversation material + analysis/keyword message construction                                                                                                                                                                                                                                                                                     |
-| `src/main/kb/keywords.ts`                                         | Pure keyword parsing, merging, per-category trimming                                                                                                                                                                                                                                                                                                         |
-| `src/main/kb/run.ts`                                              | `runKbAnalysis(metas, { markFed, signal })`: folds conversations into the prompt and keywords, persisting per conversation, skipping empty/look-up records                                                                                                                                                                                                   |
+| `src/main/kb/analysis.ts`                                         | Structured conversation material + curator message construction                                                                                                                                                                                                                                                                                              |
+| `src/main/kb/run.ts`                                              | `runKbAnalysis(metas, { markFed, signal })`: curates conversations into the document base, marking each fed as it finishes, skipping empty/look-up records                                                                                                                                                                                                   |
 | `src/main/kb/schedule.ts`                                         | Pure pacing policy: debounce, batch size, backlog interval, exponential retry, startup delay                                                                                                                                                                                                                                                                 |
 | `src/main/kb/maintenance.ts`                                      | Automatic maintenance loop: save/config subscriptions, single-flight queue, bounded passes, backoff, `kb-status` fan-out, reset that aborts a running pass                                                                                                                                                                                                   |
-| `src/main/kb/store.ts`                                            | `{userData}/kb/prompt.txt`, `keywords.json`, `state.json` I/O (atomic); `resetKb` deletes all three                                                                                                                                                                                                                                                          |
-| `src/main/kb/handlers.ts`                                         | `kb-load-prompt`, `kb-save-prompt`, `kb-reset`, `kb-get-status`, manual `kb-analyze`/`kb-reanalyze` (queued with the automatic loop)                                                                                                                                                                                                                         |
+| `src/main/kb/store.ts`                                            | `{userData}/kb/state.json` I/O (atomic)                                                                                                                                                                                                                                                                                                                      |
+| `src/main/kb/handlers.ts`                                         | `kb-get-status`, manual `kb-analyze`/`kb-reanalyze` (queued with the automatic loop)                                                                                                                                                                                                                                                                         |
 | `src/main/services/global-shortcut.ts`                            | `org.freedesktop.portal.GlobalShortcuts` over D-Bus                                                                                                                                                                                                                                                                                                          |
 | `src/main/services/screen-capture.ts`                             | `org.freedesktop.portal.Screenshot` over D-Bus (silent capture)                                                                                                                                                                                                                                                                                              |
 | `src/renderer/src/hooks/useChatStreaming.ts`                      | Owns `ConversationState` and the request book; send/stop/retry/regenerate/rename/newChat/load actions; auto-saves through `hooks/chat/persistence.ts`                                                                                                                                                                                                        |
@@ -84,8 +83,8 @@ Both windows talk to the same main process. Everything the app knows about the u
    decides whether a context is captured at all.
 3. `window.api.chatSend({ messages, requestId, role })` → `chat-send` in `index.ts`.
 4. Main validates the payload (`streaming.ts`: `parseProviderMessages`, `parseStreamRole` —
-   only `chat`/`lookup` are reachable) and, for both roles, appends the KB personalization
-   prompt to the system message (`withKbPrompt`) before dispatch. Images are validated here too
+   only `chat`/`lookup` are reachable). Personalization comes from the memory instructions and
+   tools attached at dispatch (`memoryAgentFor`), which always include root memory files named `index*`. Images are validated here too
    (`isImageInput`), and `fitImagesToSupport` refuses or drops them on a text-only model first.
 5. For `role: 'chat'` only, `applyContextBudget(messages, 'chat')` drops the oldest non-system
    messages (never the last) until a 4-chars-per-token estimate fits `budgetFor` of the cached
@@ -182,7 +181,7 @@ record, and resets `expansionIdCounter` past the max imported id.
 - Writes for one id run through one promise chain. `saveConversation(record)` writes the whole
   record; `mutateConversation(id, mutate)` reads, applies the mutator and writes in the same
   chain, so a KB-fed mark or reset cannot overwrite a newer autosave with a stale body. Returning
-  `false` from the mutator skips the write. KB-fed marking and `resetKbFedFlags` use it.
+  `false` from the mutator skips the write. KB-fed marking uses it.
 - A rename is metadata-only: the title changes, `updatedAt` does not, so the recents order is
   stable. Fold/unfold/dismiss save without touching content recency for the same reason.
 - Auto-save runs on response completion (including stopped/partial responses), errors, expand
@@ -190,12 +189,13 @@ record, and resets `expansionIdCounter` past the max imported id.
   assistant placeholders are dropped, and conversations with no persistable turns are not
   written. Error turns stay on disk but are omitted by `serializeForChat`, which also drops
   blank assistant placeholders.
-- The learning profile maintains itself. `onConversationSaved` in `conversations.ts` notifies
+- The memories document base maintains itself. `onConversationSaved` in `conversations.ts` notifies
   `kb/maintenance.ts` after every successful write; a 20s debounce after the last chat activity
-  starts a bounded pass (`AUTO_BATCH_SIZE`, newest first, chat only). The pass folds each
-  conversation into `prompt.txt` through the `kb-maintenance` role and marks it fed **per
+  starts a bounded pass (`AUTO_BATCH_SIZE`, newest first, chat only). The pass curates each
+  conversation into `{userData}/memories/` through the `kb-maintenance` role and marks it fed **per
   conversation**, so an interrupted run keeps its progress. Empty conversations and standalone
-  look-ups are marked fed and skipped rather than retried forever.
+  look-ups are marked fed and skipped rather than retried forever. A model that cannot use tools
+  fails the pass, leaving the conversation unfed.
 - Pacing lives in `kb/schedule.ts`: 45s between passes while a backlog remains, 10-minute
   interval across restarts, exponential backoff (2m → 30m) after a failure. Every run is
   serialized through one queue shared with the manual buttons, so two passes never interleave
@@ -205,16 +205,9 @@ record, and resets `expansionIdCounter` past the max imported id.
   Saving settings or the model config re-checks the queue, so enabling the feature or assigning
   the model takes effect without waiting for the next chat.
 - `kb-status` is pushed to every window on run start/finish and on request through
-  `kb-get-status`; the Knowledge view renders it and adopts a newly learned prompt unless the
-  user has unsaved edits, and the Home view refreshes its keyword tags when a pass finishes.
+  `kb-get-status`; the Knowledge view renders it.
 - `kb-analyze` runs the same pipeline over all unfed conversations; `kb-reanalyze(n)` reprocesses
   the `n` most recent without marking them fed.
-- `kb-save-prompt` stores a user-edited prompt, which the next automatic pass treats as its
-  baseline. `kb-reset` runs inside the maintenance queue, aborts an in-flight pass (and
-  invalidates one still selecting its batch), deletes `prompt.txt`, `keywords.json` and
-  `state.json`, and clears `kbFed` on chat records via `resetKbFedFlags()` (lookup records are
-  untouched), so the retained history can be learned again.
-- The resulting prompt is injected into every lookup request; keywords are stored for future use.
 
 ---
 
@@ -240,7 +233,6 @@ record, and resets `expansionIdCounter` past the max imported id.
 | `load-settings` / `save-settings`                           | R ↔ M        | Save registers hotkey first (`{ success, hotkeyMode, error? }`) |
 | `load-model-config` / `save-model-config`                   | R ↔ M        | Connections and role assignments                                |
 | `load-model-catalog`                                        | R ↔ M        | models.dev model catalog (cached, force-refresh)                |
-| `kb-load-prompt` / `kb-save-prompt` / `kb-reset`            | R ↔ M        | Prompt CRUD; reset also clears chat `kbFed`                     |
 | `kb-analyze` / `kb-reanalyze`                               | R ↔ M        | Manual Knowledge Base maintenance                               |
 | `kb-get-status` / `kb-status`                               | R ↔ M        | Automatic maintenance snapshot (invoke) + change push           |
 
@@ -267,8 +259,6 @@ surfaces a failed save inline (`role="alert"`) instead of a native `alert()`.
   cache/models-dev.json     models.dev snapshot (24h TTL, offline fallback)
   conversations/{id}.json   ConversationRecord (image attachments inline, base64)
   conversations/{id}.meta.json  ConversationMeta (list/search sidecar)
-  kb/prompt.txt             personalization prompt (plain text)
-  kb/keywords.json          CategorizedKeyword[]
   kb/state.json             { lastRunAt, lastLearnedAt, lastAnalyzed, lastError, failedAttempts }
   tesseract-cache/          tesseract.js traineddata
 ```
@@ -368,10 +358,10 @@ or the config layer where needed: 26 files / 299 tests. Coverage includes `share
 (offset insertion inside markdown, refusal reasons, nested offsets, fold/find/max-id, legacy
 segment migration), `shared/conversation` (`serializeForChat` omit rules, migration boundary),
 `shared/context-budget` (estimate/budget/trim invariants), `shared/model-catalog`,
-`main/kb/keywords`, `main/provider` (streaming, idle timeout after
+`main/provider` (streaming, idle timeout after
 partial output, external abort), `main/models/config-schema` (empty `connectionId` →
 unassigned), `main/config-settings` (settings normalization), `main/conversations` (safe ids,
-sidecar backfill, serialized writes, search ranking/snippets, `resetKbFedFlags`),
+sidecar backfill, serialized writes, search ranking/snippets),
 `main/conversation-export` (markdown rendering, save/cancel paths), `renderer/chat-requests`
 (pure request book), `main/services/local-shortcut` (shifted keys), the
 portal and model-catalog services, plus the supervisor-owned gates in `tests/acceptance/`.

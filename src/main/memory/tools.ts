@@ -15,8 +15,8 @@ import {
   memoriesDir,
   MemoryError,
   moveMemory,
+  readAutoLoadedMemories,
   readMemory,
-  readMemoryIndex,
   removeMemory,
   writeMemory
 } from './store'
@@ -111,8 +111,8 @@ function broadcastMemoryUpdated(): void {
 }
 
 /**
- * The memory tools for one request. Never throws: memory problems must not be why
- * a message or a learning pass fails.
+ * The memory tools for one request. Never throws: memory problems must not be why a
+ * message fails. A curator pass treats `undefined` as a failure, since it can do nothing else.
  */
 export function memoryAgentFor(role: RoleId): AgentTools | undefined {
   try {
@@ -123,10 +123,11 @@ export function memoryAgentFor(role: RoleId): AgentTools | undefined {
       tools: createMemoryTools(root, broadcastMemoryUpdated),
       instructions: buildMemoryPrompt(
         listMemories(root),
-        readMemoryIndex(root),
+        readAutoLoadedMemories(root),
         curating ? 'curator' : 'assistant'
       ),
-      maxSteps: curating ? CURATOR_MAX_STEPS : ASSISTANT_MAX_STEPS
+      maxSteps: curating ? CURATOR_MAX_STEPS : ASSISTANT_MAX_STEPS,
+      toolsRequired: curating
     }
   } catch (err) {
     console.warn('Memory tools are unavailable for this request:', err)

@@ -12,7 +12,7 @@ export const AUTO_DEBOUNCE_MS = 20_000
 export const AUTO_MIN_INTERVAL_MS = 10 * 60_000
 /** Gap between passes while a backlog remains, so history drains in bounded batches. */
 export const AUTO_BACKLOG_INTERVAL_MS = 45_000
-/** Conversations folded into the profile per pass; keeps one run's cost bounded. */
+/** Conversations curated per pass; keeps one run's cost bounded. */
 export const AUTO_BATCH_SIZE = 4
 export const AUTO_RETRY_BASE_MS = 2 * 60_000
 export const AUTO_RETRY_MAX_MS = 30 * 60_000
@@ -40,8 +40,8 @@ export function autoFollowUpDelayMs(input: {
 
 /**
  * The next batch of learning material. Only chat conversations that have not
- * been folded in yet: standalone look-ups are screen-context noise, and an
- * already-fed conversation must not be re-folded by a later save.
+ * been curated yet: standalone look-ups are screen-context noise, and an
+ * already-fed conversation must not be re-curated by a later save.
  */
 export function selectAutoBatch<T extends { source: 'chat' | 'lookup'; kbFed: boolean }>(
   metas: T[],

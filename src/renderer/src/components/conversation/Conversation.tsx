@@ -410,7 +410,7 @@ function Conversation({
             <div className="empty-state-inner">
               <h1 className="empty-title">Grow with me</h1>
               <p className="empty-subtitle">
-                Ask anything, or start from one of these. Your learning profile grows with every
+                Ask anything, or start from one of these. Delta AI remembers what matters from every
                 conversation.
               </p>
               <div className="empty-suggestions">

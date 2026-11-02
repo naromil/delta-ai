@@ -67,7 +67,7 @@ function GeneralTab({
         </p>
       </div>
       <div className="settings-section">
-        <label className="settings-label">Automatic learning profile</label>
+        <label className="settings-label">Automatic memory updates</label>
         <label className="toggle-row">
           <input
             type="checkbox"
@@ -80,14 +80,14 @@ function GeneralTab({
           </span>
           <span className="toggle-label">
             {kbAutoMaintain
-              ? 'Preferences learn from new chats in the background'
+              ? 'New chats update memories in the background'
               : 'Only learn when Analyze is pressed'}
           </span>
         </label>
         <p className="settings-hint">
-          Delta AI periodically folds your conversations into a private learning-preference profile,
-          which tailors look-up answers. Runs use the Knowledge Base Maintenance model and never
-          block a look-up. Edit or clear the profile in the Knowledge Base view.
+          Delta AI periodically curates your conversations into private markdown notes, which
+          personalize chats and look-ups. Runs use the Knowledge Base Maintenance model, which must
+          support tool calling, and never block a look-up.
         </p>
       </div>
       <div className="settings-section">

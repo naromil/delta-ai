@@ -4,8 +4,8 @@ import type {
   ConversationRecord,
   ConversationSearchResult
 } from '../shared/conversation'
-import type { CategorizedKeyword, Connection } from '../shared/models'
-import type { KbMaintenanceStatus } from '../shared/kb'
+import type { Connection } from '../shared/models'
+import type { KbMaintenanceStatus, KbRunResult } from '../shared/kb'
 import type { ModelCatalogState } from '../shared/model-catalog'
 import type { ConnectionTestResult, DiscoveredModels } from '../main/services/model-discovery'
 
@@ -162,24 +162,8 @@ const api = {
   ): Promise<{ ok: true; path: string } | { ok: false; error: string }> =>
     ipcRenderer.invoke('conversation-export', id),
 
-  kbLoadPrompt: (): Promise<{ prompt: string; keywords: CategorizedKeyword[] }> =>
-    ipcRenderer.invoke('kb-load-prompt'),
-  kbSavePrompt: (content: string): Promise<{ prompt: string; keywords: CategorizedKeyword[] }> =>
-    ipcRenderer.invoke('kb-save-prompt', content),
-  kbReset: (): Promise<{ prompt: string; keywords: CategorizedKeyword[] }> =>
-    ipcRenderer.invoke('kb-reset'),
-  kbAnalyze: (): Promise<{
-    newPrompt: string
-    keywords: CategorizedKeyword[]
-    conversationsAnalyzed: number
-  }> => ipcRenderer.invoke('kb-analyze'),
-  kbReanalyze: (
-    n: number
-  ): Promise<{
-    newPrompt: string
-    keywords: CategorizedKeyword[]
-    conversationsAnalyzed: number
-  }> => ipcRenderer.invoke('kb-reanalyze', n),
+  kbAnalyze: (): Promise<KbRunResult> => ipcRenderer.invoke('kb-analyze'),
+  kbReanalyze: (n: number): Promise<KbRunResult> => ipcRenderer.invoke('kb-reanalyze', n),
   kbGetStatus: (): Promise<KbMaintenanceStatus> => ipcRenderer.invoke('kb-get-status'),
   kbOnStatus: (cb: (status: KbMaintenanceStatus) => void) => {
     const handler = (_e: Electron.IpcRendererEvent, status: KbMaintenanceStatus): void => cb(status)

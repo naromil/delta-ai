@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -10,15 +10,7 @@ vi.mock('electron', () => ({
   app: { getPath: (): string => paths.userData }
 }))
 
-import {
-  loadKbKeywords,
-  loadKbPrompt,
-  loadKbState,
-  resetKb,
-  saveKbKeywords,
-  saveKbPrompt,
-  saveKbState
-} from '../../src/main/kb/store'
+import { loadKbState, migrateLegacyKbPrompt, saveKbState } from '../../src/main/kb/store'
 
 describe('KB store', () => {
   beforeEach(() => {
@@ -30,8 +22,6 @@ describe('KB store', () => {
   })
 
   it('starts empty', () => {
-    expect(loadKbPrompt()).toBe('')
-    expect(loadKbKeywords()).toEqual([])
     expect(loadKbState()).toEqual(emptyKbState())
   })
 
@@ -58,17 +48,42 @@ describe('KB store', () => {
     expect(loadKbState()).toEqual(emptyKbState())
   })
 
-  it('reset deletes the prompt, keywords and pacing state together', () => {
-    saveKbPrompt('a learned profile')
-    saveKbKeywords([{ keyword: 'chemistry', category: 'topic', count: 2 }])
-    saveKbState({ ...emptyKbState(), lastRunAt: '2026-10-24T12:00:00.000Z' })
+  describe('migrateLegacyKbPrompt', () => {
+    function writeLegacy(content: string): void {
+      mkdirSync(join(paths.userData, 'kb'), { recursive: true })
+      writeFileSync(join(paths.userData, 'kb', 'prompt.txt'), content)
+    }
+    const preferences = (): string => join(paths.userData, 'memories', 'index-learning.md')
 
-    resetKb()
+    it('moves the learned prompt into the document base', () => {
+      writeLegacy('Prefers worked examples.\n')
+      migrateLegacyKbPrompt()
+      expect(readFileSync(preferences(), 'utf-8')).toBe('Prefers worked examples.\n')
+      expect(existsSync(join(paths.userData, 'kb', 'prompt.txt'))).toBe(false)
+      expect(existsSync(join(paths.userData, 'kb', 'prompt.migrated.txt'))).toBe(true)
+    })
 
-    expect(loadKbPrompt()).toBe('')
-    expect(loadKbKeywords()).toEqual([])
-    expect(loadKbState()).toEqual(emptyKbState())
-    // The directory survives; only the files are removed.
-    expect(() => readFileSync(join(paths.userData, 'kb', 'prompt.txt'))).toThrow()
+    it('does not bring preferences back after the user had them deleted', () => {
+      writeLegacy('Prefers worked examples.')
+      migrateLegacyKbPrompt()
+      rmSync(preferences())
+      migrateLegacyKbPrompt()
+      expect(existsSync(preferences())).toBe(false)
+    })
+
+    it('never overwrites preferences the curator already wrote', () => {
+      writeLegacy('old')
+      mkdirSync(join(paths.userData, 'memories'), { recursive: true })
+      writeFileSync(preferences(), 'newer')
+      migrateLegacyKbPrompt()
+      expect(readFileSync(preferences(), 'utf-8')).toBe('newer')
+    })
+
+    it('creates nothing for an empty prompt or a fresh install', () => {
+      migrateLegacyKbPrompt()
+      writeLegacy('  \n')
+      migrateLegacyKbPrompt()
+      expect(existsSync(preferences())).toBe(false)
+    })
   })
 })

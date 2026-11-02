@@ -1,38 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ConversationRecord } from '../../src/shared/conversation'
-import type { CategorizedKeyword } from '../../src/shared/models'
 
-const {
-  callProvider,
-  loadConversation,
-  markConversationKbFed,
-  memoryAgentFor,
-  saveKbPrompt,
-  store
-} = vi.hoisted(() => ({
-  memoryAgentFor: vi.fn(),
-  callProvider: vi.fn(),
-  loadConversation: vi.fn(),
-  markConversationKbFed: vi.fn(),
-  saveKbPrompt: vi.fn(),
-  store: { prompt: '', keywords: [] as CategorizedKeyword[] }
-}))
+const { callProvider, loadConversation, markConversationKbFed, memoryAgentFor } = vi.hoisted(
+  () => ({
+    memoryAgentFor: vi.fn(),
+    callProvider: vi.fn(),
+    loadConversation: vi.fn(),
+    markConversationKbFed: vi.fn()
+  })
+)
 
 vi.mock('../../src/main/provider', () => ({ callProvider }))
 vi.mock('../../src/main/memory/tools', () => ({ memoryAgentFor }))
 vi.mock('../../src/main/conversations', () => ({ loadConversation, markConversationKbFed }))
-vi.mock('../../src/main/kb/store', () => ({
-  loadKbPrompt: (): string => store.prompt,
-  saveKbPrompt,
-  loadKbKeywords: (): CategorizedKeyword[] => store.keywords,
-  saveKbKeywords: (next: CategorizedKeyword[]): void => {
-    store.keywords = next
-  },
-  loadKbState: vi.fn(),
-  saveKbState: vi.fn()
-}))
 
-import { runKbAnalysis } from '../../src/main/kb/run'
+import { CURATOR_UNAVAILABLE_ERROR, runKbAnalysis } from '../../src/main/kb/run'
 
 function record(id: string, overrides: Partial<ConversationRecord> = {}): ConversationRecord {
   return {
@@ -58,41 +40,29 @@ function record(id: string, overrides: Partial<ConversationRecord> = {}): Conver
 }
 
 describe('runKbAnalysis', () => {
+  const agent = { tools: {}, instructions: 'memory rules', maxSteps: 25 }
+
   beforeEach(() => {
-    callProvider.mockReset()
-    memoryAgentFor.mockReset()
+    callProvider.mockReset().mockResolvedValue('wrote profile.md')
+    memoryAgentFor.mockReset().mockReturnValue(agent)
     loadConversation.mockReset()
     markConversationKbFed.mockReset()
-    saveKbPrompt.mockReset()
-    saveKbPrompt.mockImplementation((next: string) => {
-      store.prompt = next
-    })
-    store.prompt = ''
-    store.keywords = []
   })
 
-  it('folds conversations into the prompt one at a time and merges keywords', async () => {
+  it('curates each conversation with the memory tools and marks it fed', async () => {
     loadConversation.mockImplementation(async (id: string) => record(id))
-    callProvider
-      .mockResolvedValueOnce('PROMPT after first conversation')
-      .mockResolvedValueOnce('PROMPT after second conversation')
-      .mockResolvedValueOnce('machine learning [topic]\nworked examples [learning_preference]')
 
     const result = await runKbAnalysis([{ id: 'chat_a' }, { id: 'chat_b' }], { markFed: true })
 
-    expect(result.conversationsAnalyzed).toBe(2)
-    expect(result.newPrompt).toBe('PROMPT after second conversation')
-    expect(saveKbPrompt).toHaveBeenCalledTimes(2)
+    expect(result).toEqual({ conversationsAnalyzed: 2 })
+    expect(memoryAgentFor).toHaveBeenCalledWith('kb-maintenance')
+    expect(callProvider).toHaveBeenCalledTimes(2)
+    const [messages, role, , usedAgent] = callProvider.mock.calls[0]
+    expect(role).toBe('kb-maintenance')
+    expect(usedAgent).toBe(agent)
+    expect(messages[0].content).toMatch(/primary writer/)
+    expect(JSON.stringify(messages)).toContain('What is a finite state machine?')
     expect(markConversationKbFed.mock.calls).toEqual([['chat_a'], ['chat_b']])
-    expect(result.keywords.map((kw) => [kw.keyword, kw.category])).toEqual([
-      ['machine learning', 'topic'],
-      ['worked examples', 'learning_preference']
-    ])
-
-    // The second analysis request must carry the prompt produced by the first.
-    const secondRequest = callProvider.mock.calls[1][0] as Array<{ role: string; content: string }>
-    expect(secondRequest[1].content).toContain('PROMPT after first conversation')
-    expect(secondRequest[1].content).toContain('What is a finite state machine?')
   })
 
   it('marks empty conversations fed without spending a model call', async () => {
@@ -137,14 +107,32 @@ describe('runKbAnalysis', () => {
 
   it('still re-analyzes fed conversations when markFed is false', async () => {
     loadConversation.mockResolvedValueOnce(record('chat_fed', { kbFed: true }))
-    callProvider
-      .mockResolvedValueOnce('REFRESHED PROMPT')
-      .mockResolvedValueOnce('machine learning [topic]')
 
     const result = await runKbAnalysis([{ id: 'chat_fed' }], { markFed: false })
 
     expect(result.conversationsAnalyzed).toBe(1)
-    expect(saveKbPrompt).toHaveBeenCalledWith('REFRESHED PROMPT')
+    expect(callProvider).toHaveBeenCalledTimes(1)
+    expect(markConversationKbFed).not.toHaveBeenCalled()
+  })
+
+  it('leaves the conversation unfed when curating fails', async () => {
+    loadConversation.mockImplementation(async (id: string) => record(id))
+    callProvider.mockRejectedValueOnce(new Error('API error 500'))
+
+    await expect(runKbAnalysis([{ id: 'chat_a' }], { markFed: true })).rejects.toThrow('500')
+
+    expect(markConversationKbFed).not.toHaveBeenCalled()
+  })
+
+  it('fails instead of marking a conversation fed when the model cannot use tools', async () => {
+    memoryAgentFor.mockReturnValue(undefined)
+    loadConversation.mockImplementation(async (id: string) => record(id))
+
+    await expect(runKbAnalysis([{ id: 'chat_a' }], { markFed: true })).rejects.toThrow(
+      CURATOR_UNAVAILABLE_ERROR
+    )
+
+    expect(callProvider).not.toHaveBeenCalled()
     expect(markConversationKbFed).not.toHaveBeenCalled()
   })
 
@@ -153,7 +141,7 @@ describe('runKbAnalysis', () => {
     loadConversation.mockImplementation(async (id: string) => record(id))
     callProvider.mockImplementation(async () => {
       controller.abort()
-      return 'PARTIAL PROMPT'
+      return 'wrote profile.md'
     })
 
     const result = await runKbAnalysis([{ id: 'chat_a' }, { id: 'chat_b' }], {
@@ -162,7 +150,6 @@ describe('runKbAnalysis', () => {
     })
 
     expect(callProvider).toHaveBeenCalledTimes(1)
-    expect(saveKbPrompt).toHaveBeenCalledWith('PARTIAL PROMPT')
     expect(markConversationKbFed).toHaveBeenCalledTimes(1)
     // An aborted pass must never be reported as a completed learning event.
     expect(result.conversationsAnalyzed).toBe(0)
@@ -180,64 +167,5 @@ describe('runKbAnalysis', () => {
     expect(result.conversationsAnalyzed).toBe(0)
     expect(loadConversation).not.toHaveBeenCalled()
     expect(callProvider).not.toHaveBeenCalled()
-  })
-
-  describe('document base', () => {
-    const agent = { tools: {}, instructions: 'memory rules', maxSteps: 25 }
-
-    function systemPrompt(call: unknown[]): string {
-      return (call[0] as Array<{ role: string; content: string }>)[0].content
-    }
-
-    it('curates memories with tools before folding the prompt', async () => {
-      memoryAgentFor.mockReturnValue(agent)
-      loadConversation.mockImplementation(async (id: string) => record(id))
-      callProvider
-        .mockResolvedValueOnce('wrote profile.md')
-        .mockResolvedValueOnce('PROMPT')
-        .mockResolvedValueOnce('chemistry [topic]')
-
-      await runKbAnalysis([{ id: 'chat_a' }], { markFed: true })
-
-      expect(memoryAgentFor).toHaveBeenCalledWith('kb-maintenance')
-      const [curate, fold, keywords] = callProvider.mock.calls
-      expect(curate[3]).toBe(agent)
-      expect(systemPrompt(curate)).toMatch(/primary writer/)
-      expect(JSON.stringify(curate[0])).toContain('What is a finite state machine?')
-      expect(fold[3]).toBeUndefined()
-      expect(keywords[3]).toBeUndefined()
-      expect(store.prompt).toBe('PROMPT')
-    })
-
-    it('leaves the conversation unfed and the prompt alone when curating fails', async () => {
-      memoryAgentFor.mockReturnValue(agent)
-      loadConversation.mockImplementation(async (id: string) => record(id))
-      callProvider.mockRejectedValueOnce(new Error('API error 500'))
-
-      await expect(runKbAnalysis([{ id: 'chat_a' }], { markFed: true })).rejects.toThrow('500')
-
-      expect(saveKbPrompt).not.toHaveBeenCalled()
-      expect(markConversationKbFed).not.toHaveBeenCalled()
-    })
-
-    it('still folds the prompt when the model cannot use tools', async () => {
-      memoryAgentFor.mockReturnValue(undefined)
-      loadConversation.mockImplementation(async (id: string) => record(id))
-      callProvider.mockResolvedValueOnce('PROMPT').mockResolvedValueOnce('chemistry [topic]')
-
-      const result = await runKbAnalysis([{ id: 'chat_a' }], { markFed: true })
-
-      expect(result.conversationsAnalyzed).toBe(1)
-      expect(callProvider).toHaveBeenCalledTimes(2)
-    })
-
-    it('spends no curation call on a look-up or an empty record', async () => {
-      memoryAgentFor.mockReturnValue(agent)
-      loadConversation.mockImplementation(async (id: string) => record(id, { source: 'lookup' }))
-
-      await runKbAnalysis([{ id: 'lookup_a' }], { markFed: true })
-
-      expect(callProvider).not.toHaveBeenCalled()
-    })
   })
 })

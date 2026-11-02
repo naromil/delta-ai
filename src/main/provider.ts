@@ -4,7 +4,7 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import { resolveRole, RoleUnassignedError } from './config'
 import type { Connection } from './models/registries'
 import type { ProviderMessage, ProviderType, RoleId } from './models/registries'
-import { withKbPrompt } from './streaming'
+import { withInstructions } from './streaming'
 export type { ProviderMessage }
 export { RoleUnassignedError }
 
@@ -23,6 +23,8 @@ export interface AgentTools {
   instructions: string
   /** Tool steps plus the closing answer; the last step is forced to answer in text. */
   maxSteps: number
+  /** The request is pointless without its tools: fail on rejection instead of answering plainly. */
+  toolsRequired?: boolean
 }
 
 const REJECTED_REQUEST_STATUSES = new Set([400, 404, 422])
@@ -210,7 +212,8 @@ async function* streamModel(
 
 /**
  * Tool support can only be discovered by asking for custom endpoints and Ollama, so a
- * rejected tool request falls back to a plain answer rather than failing the message.
+ * rejected tool request falls back to a plain answer rather than failing the message,
+ * unless the caller has no use for an answer without tools.
  */
 async function* streamModelWithTools(
   model: LanguageModel,
@@ -220,13 +223,13 @@ async function* streamModelWithTools(
 ): AsyncGenerator<string> {
   let emitted = false
   try {
-    const instructed = withKbPrompt(messages, agent.instructions)
+    const instructed = withInstructions(messages, agent.instructions)
     for await (const chunk of streamModel(model, instructed, signal, agent)) {
       emitted = true
       yield chunk
     }
   } catch (error) {
-    if (emitted || !(error instanceof RequestRejectedError)) throw error
+    if (emitted || agent.toolsRequired || !(error instanceof RequestRejectedError)) throw error
     console.warn('Retrying without tools after the endpoint rejected the request:', error.message)
     yield* streamModel(model, messages, signal)
   }

@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react'
-import type { CategorizedKeyword, KeywordCategory } from '../../../../shared/models'
 import type { ConversationMeta } from '../../../../shared/conversation'
 import { formatRelativeTime } from '../../lib/format'
 
@@ -11,14 +10,6 @@ interface HomeViewProps {
 }
 
 const RECENT_LIMIT = 5
-
-const CATEGORY_LABELS: Record<KeywordCategory, string> = {
-  topic: 'Topics',
-  knowledge_area: 'Knowledge',
-  learning_preference: 'Preferences'
-}
-
-const CATEGORIES: KeywordCategory[] = ['topic', 'knowledge_area', 'learning_preference']
 
 function ChatIcon(): React.JSX.Element {
   return (
@@ -72,7 +63,6 @@ function SearchIcon(): React.JSX.Element {
 }
 
 function HomeView({ onNavigate, onOpenConversation }: HomeViewProps): React.JSX.Element {
-  const [keywords, setKeywords] = useState<CategorizedKeyword[]>([])
   const [hotkey, setHotkey] = useState<string | null>(null)
   const [recent, setRecent] = useState<ConversationMeta[]>([])
 
@@ -88,28 +78,6 @@ function HomeView({ onNavigate, onOpenConversation }: HomeViewProps): React.JSX.
       })
     return () => {
       cancelled = true
-    }
-  }, [])
-
-  useEffect(() => {
-    let cancelled = false
-    async function load(): Promise<void> {
-      try {
-        const { keywords: kw } = await window.api.kbLoadPrompt()
-        if (!cancelled) setKeywords(kw)
-      } catch {
-        // ignore
-      }
-    }
-    load()
-    // The profile learns itself; refresh the tags whenever a pass finishes.
-    const unsubscribe = window.api.kbOnStatus((status) => {
-      if (status.state === 'running') return
-      void load()
-    })
-    return () => {
-      cancelled = true
-      unsubscribe()
     }
   }, [])
 
@@ -130,7 +98,7 @@ function HomeView({ onNavigate, onOpenConversation }: HomeViewProps): React.JSX.
       <div className="view-shell-header">
         <h1>Home</h1>
         <p className="view-shell-subtitle">
-          Your learning profile, built from the conversations you have with Delta AI.
+          An assistant that remembers what matters from your conversations.
         </p>
       </div>
       <div className="view-shell-content">
@@ -141,9 +109,7 @@ function HomeView({ onNavigate, onOpenConversation }: HomeViewProps): React.JSX.
             </span>
             <span className="home-action-body">
               <span className="home-action-title">Start a chat</span>
-              <span className="home-action-desc">
-                Ask anything — every chat feeds your profile.
-              </span>
+              <span className="home-action-desc">Ask anything — Delta AI remembers.</span>
             </span>
           </button>
           <button className="home-action" onClick={() => onNavigate?.('knowledge')}>
@@ -151,8 +117,8 @@ function HomeView({ onNavigate, onOpenConversation }: HomeViewProps): React.JSX.
               <BookIcon />
             </span>
             <span className="home-action-body">
-              <span className="home-action-title">Build your profile</span>
-              <span className="home-action-desc">Analyze unfed conversations into a prompt.</span>
+              <span className="home-action-title">Update memories</span>
+              <span className="home-action-desc">Curate your recent chats into notes.</span>
             </span>
           </button>
           <button className="home-action" onClick={() => onNavigate?.('lookup-guide')}>
@@ -183,46 +149,6 @@ function HomeView({ onNavigate, onOpenConversation }: HomeViewProps): React.JSX.
               ))}
             </ul>
           </section>
-        )}
-
-        {keywords.length === 0 ? (
-          <div className="home-empty">
-            <h2 className="home-empty-title">No learning profile yet</h2>
-            <p className="home-empty-text">
-              Your learning profile builds itself as you chat with Delta AI. New topics and
-              preferences will appear here; automatic learning can be turned off in{' '}
-              <strong>Settings → General</strong>.
-            </p>
-          </div>
-        ) : (
-          <>
-            <h2 className="home-section-title">What Delta AI has learned</h2>
-            <div className="kb-home-columns">
-              {CATEGORIES.map((cat) => {
-                const group = keywords
-                  .filter((kw) => kw.category === cat)
-                  .sort((a, b) => b.count - a.count)
-
-                return (
-                  <div key={cat} className={`kb-home-column kb-home-column--${cat}`}>
-                    <span className="kb-home-column-label">{CATEGORY_LABELS[cat]}</span>
-                    <div className="kb-home-column-tags">
-                      {group.length === 0 ? (
-                        <span className="kb-home-column-empty">Nothing yet</span>
-                      ) : (
-                        group.map((kw) => (
-                          <div key={kw.keyword} className={`kb-home-tag kb-home-tag--${cat}`}>
-                            <span className="kb-home-tag-keyword">{kw.keyword}</span>
-                            <span className="kb-home-tag-count">{kw.count}</span>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </>
         )}
       </div>
     </div>

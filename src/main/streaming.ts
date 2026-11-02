@@ -71,13 +71,16 @@ export function isConversationRecord(value: unknown): value is ConversationRecor
 
 /* ---- Prompt assembly ---- */
 
-/** Appends the learned profile to the system prompt (or adds one). */
-export function withKbPrompt(messages: ProviderMessage[], kbPrompt: string): ProviderMessage[] {
-  if (!kbPrompt) return messages
+/** Appends instructions to the system prompt (or adds one). */
+export function withInstructions(
+  messages: ProviderMessage[],
+  instructions: string
+): ProviderMessage[] {
+  if (!instructions) return messages
   const systemIndex = messages.findIndex((msg) => msg.role === 'system')
-  if (systemIndex === -1) return [{ role: 'system', content: kbPrompt }, ...messages]
+  if (systemIndex === -1) return [{ role: 'system', content: instructions }, ...messages]
   return messages.map((msg, index) =>
-    index === systemIndex ? { ...msg, content: msg.content + '\n\n' + kbPrompt } : msg
+    index === systemIndex ? { ...msg, content: msg.content + '\n\n' + instructions } : msg
   )
 }
 

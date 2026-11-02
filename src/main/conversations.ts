@@ -217,12 +217,6 @@ async function listConversationIds(): Promise<string[]> {
     .map((file) => file.slice(0, -RECORD_SUFFIX.length))
 }
 
-async function readAllConversations(): Promise<ConversationRecord[]> {
-  const ids = await listConversationIds()
-  const records = await Promise.all(ids.map((id) => loadConversation(id)))
-  return records.filter((record): record is ConversationRecord => record !== null)
-}
-
 /** Metadata for one record, falling back to its body and backfilling the sidecar. */
 async function loadConversationMeta(id: string): Promise<ConversationMeta | null> {
   const cached = await readConversationMeta(id)
@@ -327,25 +321,4 @@ export async function markConversationKbFed(id: string): Promise<void> {
 export async function listUnfedConversations(): Promise<ConversationMeta[]> {
   const all = await listConversations()
   return all.filter((m) => !m.kbFed)
-}
-
-/**
- * Make every chat conversation eligible for analysis again. Called when the KB
- * is reset so "Analyze" can rebuild the prompt from existing history instead of
- * finding nothing because every record is still flagged as fed.
- */
-export async function resetKbFedFlags(): Promise<void> {
-  const records = await readAllConversations()
-  const ids = records
-    .filter((record) => record.source === 'chat' && record.kbFed)
-    .map((record) => record.id)
-  await Promise.all(
-    ids.map((id) =>
-      mutateConversation(id, (record) => {
-        if (record.source !== 'chat' || !record.kbFed) return false
-        record.kbFed = false
-        return true
-      })
-    )
-  )
 }

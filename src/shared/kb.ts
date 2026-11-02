@@ -1,5 +1,3 @@
-import type { CategorizedKeyword } from './models'
-
 /* ---- Knowledge base maintenance ---- */
 
 /** What the automatic learning loop is doing right now. */
@@ -14,16 +12,14 @@ export interface KbMaintenanceStatus {
   state: KbMaintenanceState
   /** Chat conversations waiting to be learned from. */
   pending: number
-  /** ISO timestamp of the last successful profile update, automatic or manual. */
+  /** ISO timestamp of the last successful document base update, automatic or manual. */
   lastLearnedAt: string | null
-  /** Conversations folded into the profile by the last successful run. */
+  /** Conversations curated into the document base by the last successful run. */
   lastAnalyzed: number
   lastError: string | null
 }
 
 export interface KbRunResult {
-  newPrompt: string
-  keywords: CategorizedKeyword[]
   conversationsAnalyzed: number
 }
 
