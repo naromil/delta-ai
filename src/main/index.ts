@@ -16,6 +16,7 @@ import {
 import { handleHotkeyPressed } from './lookup/lookup'
 import { cancelOCR } from './lookup/capture'
 import { callProviderStream } from './provider'
+import { suggestTermsForAnswer } from './suggested-terms'
 import type { AgentTools, ProviderMessage } from './provider'
 import { IMAGES_UNSUPPORTED_ERROR, fitImagesToSupport, modelImageSupport } from './image-support'
 import type { RoleId } from '../shared/models'
@@ -128,7 +129,7 @@ if (!hasSingleInstanceLock) {
       if (!request) return
       const { requestId } = request
       const sender = event.sender
-      const messages = withAutoLoadedMemories(request.messages)
+      const messages = applyContextBudget(withAutoLoadedMemories(request.messages), request.role)
       void streamToSender(sender, requestId, messages, request.role, {
         chunk: (delta) => safeSend(sender, 'chat-expand-chunk', { requestId, delta }),
         done: (text) => safeSend(sender, 'chat-expand-chunk', { requestId, text, done: true }),
@@ -137,6 +138,9 @@ if (!hasSingleInstanceLock) {
         failed: (error) => safeSend(sender, 'chat-expand-chunk', { requestId, error })
       })
     })
+
+    /* Terms in a finished answer worth underlining; empty when off or unavailable. */
+    ipcMain.handle('chat-suggest-terms', (_event, answer: unknown) => suggestTermsForAnswer(answer))
 
     /** Stop a provider stream started by chat-send/chat-expand. */
     ipcMain.on('chat-cancel', (event, requestId: string) => {

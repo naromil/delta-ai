@@ -3,6 +3,7 @@ import {
   clearRequests,
   createRequests,
   discardExpands,
+  discardExpandsForExpansions,
   discardExpandsForTurns,
   pendingRequest,
   registerExpand,
@@ -11,6 +12,18 @@ import {
 } from '../../src/renderer/src/hooks/chat/requests'
 
 describe('chat request bookkeeping', () => {
+  it('drops only the streams of the given expansions, never a send', () => {
+    let book = registerSend(createRequests(), 'send-1', 10)
+    book = registerExpand(book, 'expand-1', 10, 5)
+    book = registerExpand(book, 'expand-2', 10, 6)
+
+    const drained = discardExpandsForExpansions(book, new Set([5]))
+
+    expect(drained.requestIds).toEqual(['expand-1'])
+    expect(pendingRequest(drained.book, 'expand-2', 'expand')).not.toBeNull()
+    expect(drained.book.activeSendId).toBe('send-1')
+  })
+
   it('registers a send as the active request and matches it', () => {
     const book = registerSend(createRequests(), 'send-1', 10)
 

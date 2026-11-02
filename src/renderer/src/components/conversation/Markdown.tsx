@@ -19,13 +19,15 @@ import { toJsxRuntime } from 'hast-util-to-jsx-runtime'
 import type { Element, Root as HastRoot } from 'hast'
 import type { Root as MdastRoot } from 'mdast'
 import type { ExpansionNode } from '../../../../shared/rich-text'
+import { isSameRange } from '../../../../shared/rich-text'
 import { highlightCode } from '../../lib/highlight'
 import { renderMath } from '../../lib/math'
 import {
   EXPANSION_NODE,
   SOURCED_TEXT,
   isDisplayMath,
-  prepareMarkdownTree
+  prepareMarkdownTree,
+  suggestedTermRanges
 } from '../../lib/markdown'
 import type { MarkdownNode } from '../../lib/markdown'
 
@@ -37,9 +39,12 @@ export interface MarkdownActions {
   onUnfold: (id: number) => void
 }
 
+/** `group` is every expansion on the node's range, including the node. */
+export type RenderExpansion = (node: ExpansionNode, group: ExpansionNode[]) => React.ReactNode
+
 interface ExpansionRenderContext extends MarkdownActions {
-  nodes: ReadonlyMap<number, ExpansionNode>
-  renderExpansion: (node: ExpansionNode) => React.ReactNode
+  nodes: ReadonlyMap<number, { node: ExpansionNode; group: ExpansionNode[] }>
+  renderExpansion: RenderExpansion
 }
 
 const ExpansionRenderContext = createContext<ExpansionRenderContext | null>(null)
@@ -52,9 +57,9 @@ function ExpansionSlot(props: ExpansionSlotProps): React.ReactNode {
   const context = useContext(ExpansionRenderContext)
   if (!context) return null
   const id = props['data-expansion-id']
-  const node = typeof id === 'number' ? context.nodes.get(id) : undefined
-  if (!node) return null
-  return context.renderExpansion(node)
+  const entry = typeof id === 'number' ? context.nodes.get(id) : undefined
+  if (!entry) return null
+  return context.renderExpansion(entry.node, entry.group)
 }
 
 interface InlineElementProps {
@@ -119,6 +124,8 @@ function Anchor({ href, children }: AnchorProps): React.JSX.Element {
 interface MathFormulaProps {
   'data-tex'?: string
   'data-display'?: string
+  'data-atom-start'?: number
+  'data-atom-end'?: number
 }
 
 function MathFormula(props: MathFormulaProps): React.JSX.Element {
@@ -128,6 +135,8 @@ function MathFormula(props: MathFormulaProps): React.JSX.Element {
   return (
     <span
       className={display ? 'md-math md-math-display' : 'md-math'}
+      data-atom-start={props['data-atom-start']}
+      data-atom-end={props['data-atom-end']}
       dangerouslySetInnerHTML={{ __html: html }}
     />
   )
@@ -216,21 +225,43 @@ const BLOCK_COMPONENTS: Record<string, React.ComponentType<never>> = {
   a: Anchor as React.ComponentType<never>
 }
 
-function mathElement(tex: string, display: boolean): Element {
+/**
+ * Source range of a code block or formula, read back by the selection mapper:
+ * their rendered text does not map to source offsets, so they are targeted whole.
+ */
+function atomProperties(node: MarkdownNode, anchored: boolean): Record<string, number> {
+  const start = node.position?.start.offset
+  const end = node.position?.end.offset
+  if (!anchored || typeof start !== 'number' || typeof end !== 'number') return {}
+  return { 'data-atom-start': start, 'data-atom-end': end }
+}
+
+function mathElement(tex: string, display: boolean, atom: Record<string, number>): Element {
   return {
     type: 'element',
     tagName: MATH_ELEMENT,
-    properties: { 'data-tex': tex, 'data-display': String(display) },
+    properties: { 'data-tex': tex, 'data-display': String(display), ...atom },
     children: []
   }
 }
 
-function createHandlers(source: string): Handlers {
+function createHandlers(source: string, anchored: boolean): Handlers {
   return {
     [SOURCED_TEXT]: (_state, node: MarkdownNode) => ({
       type: 'element',
       tagName: 'span',
-      properties: { 'data-src': node.src ?? 0 },
+      properties: {
+        ...(anchored ? { 'data-src': node.src ?? 0 } : {}),
+        ...(node.suggested
+          ? {
+              className: ['suggested-term'],
+              'data-suggested': 'true',
+              role: 'button',
+              tabIndex: 0,
+              title: 'Click to expand'
+            }
+          : {})
+      },
       children: [{ type: 'text', value: node.value ?? '' }]
     }),
     [EXPANSION_NODE]: (_state, node: MarkdownNode) => ({
@@ -240,8 +271,9 @@ function createHandlers(source: string): Handlers {
       children: []
     }),
     inlineMath: (_state, node: MarkdownNode) =>
-      mathElement(node.value ?? '', isDisplayMath(source, node)),
-    math: (_state, node: MarkdownNode) => mathElement(node.value ?? '', true),
+      mathElement(node.value ?? '', isDisplayMath(source, node), atomProperties(node, anchored)),
+    math: (_state, node: MarkdownNode) =>
+      mathElement(node.value ?? '', true, atomProperties(node, anchored)),
     code: (_state, node: MarkdownNode) => {
       const language = node.lang?.split(/\s+/)[0]
       return {
@@ -252,7 +284,10 @@ function createHandlers(source: string): Handlers {
           {
             type: 'element',
             tagName: 'code',
-            properties: language ? { className: [`language-${language}`] } : {},
+            properties: {
+              ...(language ? { className: [`language-${language}`] } : {}),
+              ...atomProperties(node, anchored)
+            },
             // Same trailing newline as the default handler; CodeBlock's Copy strips it.
             children: highlightCode(node.value ? `${node.value}\n` : '', language)
           }
@@ -266,7 +301,7 @@ function createHandlers(source: string): Handlers {
       return {
         type: 'element',
         tagName: 'code',
-        properties: typeof offset === 'number' ? { 'data-src': offset + ticks } : {},
+        properties: anchored && typeof offset === 'number' ? { 'data-src': offset + ticks } : {},
         children: [{ type: 'text', value: node.value ?? '' }]
       }
     }
@@ -276,11 +311,14 @@ function createHandlers(source: string): Handlers {
 function renderMarkdown(
   source: string,
   expansions: ExpansionNode[],
-  inline: boolean
+  inline: boolean,
+  anchored: boolean,
+  suggestedTerms: readonly string[]
 ): React.ReactNode {
-  const tree = prepareMarkdownTree(source, expansions)
+  const suggested = suggestedTermRanges(source, suggestedTerms, expansions)
+  const tree = prepareMarkdownTree(source, expansions, suggested)
   const hast = toHast(tree as unknown as MdastRoot, {
-    handlers: createHandlers(source)
+    handlers: createHandlers(source, anchored)
   }) as HastRoot
   const components = inline ? INLINE_COMPONENTS : BLOCK_COMPONENTS
   return toJsxRuntime(hast, {
@@ -293,20 +331,41 @@ export interface MarkdownProps extends MarkdownActions {
   source: string
   expansions: ExpansionNode[]
   inline?: boolean
-  renderExpansion: (node: ExpansionNode) => React.ReactNode
+  /**
+   * `false` renders display-only text (a folded pill's original): offsets would be
+   * relative to that snippet, so no element may look like a selection target.
+   */
+  anchored?: boolean
+  suggestedTerms?: readonly string[]
+  renderExpansion: RenderExpansion
+}
+
+const NO_TERMS: readonly string[] = []
+
+function buildNodeEntries(
+  expansions: ExpansionNode[]
+): Map<number, { node: ExpansionNode; group: ExpansionNode[] }> {
+  return new Map(
+    expansions.map((node) => [
+      node.id,
+      { node, group: expansions.filter((other) => isSameRange(other, node)) }
+    ])
+  )
 }
 
 function Markdown({
   source,
   expansions,
   inline = false,
+  anchored = true,
+  suggestedTerms = NO_TERMS,
   onFold,
   onUnfold,
   renderExpansion
 }: MarkdownProps): React.JSX.Element {
   const context = useMemo<ExpansionRenderContext>(
     () => ({
-      nodes: new Map(expansions.map((node): [number, ExpansionNode] => [node.id, node])),
+      nodes: buildNodeEntries(expansions),
       onFold,
       onUnfold,
       renderExpansion
@@ -315,8 +374,8 @@ function Markdown({
   )
 
   const body = useMemo(
-    () => renderMarkdown(source, expansions, inline),
-    [source, expansions, inline]
+    () => renderMarkdown(source, expansions, inline, anchored, suggestedTerms),
+    [source, expansions, inline, anchored, suggestedTerms]
   )
 
   return (

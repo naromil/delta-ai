@@ -118,6 +118,20 @@ export function discardExpandsForTurns(
   return drain(book, (request) => request.kind === 'expand' && turnIds.has(request.turnId))
 }
 
+/** Drops the streams writing to these expansions, which are being replaced or removed. */
+export function discardExpandsForExpansions(
+  book: RequestBookkeeping,
+  expansionIds: ReadonlySet<number>
+): RequestDrain {
+  return drain(
+    book,
+    (request) =>
+      request.kind === 'expand' &&
+      request.expansionId !== undefined &&
+      expansionIds.has(request.expansionId)
+  )
+}
+
 /** Drops every pending request (send included) and clears the active send. */
 export function clearRequests(book: RequestBookkeeping): RequestDrain {
   return drain(book, () => true)

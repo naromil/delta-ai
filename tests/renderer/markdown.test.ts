@@ -4,7 +4,12 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import type { ExpansionNode } from '../../src/shared/rich-text'
 import Markdown from '../../src/renderer/src/components/conversation/Markdown'
 import ExpansionFrame from '../../src/renderer/src/components/conversation/ExpansionFrame'
-import { isAnchoredRange } from '../../src/renderer/src/lib/markdown'
+import {
+  anchoredRange,
+  isAnchoredRange,
+  isPlainMarkdown,
+  suggestedTermRanges
+} from '../../src/renderer/src/lib/markdown'
 
 const noop = (): void => {}
 
@@ -24,9 +29,10 @@ function renderMarkdown(
       expansions,
       onFold: noop,
       onUnfold: noop,
-      renderExpansion: (node: ExpansionNode) =>
+      renderExpansion: (node: ExpansionNode, group: ExpansionNode[]) =>
         createElement(ExpansionFrame, {
           node,
+          group,
           onFold: noop,
           onUnfold: noop,
           onRetry: actions.onRetry,
@@ -223,7 +229,7 @@ describe('Markdown renderer', () => {
     expect(markup).toContain('boom')
     expect(markup).toContain('frame-term')
     expect(markup).toContain('>Retry</button>')
-    expect(markup).toContain('>Dismiss</button>')
+    expect(markup).toContain('>Remove</button>')
     // Folding is still available: it restores the original text into the flow.
     expect(markup).toContain('fold-toggle')
   })
@@ -406,5 +412,251 @@ describe('math', () => {
     )
     expect(html).toContain('md-math-display')
     expect(html).not.toMatch(/<(div|p)\b/)
+  })
+})
+
+describe('wider selections', () => {
+  it('widens an edge inside bold, code or a link to the whole element', () => {
+    const source = 'Try **bold** here'
+    const start = source.indexOf('bold')
+    expect(anchoredRange(source, { start: 0, end: start + 2 })).toEqual({
+      start: 0,
+      end: source.indexOf(' here'),
+      kind: 'inline'
+    })
+    expect(anchoredRange('a `code` b', { start: 3, end: 5 })).toEqual({
+      start: 2,
+      end: 8,
+      kind: 'atom'
+    })
+    const linked = 'see [the docs](https://x.dev) now'
+    expect(anchoredRange(linked, { start: 0, end: 7 })?.end).toBe(linked.indexOf(' now'))
+  })
+
+  it('keeps a selection inside one text node exact', () => {
+    expect(anchoredRange('Try **bold** here', { start: 6, end: 8 })).toEqual({
+      start: 6,
+      end: 8,
+      kind: 'text'
+    })
+  })
+
+  it('refuses a selection across blocks or table cells', () => {
+    expect(anchoredRange('one\n\ntwo', { start: 0, end: 8 })).toBeNull()
+    expect(anchoredRange('- one\n- two', { start: 2, end: 11 })).toBeNull()
+    const table = '| a | b |\n| - | - |\n| c | d |'
+    expect(
+      anchoredRange(table, { start: table.indexOf('c'), end: table.indexOf('d') + 1 })
+    ).toBeNull()
+  })
+
+  it('refuses to cut through a text node whose offsets do not map to the source', () => {
+    const source = 'a \\* b **c** d'
+    expect(anchoredRange(source, { start: 2, end: source.indexOf(' d') })).toBeNull()
+  })
+
+  it('targets a whole code block or formula as one atom', () => {
+    const code = 'Intro\n\n```js\nconst a = 1\n\nconst b = 2\n```\n\nOutro'
+    const inside = code.indexOf('const b')
+    expect(anchoredRange(code, { start: inside, end: inside + 5 })).toEqual({
+      start: code.indexOf('```js'),
+      end: code.lastIndexOf('```') + 3,
+      kind: 'atom'
+    })
+    const math = 'Intro\n\n$$\ny^2\n$$\n'
+    const block = anchoredRange(math, { start: math.indexOf('y^2'), end: math.indexOf('y^2') + 1 })
+    expect(block?.kind).toBe('atom')
+  })
+
+  it('renders a frame across bold in place of the covered run, keeping the rest', () => {
+    const source = 'Try **bold** here now'
+    const end = source.indexOf(' now')
+    const markup = renderMarkdown(source, [
+      expansion({ id: 8, start: 0, end, originalText: source.slice(0, end), answer: 'answered' })
+    ])
+    expect(markup).toContain('answered')
+    expect(markup).not.toContain('<strong>')
+    expect(markup).toContain(`data-src="${end}"`)
+  })
+
+  it('renders a frame on a code block and keeps the code visible beside its answer', () => {
+    const fence = '```js\nconst a = 1\n```'
+    const source = `Intro\n\n${fence}\n\nOutro`
+    const start = source.indexOf(fence)
+    const markup = renderMarkdown(source, [
+      expansion({
+        id: 9,
+        start,
+        end: start + fence.length,
+        originalText: fence,
+        answer: 'declares a'
+      })
+    ])
+    const frame = markup.slice(markup.indexOf('data-expansion-id="9"'))
+    expect(frame).toContain('frame-source')
+    expect(frame).toContain('md-pre')
+    expect(frame).toContain('declares a')
+    // Display-only code must not look like a selection target with snippet offsets.
+    const answerAnchor = frame.lastIndexOf('<span data-src', frame.indexOf('declares a'))
+    expect(frame.slice(0, answerAnchor)).not.toMatch(/data-(src|atom-start)/)
+  })
+
+  it('marks code and formulas with their source range for the selection mapper', () => {
+    const markup = renderMarkdown('```js\nx\n```\n\n$y$')
+    expect(markup).toContain('data-atom-start="0"')
+    expect(markup).toMatch(/md-math[^>]*data-atom-start="\d+"/)
+  })
+
+  it('shows a folded pill across bold rendered, with no anchors inside it', () => {
+    const originalText = 'Try **bold**'
+    const markup = renderMarkdown('Try **bold** here', [
+      expansion({ id: 3, start: 0, end: originalText.length, originalText, folded: true })
+    ])
+    const nextAnchor = markup.lastIndexOf('<span data-src', markup.indexOf(' here'))
+    const pill = markup.slice(markup.indexOf('class="queried"'), nextAnchor)
+    expect(pill).toContain('<strong>')
+    expect(pill).not.toContain('data-src')
+    expect(pill).toContain('aria-label="Expand Try bold"')
+  })
+
+  it('tells plain slices from ones that need rendering', () => {
+    expect(isPlainMarkdown('plain words')).toBe(true)
+    expect(isPlainMarkdown('snake_case_name')).toBe(true)
+    expect(isPlainMarkdown('some **bold**')).toBe(false)
+    expect(isPlainMarkdown('`code`')).toBe(false)
+  })
+})
+
+describe('several expansions on one range', () => {
+  const group = [
+    expansion({ id: 1, start: 7, end: 12, folded: true, answer: 'first answer' }),
+    expansion({ id: 2, start: 7, end: 12, prompt: 'Why is this so?', answer: 'second answer' })
+  ]
+
+  it('renders only the open one, with a way to reach the others', () => {
+    const markup = renderToStaticMarkup(
+      createElement(Markdown, {
+        source: 'Before alpha after',
+        expansions: group,
+        onFold: noop,
+        onUnfold: noop,
+        renderExpansion: (node: ExpansionNode, nodes: ExpansionNode[]) =>
+          createElement(ExpansionFrame, {
+            node,
+            group: nodes,
+            onFold: noop,
+            onUnfold: noop,
+            onPickAnswer: noop
+          })
+      })
+    )
+    expect(markup).toContain('second answer')
+    expect(markup).not.toContain('first answer')
+    expect(markup).toContain('>2 answers</button>')
+    expect(markup.match(/data-expansion-id/g)).toHaveLength(1)
+  })
+
+  it('shows one pill with a count when all are folded', () => {
+    const markup = renderMarkdown(
+      'Before alpha after',
+      group.map((node) => ({ ...node, folded: true }))
+    )
+    expect(markup.match(/class="queried"/g)).toHaveLength(1)
+    expect(markup).toContain('queried-count')
+  })
+})
+
+describe('frame actions and question', () => {
+  it('offers regenerate, ask, copy and remove on a finished frame, with its question', () => {
+    const markup = renderToStaticMarkup(
+      createElement(ExpansionFrame, {
+        node: expansion({ id: 1, answer: 'an answer', prompt: 'Why is this so?' }),
+        onFold: noop,
+        onUnfold: noop,
+        onRetry: noop,
+        onDismiss: noop,
+        onAskAnother: noop
+      })
+    )
+    expect(markup).toContain('frame-question')
+    expect(markup).toContain('Why is this so?')
+    for (const label of ['Regenerate', 'Ask…', 'Copy', 'Remove']) {
+      expect(markup).toContain(`>${label}</button>`)
+    }
+  })
+
+  it('hides the question for a default expand and offers only Remove while waiting', () => {
+    const markup = renderToStaticMarkup(
+      createElement(ExpansionFrame, {
+        node: expansion({ id: 1, status: 'loading', prompt: '   ' }),
+        onFold: noop,
+        onUnfold: noop,
+        onRetry: noop,
+        onDismiss: noop,
+        onAskAnother: noop
+      })
+    )
+    expect(markup).not.toContain('frame-question')
+    expect(markup).toContain('>Remove</button>')
+    expect(markup).not.toContain('>Regenerate</button>')
+    expect(markup).not.toContain('>Copy</button>')
+  })
+
+  it('keeps the question out of a folded pill except as its tooltip', () => {
+    const markup = renderMarkdown('Before alpha after', [
+      expansion({ id: 3, start: 7, end: 12, folded: true, prompt: 'Why is this so?' })
+    ])
+    expect(markup).not.toContain('>Why is this so?<')
+    expect(markup).toContain('title="Why is this so?"')
+  })
+})
+
+describe('suggested terms', () => {
+  const render = (source: string, terms: string[], expansions: ExpansionNode[] = []): string =>
+    renderToStaticMarkup(
+      createElement(Markdown, {
+        source,
+        expansions,
+        suggestedTerms: terms,
+        onFold: noop,
+        onUnfold: noop,
+        renderExpansion: () => null
+      })
+    )
+
+  it('underlines the first whole-word match only, keeping exact offsets', () => {
+    const source = 'A monad wraps. Monads and a monad again.'
+    const [range] = suggestedTermRanges(source, ['monad'], [])
+    expect(source.slice(range.start, range.end)).toBe('monad')
+    const markup = render(source, ['monad'])
+    expect(markup.match(/suggested-term/g)).toHaveLength(1)
+    expect(markup).toContain(`data-src="${range.start}"`)
+    expect(markup).toContain(`data-src="${range.end}"`)
+  })
+
+  it('never marks code, escaped text or an expanded range', () => {
+    expect(suggestedTermRanges('use `monad` here', ['monad'], [])).toEqual([])
+    expect(
+      suggestedTermRanges(
+        'a monad',
+        ['monad'],
+        [expansion({ id: 1, start: 2, end: 7, originalText: 'monad' })]
+      )
+    ).toEqual([])
+  })
+
+  it('does not move the underline to a later mention once a term is expanded', () => {
+    const expanded = expansion({ id: 1, start: 2, end: 7, originalText: 'monad' })
+    expect(suggestedTermRanges('a monad and a monad', ['monad'], [expanded])).toEqual([])
+  })
+
+  it('caps how many terms one answer can underline', () => {
+    const terms = ['a1', 'a2', 'a3', 'a4', 'a5', 'a6', 'a7']
+    expect(suggestedTermRanges(terms.join(' '), terms, [])).toHaveLength(5)
+  })
+
+  it('treats a term as literal text, not a pattern', () => {
+    expect(suggestedTermRanges('see C++ here', ['C++'], [])).toHaveLength(1)
+    expect(suggestedTermRanges('see Cxx here', ['C.*'], [])).toEqual([])
   })
 })

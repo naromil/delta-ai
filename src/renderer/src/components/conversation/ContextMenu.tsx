@@ -1,8 +1,15 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
-interface ContextMenuState {
+interface ContextMenuItem {
+  label: string
+  detail?: string
+  onSelect: () => void
+}
+
+interface TextActionsMenu {
   x: number
   y: number
+  items?: undefined
   canExpand: boolean
   /** Why Expand is disabled when a selection exists but cannot be used. */
   hint?: string
@@ -11,6 +18,15 @@ interface ContextMenuState {
   onCopy: () => void
   onSelectAll: () => void
 }
+
+/** A plain list of choices, sharing the menu's focus, keyboard and dismissal behaviour. */
+interface ItemListMenu {
+  x: number
+  y: number
+  items: ContextMenuItem[]
+}
+
+type ContextMenuState = TextActionsMenu | ItemListMenu
 
 interface ContextMenuProps {
   state: ContextMenuState | null
@@ -25,6 +41,7 @@ function ContextMenu({ state, onClose }: ContextMenuProps): React.JSX.Element | 
 
   useLayoutEffect(() => {
     const menu = menuRef.current
+    itemRefs.current.length = state?.items ? state.items.length : 4
     if (!state || !menu) {
       setPosition(null)
       return
@@ -97,6 +114,38 @@ function ContextMenu({ state, onClose }: ContextMenuProps): React.JSX.Element | 
   }, [state, onClose, moveFocus])
 
   if (!state) return null
+
+  if (state.items) {
+    return (
+      <div
+        ref={menuRef}
+        id="ctxMenu"
+        role="menu"
+        aria-label="Choose an answer"
+        className="visible"
+        style={{ left: (position ?? state).x, top: (position ?? state).y }}
+      >
+        {state.items.map((item, index) => (
+          <button
+            key={index}
+            ref={(el) => {
+              itemRefs.current[index] = el
+            }}
+            type="button"
+            role="menuitem"
+            className="item item--stacked"
+            onClick={() => {
+              item.onSelect()
+              onClose()
+            }}
+          >
+            <span>{item.label}</span>
+            {item.detail ? <span className="item-detail">{item.detail}</span> : null}
+          </button>
+        ))}
+      </div>
+    )
+  }
 
   const handleItemClick = (action: 'expand' | 'expand-prompted' | 'copy' | 'select-all'): void => {
     if (action === 'expand') state.onExpand()
@@ -171,5 +220,5 @@ function ContextMenu({ state, onClose }: ContextMenuProps): React.JSX.Element | 
   )
 }
 
-export type { ContextMenuState }
+export type { ContextMenuItem, ContextMenuState }
 export default ContextMenu

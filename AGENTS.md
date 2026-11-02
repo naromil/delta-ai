@@ -62,6 +62,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | `chat-image-support`                      | Renderer → Main | Whether a role's model reads images (`yes` / `no` / `unknown`); the composer asks on attach     |
 | `chat-expand`                             | Renderer → Main | Request an inline word-expansion stream                                                         |
 | `chat-expand-chunk`                       | Main → Renderer | Expand chunks (`done`; `cancelled: true` + partial text after stop)                             |
+| `chat-suggest-terms`                      | Renderer → Main | Terms in a finished answer worth underlining; empty when off or unavailable                     |
 | `chat-replace-conversation`               | Main → Renderer | Hydrate transferred state + id/title/createdAt into the chat window                             |
 | `lookup-trigger-grow`                     | Lookup → Main   | On first ask, signal main to animate window growth                                              |
 | `lookup-transfer`                         | Lookup → Main   | Send `{state, conversationId?}` to chat; main transforms context, persists                      |
@@ -91,15 +92,16 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 
 ##### Shared (`src/shared/`)
 
-| Module              | Role                                                                                                                                                                                                                          |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `models.ts`         | Shared types + registries (ProviderType, RoleId, Connection, etc.)                                                                                                                                                            |
-| `conversation.ts`   | `ConversationState` / `Turn` (markdown `content` + offset-anchored `expansions`), `ConversationMeta`, `toConversationMeta`, `persistableTurns`, `serializeForChat`, `buildConversationTitle`, `migrateConversationRecord`     |
-| `context-budget.ts` | Pure token budgeting: `estimateTokens` (4 chars/token), `budgetFor` (85% of the window minus the output reserve), `trimMessages` (drops oldest non-system messages, never the last)                                           |
-| `rich-text.ts`      | Pure rich-text model: `ExpansionNode`, `validateInsertion` / `insertExpansion(InTurns)` / `updateExpansion` / `setExpansionFolded` / `findExpansionIn*` / `maxExpansionId`, `flattenMarkdown`, legacy `migrateLegacySegments` |
-| `expand-prompt.ts`  | `buildExpandMessages({answer, selection, prompt?})` — constructs API messages for expand requests                                                                                                                             |
-| `attachments.ts`    | `ImageAttachment`, per-message/size limits, `isImageInput` / `isImageAttachment` validation, `scaledImageSize`                                                                                                                |
-| `prompts.ts`        | All LLM-facing prompt/instruction strings: system prompts, context template, lookup default, expand instructions                                                                                                              |
+| Module               | Role                                                                                                                                                                                                                          |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `models.ts`          | Shared types + registries (ProviderType, RoleId, Connection, etc.)                                                                                                                                                            |
+| `conversation.ts`    | `ConversationState` / `Turn` (markdown `content` + offset-anchored `expansions`), `ConversationMeta`, `toConversationMeta`, `persistableTurns`, `serializeForChat`, `buildConversationTitle`, `migrateConversationRecord`     |
+| `context-budget.ts`  | Pure token budgeting: `estimateTokens` (4 chars/token), `budgetFor` (85% of the window minus the output reserve), `trimMessages` (drops oldest non-system messages, never the last)                                           |
+| `rich-text.ts`       | Pure rich-text model: `ExpansionNode`, `validateInsertion` / `insertExpansion(InTurns)` / `updateExpansion` / `setExpansionFolded` / `findExpansionIn*` / `maxExpansionId`, `flattenMarkdown`, legacy `migrateLegacySegments` |
+| `expand-prompt.ts`   | `buildExpandRequest(state, turn, parentId, range, role, prompt?)` — system prompt, recent history, ancestor chain, instruction; `buildExpandMessages` assembles them                                                          |
+| `suggested-terms.ts` | `parseSuggestedTerms` (defensive reply parsing, must occur in the answer), `MAX_SUGGESTED_TERMS`                                                                                                                              |
+| `attachments.ts`     | `ImageAttachment`, per-message/size limits, `isImageInput` / `isImageAttachment` validation, `scaledImageSize`                                                                                                                |
+| `prompts.ts`         | All LLM-facing prompt/instruction strings: system prompts, context template, lookup default, expand instructions                                                                                                              |
 
 ##### Main process (`src/main/`)
 
@@ -108,6 +110,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | App lifecycle       | `index.ts`                    | Main window, tray, streaming IPC (chat-send/expand/cancel), lookup transfer, conversation IPC                                                                                         |
 | Conversation store  | `conversations.ts`            | CRUD on `{userData}/conversations/{id}.json` + `{id}.meta.json` sidecars; per-id write chain (`saveConversation`, `mutateConversation`); title+content search, KB-fed mark            |
 | Image support       | `image-support.ts`            | `modelImageSupport(role)` (catalog modalities, fail-open) + `fitImagesToSupport` (refuse current, drop history images)                                                                |
+| Suggested terms     | `suggested-terms.ts`          | `suggestTermsForAnswer`: one tool-less `kb-maintenance` call per finished answer, judged from `index*` notes; every failure is no suggestions                                         |
 | Conversation export | `conversation-export.ts`      | `renderConversationMarkdown` (expansions quoted inline) + `exportConversationToFile` (save dialog, atomic write)                                                                      |
 | Memory store        | `memory/store.ts`             | Shell-like ops confined to `{userData}/memories/` (`listMemories`, `readMemory`, `readAutoLoadedMemories`, `grepMemories`, `writeMemory`, `editMemory`, `moveMemory`, `removeMemory`) |
 | Memory tools        | `memory/tools.ts`             | `memory_*` AI SDK tools + `memoryAgentFor(role)` (assistant vs curator prompt, catalog gate, fail-open) + `memory-updated` broadcast                                                  |
@@ -138,28 +141,29 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 
 ##### Renderer (`src/renderer/src/`)
 
-| Module           | Path                                                       | Role                                                                                                                 |
-| ---------------- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Entry point      | `main.tsx`                                                 | createRoot, imports CSS, mounts Root                                                                                 |
-| Root router      | `Root.tsx`                                                 | Routes App (main window) vs LookupApp (popup) by `?role=lookup`                                                      |
-| App shell        | `App.tsx`                                                  | Sidebar + 5-view routing, global Ctrl+N/Ctrl+K, search modal, composer draft                                         |
-| Lookup popup     | `LookupApp.tsx`                                            | Header, context panel, ask input, paste handling, grow transitions                                                   |
-| Chat hook        | `hooks/useChatStreaming.ts`                                | Owns ConversationState, stop/retry/regenerate/rename, routes requests via `hooks/chat/*`, auto-saves                 |
-| Chat requests    | `hooks/chat/{requests,persistence,transport}.ts`           | Pure request book (pending ids, `activeSendId`, drain helpers), autosave effect, IPC subscriptions + stale-id drops  |
-| Scroll following | `hooks/useStickToBottom.ts`                                | Pins chat/popup views to the bottom while a response streams; an upward scroll unpins                                |
-| Conversation     | `components/conversation/Conversation.tsx`                 | Message list, composer + Stop button (Esc), toolbar (export/delete), context menu                                    |
-| Turn             | `components/conversation/Turn.tsx`                         | Single message (user/assistant) with avatar, markdown body, retry, inline edit-and-resend                            |
-| Markdown         | `components/conversation/Markdown.tsx`                     | remark → mdast → hast → React; block mode for turns, inline mode+`md-*` spans for frames; `data-src` text anchors    |
-| Markdown core    | `lib/markdown.ts`                                          | Pure parse/splice/anchor helpers (`prepareMarkdownTree`, `isAnchoredRange`, `collectTextNodeSpans`), math delimiters |
-| Code / math      | `lib/highlight.ts`, `lib/math.ts`                          | lowlight → hast (text-preserving) and KaTeX → HTML (`trust: false`)                                                  |
-| Image attach     | `lib/image-attachments.ts`, `hooks/useImageAttachments.ts` | Decode + scale + re-encode to JPEG; composer add flow (capability check, limits, notices)                            |
-| ExpansionFrame   | `components/conversation/ExpansionFrame.tsx`               | Inline expandable frames, folded pills, nested children                                                              |
-| ContextMenu      | `components/conversation/ContextMenu.tsx`                  | Right-click Expand / Expand on… / Copy / Select All                                                                  |
-| ExpandPrompt     | `components/conversation/ExpandPrompt.tsx`                 | Floating inline input for custom expand direction ("Expand on…")                                                     |
-| Search           | `components/conversation/ConversationSearch.tsx`           | Ctrl/Cmd+K modal: search titles + messages, snippet, load/delete, errors                                             |
-| Settings         | `views/settings/Settings.tsx`                              | 3-tab settings orchestrator                                                                                          |
-| Memory indicator | `components/MemoryIndicator.tsx`                           | Transient "Memory updated" pill in both windows, driven by `memory-updated`                                          |
-| Views            | `views/home/`, `views/knowledge/`, `views/lookup-guide/`   | Dashboard (recent conversations) and placeholder views                                                               |
+| Module           | Path                                                       | Role                                                                                                                                 |
+| ---------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Entry point      | `main.tsx`                                                 | createRoot, imports CSS, mounts Root                                                                                                 |
+| Root router      | `Root.tsx`                                                 | Routes App (main window) vs LookupApp (popup) by `?role=lookup`                                                                      |
+| App shell        | `App.tsx`                                                  | Sidebar + 5-view routing, global Ctrl+N/Ctrl+K, search modal, composer draft                                                         |
+| Lookup popup     | `LookupApp.tsx`                                            | Header, context panel, ask input, paste handling, grow transitions                                                                   |
+| Chat hook        | `hooks/useChatStreaming.ts`                                | Owns ConversationState, stop/retry/regenerate/rename, routes requests via `hooks/chat/*`, auto-saves                                 |
+| Chat requests    | `hooks/chat/{requests,persistence,transport}.ts`           | Pure request book (pending ids, `activeSendId`, drain helpers), autosave effect, IPC subscriptions + stale-id drops                  |
+| Scroll following | `hooks/useStickToBottom.ts`                                | Pins chat/popup views to the bottom while a response streams; an upward scroll unpins                                                |
+| Conversation     | `components/conversation/Conversation.tsx`                 | Message list, composer + Stop button (Esc), toolbar (export/delete), context menu                                                    |
+| Turn             | `components/conversation/Turn.tsx`                         | Single message (user/assistant) with avatar, markdown body, retry, inline edit-and-resend                                            |
+| Markdown         | `components/conversation/Markdown.tsx`                     | remark → mdast → hast → React; block mode for turns, inline mode+`md-*` spans for frames; `data-src` text anchors                    |
+| Markdown core    | `lib/markdown.ts`                                          | Pure parse/splice/anchor helpers (`prepareMarkdownTree`, `anchoredRange`, `isAnchoredRange`, `suggestedTermRanges`), math delimiters |
+| Code / math      | `lib/highlight.ts`, `lib/math.ts`                          | lowlight → hast (text-preserving) and KaTeX → HTML (`trust: false`)                                                                  |
+| Image attach     | `lib/image-attachments.ts`, `hooks/useImageAttachments.ts` | Decode + scale + re-encode to JPEG; composer add flow (capability check, limits, notices)                                            |
+| ExpansionFrame   | `components/conversation/ExpansionFrame.tsx`               | Inline expandable frames, folded pills, nested children                                                                              |
+| ContextMenu      | `components/conversation/ContextMenu.tsx`                  | Right-click Expand / Expand on… / Copy / Select All; also the list of answers on one range (`items`)                                 |
+| ExpandPrompt     | `components/conversation/ExpandPrompt.tsx`                 | Floating input for a custom question ("Expand on…", "Ask…"), plus the one-click intents                                              |
+| Selection bar    | `components/conversation/ExpandSelectionBar.tsx`           | Floats over a selection in an answer: Expand, intents, Ask…                                                                          |
+| Search           | `components/conversation/ConversationSearch.tsx`           | Ctrl/Cmd+K modal: search titles + messages, snippet, load/delete, errors                                                             |
+| Settings         | `views/settings/Settings.tsx`                              | 3-tab settings orchestrator                                                                                                          |
+| Memory indicator | `components/MemoryIndicator.tsx`                           | Transient "Memory updated" pill in both windows, driven by `memory-updated`                                                          |
+| Views            | `views/home/`, `views/knowledge/`, `views/lookup-guide/`   | Dashboard (recent conversations) and placeholder views                                                                               |
 
 #### What to touch when
 
@@ -170,7 +174,11 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | Change the hotkey response flow        | `lookup/lookup.ts` (`handleHotkeyPressed`)                                                             |
 | Change the look-up context source      | `lookup/lookup.ts` (`handleHotkeyPressed`) + `config.ts` + `shared/conversation.ts`                    |
 | Reposition / restyle the lookup popup  | `lookup/window.ts` + CSS in `lookup.css`, `LookupApp.tsx`                                              |
-| Change the expand prompt               | `shared/expand-prompt.ts` (`buildExpandMessages`)                                                      |
+| Change what an expansion request sends | `shared/expand-prompt.ts` (`buildExpandRequest`)                                                       |
+| Change the one-click expand questions  | `shared/prompts.ts` (`EXPAND_INTENTS`)                                                                 |
+| Change the expand selection bar/keys   | `hooks/useExpansionContextMenu.ts` + `ExpandSelectionBar.tsx`                                          |
+| Change frame actions                   | `ExpansionFrame.tsx` + `useChatStreaming.ts` (`retryExpansion`/`dismissExpansion`)                     |
+| Change suggested terms                 | `main/suggested-terms.ts`, `shared/prompts.ts`, `lib/markdown.ts` (`suggestedTermRanges`)              |
 | Change the expand instruction text     | `shared/prompts.ts` (`buildExpandUserInstruction`, `buildExpandPromptedInstruction`)                   |
 | Change the Expand Prompt UI            | `components/conversation/ExpandPrompt.tsx`                                                             |
 | Change frame fold/unfold behaviour     | `shared/rich-text.ts` (`setExpansionFolded`) + `ExpansionFrame.tsx`                                    |
@@ -246,7 +254,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   X11/macOS/Windows and non-KDE Wayland.
 - **Config files** live under `{userData}/config/` (`providers.json`, `settings.json`).
   `settings.json` holds `hotkey`, `closeToTray`, `lookupContextMode`
-  (default `'none'`), `kbAutoMaintain` (default `true`) and `theme`
+  (default `'none'`), `kbAutoMaintain` (default `true`), `suggestTerms` (default `true`) and `theme`
   (`dark` / `light` / `system`, default `dark`); `save-settings` merges a **partial** patch over the stored settings
   (`mergeAppSettings`), so a caller sends only the fields it changes.
   Always go through `config.ts` helpers; call `ensureConfigDir()` before writing. Writes use
@@ -458,12 +466,46 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   image counts as `IMAGE_TOKEN_ESTIMATE` in the context budget. Expand, KB analysis, search and
   titles use text only; export writes a `_[Image: name]_` line.
 - **Selections are mapped by offset, never by string search.** `useExpansionContextMenu`
-  resolves each Range endpoint to its nearest `[data-src]` leaf plus the character offset,
-  refusing when the endpoints live in different scopes (turn vs. frame). A range is
-  expandable only if it lies inside one mdast text node (`isAnchoredRange`) and
-  `validateInsertion` accepts it: non-empty, in bounds, not crossing a block boundary, and
-  not overlapping an existing expansion (nesting must target the parent frame explicitly).
-  No `Range` objects survive into React state.
+  resolves each Range endpoint to its nearest `[data-src]` leaf plus the character offset (or the
+  `data-atom-start`/`-end` of a code block or formula, which have no per-character mapping),
+  refusing when the endpoints live in different scopes (turn vs. frame). `anchoredRange` then gives
+  the range an expansion would take: inside one text node as selected (`text`); a run of siblings
+  in one phrasing parent, with an edge inside bold or a link widened over that element (`inline`);
+  or one whole code block, formula or inline code span (`atom`). It refuses a selection across
+  blocks or table cells, and one cutting a text node whose rendered text is not its source slice
+  (escapes, quote markers), where DOM offsets would be wrong. `validateInsertion` must accept it
+  too: non-empty, in bounds, not crossing a block boundary (`atomic` targets skip this line-based
+  check, as a code block may hold blank lines), and not overlapping an existing expansion (nesting
+  must target the parent frame explicitly). No `Range` objects survive into React state.
+- **`originalText` may hold markdown.** A pill or frame header renders it with
+  `<Markdown anchored={false}>`, which omits `data-src`/`data-atom-*`: offsets there would be
+  relative to the snippet, so it must never look like a selection target. Code and formulas stay
+  visible above their answer (`frame-source`); plain words are replaced by it as before.
+- **A range can hold several expansions and shows one at a time.** The exact same range is not a
+  conflict in `validateInsertion`; any partial overlap still is. `insertExpansion` and
+  `setExpansionFolded(…, false)` fold the others on that range, `prepareMarkdownTree` splices only
+  `activeExpansion`, and `Markdown` hands `renderExpansion` the whole group. With several answers,
+  the pill and the frame's "N answers" button open a list (`ContextMenu` `items`). Right-clicking a
+  pill or pressing "Ask…" adds another answer; regenerate replaces one in place.
+- **Regenerating or removing a frame stops its streams first.** `discardExpandsForExpansions` drops
+  the node and its subtree from the request book, and `restartExpansion` clears `children` with the
+  answer, since their offsets point into the old text. The UI confirms when nested frames would go.
+- **An expansion request carries real context.** `buildExpandRequest` sends the system prompt,
+  screen context, up to `EXPAND_HISTORY_MESSAGES` earlier messages (text only), the turn, and for a
+  nested selection each ancestor as a question/answer pair. `chat-expand` runs `applyContextBudget`
+  like `chat-send`, so the newest context survives. Plain Expand defines a term and explains a
+  passage (`isTermSelection`).
+- **Expanding has several entry points, all through `submit`.** The context menu, the selection
+  bar, Ctrl/Cmd+E (Expand) and Ctrl/Cmd+Shift+E (Expand on…) resolve and validate the same way.
+  `EXPAND_INTENTS` store their text in `prompt`, so frames, export and the curator treat them as a
+  typed question.
+- **Suggested terms are session-only decoration.** After a send finishes normally, the renderer
+  invokes `chat-suggest-terms`; main makes one tool-less call through the `kb-maintenance` role,
+  judged only from the `index*` notes. It makes no request when `settings.json → suggestTerms` is
+  off (default on), no such model is assigned, no notes exist, or the answer is under 200 chars.
+  Results live in `useChatStreaming` state and are never written to the `Turn`, so a reopened
+  conversation shows none. `suggestedTermRanges` underlines at most one place per term, never in
+  code or on an expanded range, and the fragment keeps its `data-src`, so offsets stay exact.
 - **Cross-frame selections disable Expand.** A selection spanning an expansion boundary
   overlaps that expansion's source range, which `validateInsertion` refuses; the menu item
   renders disabled. The same function is shared by the menu (preview) and `expand()`
@@ -474,9 +516,10 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   the old renderer had already stripped markdown). Nothing in the renderer knows about
   segments.
 - **Custom expansion prompt ("Expand on…")** opens a floating `ExpandPrompt` input at the
-  right-click position. It appears as a third item in the context menu. On submit,
-  the prompt text (defaulting to `"elaborate on"` if empty) replaces the `"Define..."`
-  instruction via `buildExpandPromptedInstruction` in `prompts.ts`.
+  right-click position, or below the frame for "Ask…". On submit, the prompt text (defaulting to
+  `EXPAND_DEFAULT_PROMPT` if empty) replaces the define/explain instruction via
+  `buildExpandPromptedInstruction` in `prompts.ts`, and a non-blank prompt is shown on the frame;
+  a folded pill keeps it only as a tooltip.
 
 #### More Details
 

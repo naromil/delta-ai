@@ -9,21 +9,22 @@ import type { ImageAttachment } from '../../../shared/attachments'
 import type { ExpansionTarget } from '../../../shared/rich-text'
 import {
   expansionMessageInput,
+  expansionSubtreeIds,
   finalizeTurns,
   findExpansionInTurns,
   insertExpansionInTurns,
   maxExpansionId,
   removeExpansionInTurns,
-  setExpansionFolded,
-  updateExpansion
+  restartExpansion,
+  setExpansionFolded
 } from '../../../shared/rich-text'
 import { isAnchoredRange } from '../lib/markdown'
-import { getSystemPrompt } from '../../../shared/prompts'
-import { buildExpandMessages } from '../../../shared/expand-prompt'
+import { buildExpandRequest } from '../../../shared/expand-prompt'
 import {
   clearRequests,
   createRequests,
   discardExpands,
+  discardExpandsForExpansions,
   discardExpandsForTurns,
   generateRequestId,
   registerExpand,
@@ -52,6 +53,8 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
   contextReady: boolean
   conversationId: string | null
   conversationTitle: string
+  /** Terms to underline per turn id. Session-only: never written to the conversation. */
+  suggestedTerms: Readonly<Record<number, string[]>>
   send: (content: string, attachments?: ImageAttachment[]) => void
   stop: () => void
   retry: (turnId: number) => void
@@ -78,6 +81,7 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
   const [contextReady, setContextReady] = useState(role !== 'lookup')
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [conversationTitle, setConversationTitle] = useState('')
+  const [suggestedTerms, setSuggestedTerms] = useState<Readonly<Record<number, string[]>>>({})
   const requestsRef = useRef<RequestBookkeeping>(createRequests())
   const expansionIdCounterRef = useRef(1)
   const hasSentRef = useRef(false)
@@ -115,6 +119,13 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
       setLoading,
       setContextReady,
       requestSave,
+      onAnswerComplete: (turnId, text) => {
+        void window.api.suggestTerms(text).then((terms) => {
+          // The user may have moved on; a turn that is gone needs no underlines.
+          if (terms.length === 0 || !stateRef.current.turns.some((t) => t.id === turnId)) return
+          setSuggestedTerms((prev) => ({ ...prev, [turnId]: terms }))
+        })
+      },
       onGrown: options?.onGrown,
       onReplaceConversation: (imported) => {
         // The transferred conversation replaces every in-flight request; their
@@ -334,6 +345,16 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
         return { ok: false, reason: 'Select text inside a single paragraph.' }
       }
 
+      const messages = buildExpandRequest(
+        stateRef.current,
+        turn,
+        target.parentExpansionId,
+        target,
+        role,
+        prompt
+      )
+      if (!messages) return { ok: false, reason: 'Selection is no longer available.' }
+
       const expansionId = expansionIdCounterRef.current
       const insertion = insertExpansionInTurns(
         stateRef.current.turns,
@@ -345,19 +366,7 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
       if (!insertion.ok) return { ok: false, reason: insertion.reason }
 
       expansionIdCounterRef.current += 1
-      const allMessages: ProviderMessage[] = [
-        {
-          role: 'system',
-          content: getSystemPrompt(role as 'chat' | 'lookup')
-        },
-        ...buildExpandMessages({
-          answer: input.answer,
-          selection: input.selection,
-          ...(prompt !== undefined ? { prompt } : {})
-        })
-      ]
-
-      startExpansion(turnId, expansionId, allMessages)
+      startExpansion(turnId, expansionId, messages)
 
       setState((prev) => {
         const result = insertExpansionInTurns(prev.turns, turnId, target, expansionId, prompt)
@@ -368,6 +377,18 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
     [role, startExpansion]
   )
 
+  /** Stops the streams writing to an expansion or anything nested under it. */
+  const cancelExpansionStreams = useCallback((expansionId: number): void => {
+    const location = findExpansionInTurns(stateRef.current.turns, expansionId)
+    if (!location) return
+    const { book, requestIds } = discardExpandsForExpansions(
+      requestsRef.current,
+      new Set(expansionSubtreeIds(location.node))
+    )
+    requestsRef.current = book
+    for (const requestId of requestIds) window.api.chatCancel(requestId)
+  }, [])
+
   const retryExpansion = useCallback(
     (expansionId: number) => {
       const location = findExpansionInTurns(stateRef.current.turns, expansionId)
@@ -376,41 +397,34 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
       const input = expansionMessageInput(location.turn, parentId, location.node)
       if (!input || !isAnchoredRange(input.answer, location.node)) return
 
-      const messages: ProviderMessage[] = [
-        {
-          role: 'system',
-          content: getSystemPrompt(role as 'chat' | 'lookup')
-        },
-        ...buildExpandMessages({
-          answer: input.answer,
-          selection: input.selection,
-          ...(location.node.prompt !== undefined ? { prompt: location.node.prompt } : {})
-        })
-      ]
+      const messages = buildExpandRequest(
+        stateRef.current,
+        location.turn as Turn,
+        parentId,
+        location.node,
+        role,
+        location.node.prompt
+      )
+      if (!messages) return
 
+      cancelExpansionStreams(expansionId)
       startExpansion(location.turn.id, expansionId, messages)
-      setState((prev) => ({
-        ...prev,
-        turns: updateExpansion(prev.turns, expansionId, {
-          answer: '',
-          status: 'loading',
-          error: undefined
-        })
-      }))
+      setState((prev) => ({ ...prev, turns: restartExpansion(prev.turns, expansionId) }))
       requestSave(true)
     },
-    [role, startExpansion, requestSave]
+    [role, startExpansion, cancelExpansionStreams, requestSave]
   )
 
   const dismissExpansion = useCallback(
     (expansionId: number) => {
+      cancelExpansionStreams(expansionId)
       setState((prev) => ({
         ...prev,
         turns: removeExpansionInTurns(prev.turns, expansionId)
       }))
       requestSave(true)
     },
-    [requestSave]
+    [cancelExpansionStreams, requestSave]
   )
 
   const fold = useCallback(
@@ -498,6 +512,7 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
     contextReady,
     conversationId,
     conversationTitle,
+    suggestedTerms,
     send,
     stop,
     retry,

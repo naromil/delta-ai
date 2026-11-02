@@ -38,6 +38,7 @@ const DEFAULTS = {
   closeToTray: true,
   lookupContextMode: 'none',
   kbAutoMaintain: true,
+  suggestTerms: true,
   theme: 'dark'
 }
 
@@ -90,6 +91,7 @@ describe('mergeAppSettings', () => {
     closeToTray: false,
     lookupContextMode: 'clipboard' as const,
     kbAutoMaintain: false,
+    suggestTerms: false,
     theme: 'dark'
   }
 

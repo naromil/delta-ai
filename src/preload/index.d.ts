@@ -25,6 +25,7 @@ declare global {
         closeToTray: boolean
         lookupContextMode: string
         kbAutoMaintain: boolean
+        suggestTerms: boolean
         theme: string
       }>
       /** A partial update: omitted fields keep their stored value. */
@@ -33,6 +34,7 @@ declare global {
         closeToTray?: boolean
         lookupContextMode?: string
         kbAutoMaintain?: boolean
+        suggestTerms?: boolean
         theme?: string
       }) => Promise<{ success: boolean; hotkeyMode: 'global' | 'local'; error?: string }>
       getHotkeyStatus: () => Promise<{ accelerator: string; mode: 'global' | 'local' }>
@@ -68,6 +70,8 @@ declare global {
         role?: string
       }) => void
       chatCancel: (requestId: string) => void
+      /** Terms in a finished answer worth underlining; empty when off or unavailable. */
+      suggestTerms: (answer: string) => Promise<string[]>
       chatOnChunk: (cb: (data: { requestId: string; delta: string }) => void) => () => void
       chatOnResponse: (
         cb: (data: { requestId: string; text: string; cancelled?: boolean }) => void

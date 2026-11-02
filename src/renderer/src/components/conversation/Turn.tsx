@@ -4,6 +4,7 @@ import type { ExpansionNode } from '../../../../shared/rich-text'
 import { attachmentSrc } from '../../lib/image-attachments'
 import Markdown from './Markdown'
 import ExpansionFrame from './ExpansionFrame'
+import type { FramePopupAt } from './ExpansionFrame'
 
 interface TurnProps {
   turn: TurnType
@@ -16,6 +17,9 @@ interface TurnProps {
   onEdit?: (turnId: number, content: string) => boolean
   onRetryExpansion?: (expansionId: number) => void
   onDismissExpansion?: (expansionId: number) => void
+  onAskAnotherExpansion?: (expansionId: number, at: FramePopupAt) => void
+  onPickExpansionAnswer?: (expansionId: number, at: FramePopupAt) => void
+  suggestedTerms?: readonly string[]
 }
 
 function Turn({
@@ -27,7 +31,10 @@ function Turn({
   onRegenerate,
   onEdit,
   onRetryExpansion,
-  onDismissExpansion
+  onDismissExpansion,
+  onAskAnotherExpansion,
+  onPickExpansionAnswer,
+  suggestedTerms
 }: TurnProps): React.JSX.Element {
   const isUser = turn.role === 'user'
   const hasAttachments = (turn.attachments?.length ?? 0) > 0
@@ -89,16 +96,26 @@ function Turn({
 
   // Stable across streamed chunks, so memoized nested frames are not invalidated.
   const renderExpansion = useCallback(
-    (node: ExpansionNode) => (
+    (node: ExpansionNode, group: ExpansionNode[]) => (
       <ExpansionFrame
         node={node}
+        group={group}
         onFold={onFold}
         onUnfold={onUnfold}
         onRetry={onRetryExpansion}
         onDismiss={onDismissExpansion}
+        onAskAnother={onAskAnotherExpansion}
+        onPickAnswer={onPickExpansionAnswer}
       />
     ),
-    [onFold, onUnfold, onRetryExpansion, onDismissExpansion]
+    [
+      onFold,
+      onUnfold,
+      onRetryExpansion,
+      onDismissExpansion,
+      onAskAnotherExpansion,
+      onPickExpansionAnswer
+    ]
   )
 
   return (
@@ -187,6 +204,7 @@ function Turn({
             <Markdown
               source={turn.content}
               expansions={turn.expansions}
+              suggestedTerms={suggestedTerms}
               onFold={onFold}
               onUnfold={onUnfold}
               renderExpansion={renderExpansion}

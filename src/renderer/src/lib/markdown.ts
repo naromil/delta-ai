@@ -7,6 +7,8 @@ import remarkParse from 'remark-parse'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import type { ExpansionNode, ExpansionRange } from '../../../shared/rich-text'
+import { activeExpansion, isSameRange } from '../../../shared/rich-text'
+import { MAX_SUGGESTED_TERMS } from '../../../shared/suggested-terms'
 
 export const SOURCED_TEXT = 'sourcedText'
 export const EXPANSION_NODE = 'expansion'
@@ -21,6 +23,7 @@ export interface MarkdownNode {
   value?: string
   id?: number
   src?: number
+  suggested?: boolean
   lang?: string | null
   position?: MarkdownPosition
   children?: MarkdownNode[]
@@ -157,78 +160,257 @@ export function isDisplayMath(source: string, node: MarkdownNode): boolean {
   return delimiter === '$$' || delimiter === '\\['
 }
 
-const TEXT_SPAN_CACHE_LIMIT = 32
+/* ---- Anchoring ----
+ * An expansion replaces its range with one inline element, so a range must be
+ * something that can be lifted out of the tree whole: part of one text node, a
+ * run of siblings in one phrasing parent, or one code block or formula.
+ */
 
-/** Parsing is the expensive part of anchoring; keep the newest sources only. */
-const textSpanCache = new Map<string, ExpansionRange[]>()
+/** Rendered without `data-src` text and only ever targeted as a whole. */
+const ATOMS = new Set(['code', 'inlineCode', 'math', 'inlineMath', 'image'])
+const INLINE_WRAPPERS = new Set(['strong', 'emphasis', 'delete', 'link', 'linkReference'])
+const PHRASING_PARENTS = new Set(['paragraph', 'heading', 'tableCell', ...INLINE_WRAPPERS])
 
-/** Absolute source offsets of every mdast `text` node, in document order. */
-export function collectTextNodeSpans(source: string): ExpansionRange[] {
-  const cached = textSpanCache.get(source)
-  if (cached) return cached
+export interface AnchoredRange extends ExpansionRange {
+  /**
+   * `text`: inside one text node, where the rendered text is the source slice.
+   * `inline`: covers markdown markers (bold, a link, inline code among words).
+   * `atom`: exactly one code block, formula, inline code span or image.
+   */
+  kind: 'text' | 'inline' | 'atom'
+}
 
+function overlappingChildren(node: MarkdownNode, range: ExpansionRange): MarkdownNode[] {
+  return (node.children ?? []).filter((child) => {
+    const start = offsetAt(child.position, 'start')
+    const end = offsetAt(child.position, 'end')
+    return start !== null && end !== null && end > range.start && start < range.end
+  })
+}
+
+/** Whether DOM offsets inside this text node map 1:1 to the source (no escapes, no quote markers). */
+function isVerbatimText(node: MarkdownNode, source: string): boolean {
+  const start = offsetAt(node.position, 'start') ?? 0
+  const end = offsetAt(node.position, 'end') ?? 0
+  return source.slice(start, end) === node.value
+}
+
+function anchorInRun(
+  parent: MarkdownNode,
+  run: MarkdownNode[],
+  range: ExpansionRange,
+  source: string
+): AnchoredRange | null {
+  if (!PHRASING_PARENTS.has(parent.type)) return null
+  const first = run[0]
+  const last = run[run.length - 1]
+  const firstStart = offsetAt(first.position, 'start') ?? 0
+  const lastEnd = offsetAt(last.position, 'end') ?? 0
+  if (first.type === 'text' && !isVerbatimText(first, source)) return null
+  if (last.type === 'text' && !isVerbatimText(last, source)) return null
+  return {
+    // An edge inside bold or a link takes in the whole element: it cannot be split.
+    start: first.type === 'text' ? Math.max(range.start, firstStart) : firstStart,
+    end: last.type === 'text' ? Math.min(range.end, lastEnd) : lastEnd,
+    kind: 'inline'
+  }
+}
+
+function anchorIn(node: MarkdownNode, range: ExpansionRange, source: string): AnchoredRange | null {
+  const overlapping = overlappingChildren(node, range)
+  if (overlapping.length === 0) return null
+  if (overlapping.length > 1) return anchorInRun(node, overlapping, range, source)
+
+  const child = overlapping[0]
+  const start = offsetAt(child.position, 'start') ?? 0
+  const end = offsetAt(child.position, 'end') ?? 0
+  if (child.type === 'text') {
+    return { start: Math.max(range.start, start), end: Math.min(range.end, end), kind: 'text' }
+  }
+  if (ATOMS.has(child.type)) return { start, end, kind: 'atom' }
+  if (INLINE_WRAPPERS.has(child.type) && range.start <= start && range.end >= end) {
+    return { start, end, kind: 'inline' }
+  }
+  return anchorIn(child, range, source)
+}
+
+/**
+ * The range an expansion would actually take for a selection: edges that fall
+ * inside an element that cannot be split widen to cover it. `null` when the
+ * selection cannot become one inline element (it crosses a block boundary).
+ */
+export function anchoredRange(source: string, range: ExpansionRange): AnchoredRange | null {
+  if (range.start >= range.end) return null
+  return anchorIn(parseMarkdown(source), range, source)
+}
+
+/** Whether an expansion can sit on exactly this range. */
+export function isAnchoredRange(source: string, range: ExpansionRange): boolean {
+  const anchored = anchoredRange(source, range)
+  return anchored !== null && anchored.start === range.start && anchored.end === range.end
+}
+
+/** Whether this slice shows the same with or without markdown rendering. */
+export function isPlainMarkdown(text: string): boolean {
+  if (!/[*_`$~[\]\\]|^\s*(#|>|\d+[.)]\s|[-+]\s)/m.test(text)) return true
+  const [block, ...rest] = parseMarkdown(text).children ?? []
+  if (rest.length > 0 || block?.type !== 'paragraph') return false
+  const [inner, ...others] = block.children ?? []
+  return others.length === 0 && inner?.type === 'text' && inner.value === text
+}
+
+/* ---- Suggested terms ---- */
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function verbatimTextSpans(source: string): ExpansionRange[] {
   const spans: ExpansionRange[] = []
   walk(parseMarkdown(source), (node) => {
-    if (node.type !== 'text') return
+    if (node.type !== 'text' || !isVerbatimText(node, source)) return
     const start = offsetAt(node.position, 'start')
     const end = offsetAt(node.position, 'end')
-    if (start === null || end === null) return
-    spans.push({ start, end })
+    if (start !== null && end !== null) spans.push({ start, end })
   })
-
-  textSpanCache.set(source, spans)
-  if (textSpanCache.size > TEXT_SPAN_CACHE_LIMIT) {
-    const oldest = textSpanCache.keys().next().value
-    if (oldest !== undefined) textSpanCache.delete(oldest)
-  }
   return spans
 }
 
 /**
- * An expansion can only be spliced into a single mdast text node: that keeps
- * the annotation inside one block and one phrasing run, so replacing the range
- * with an inline element is always valid.
+ * Where to underline each term: its first whole-word occurrence in prose, never
+ * in code or on text an expansion already covers. Each term marks one place, so
+ * an answer stays readable however often the word recurs.
  */
-export function isAnchoredRange(source: string, range: ExpansionRange): boolean {
-  if (range.start >= range.end) return false
-  return collectTextNodeSpans(source).some(
-    (span) => span.start <= range.start && range.end <= span.end
-  )
+export function suggestedTermRanges(
+  source: string,
+  terms: readonly string[],
+  expansions: ExpansionNode[]
+): ExpansionRange[] {
+  if (terms.length === 0) return []
+  const spans = verbatimTextSpans(source)
+  const taken: ExpansionRange[] = [...expansions]
+  const ranges: ExpansionRange[] = []
+
+  for (const term of terms.slice(0, MAX_SUGGESTED_TERMS)) {
+    // Once expanded it has done its job; don't move the underline to a later mention.
+    const key = term.toLowerCase()
+    if (expansions.some((node) => node.originalText.toLowerCase() === key)) continue
+    const pattern = new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(term)}(?![\\p{L}\\p{N}])`, 'iu')
+    for (const span of spans) {
+      const match = pattern.exec(source.slice(span.start, span.end))
+      if (!match) continue
+      const start = span.start + match.index
+      const range = { start, end: start + match[0].length }
+      if (taken.some((other) => range.start < other.end && other.start < range.end)) continue
+      taken.push(range)
+      ranges.push(range)
+      break
+    }
+  }
+  return ranges
+}
+
+function splitTextNode(
+  children: MarkdownNode[],
+  index: number,
+  range: ExpansionRange,
+  replacement: MarkdownNode
+): void {
+  const child = children[index]
+  const start = offsetAt(child.position, 'start') ?? 0
+  const end = offsetAt(child.position, 'end') ?? 0
+  const value = child.value ?? ''
+  const before = value.slice(0, range.start - start)
+  const after = value.slice(range.end - start)
+  const nodes: MarkdownNode[] = []
+  if (before !== '') nodes.push(textNode(before, start, range.start))
+  nodes.push(replacement)
+  if (after !== '') nodes.push(textNode(after, range.end, end))
+  children.splice(index, 1, ...nodes)
+}
+
+function markSuggestedInChildren(parent: MarkdownNode, range: ExpansionRange): boolean {
+  const children = parent.children ?? []
+  for (let index = 0; index < children.length; index++) {
+    const child = children[index]
+    const start = offsetAt(child.position, 'start')
+    const end = offsetAt(child.position, 'end')
+    if (start === null || end === null || start > range.start || end < range.end) continue
+    if (child.type === 'text') {
+      const marked = textNode(
+        (child.value ?? '').slice(range.start - start, range.end - start),
+        range.start,
+        range.end
+      )
+      marked.suggested = true
+      splitTextNode(children, index, range, marked)
+      return true
+    }
+    if (markSuggestedInChildren(child, range)) return true
+  }
+  return false
+}
+
+function spliceRun(
+  children: MarkdownNode[],
+  firstIndex: number,
+  lastIndex: number,
+  expansion: ExpansionNode
+): void {
+  const first = children[firstIndex]
+  const last = children[lastIndex]
+  const nodes: MarkdownNode[] = []
+  if (first.type === 'text') {
+    const start = offsetAt(first.position, 'start') ?? 0
+    const before = (first.value ?? '').slice(0, expansion.start - start)
+    if (before !== '') nodes.push(textNode(before, start, expansion.start))
+  }
+  nodes.push({ type: EXPANSION_NODE, id: expansion.id })
+  if (last.type === 'text') {
+    const start = offsetAt(last.position, 'start') ?? 0
+    const end = offsetAt(last.position, 'end') ?? 0
+    const after = (last.value ?? '').slice(expansion.end - start)
+    if (after !== '') nodes.push(textNode(after, expansion.end, end))
+  }
+  children.splice(firstIndex, lastIndex - firstIndex + 1, ...nodes)
 }
 
 function spliceInChildren(parent: MarkdownNode, expansion: ExpansionNode): boolean {
   const children = parent.children
   if (!children) return false
+  const overlapping = overlappingChildren(parent, expansion)
+  if (overlapping.length === 0) return false
 
-  for (let index = 0; index < children.length; index++) {
-    const child = children[index]
-    const start = offsetAt(child.position, 'start')
-    const end = offsetAt(child.position, 'end')
-    if (start === null || end === null) continue
-    if (end <= expansion.start || start >= expansion.end) continue
+  const firstIndex = children.indexOf(overlapping[0])
+  const lastIndex = children.indexOf(overlapping[overlapping.length - 1])
+  const first = overlapping[0]
+  const last = overlapping[overlapping.length - 1]
+  const start = offsetAt(first.position, 'start') ?? 0
+  const end = offsetAt(last.position, 'end') ?? 0
 
-    if (child.type === 'text' && start <= expansion.start && expansion.end <= end) {
-      const value = child.value ?? ''
-      const localStart = expansion.start - start
-      const localEnd = expansion.end - start
-      const before = value.slice(0, localStart)
-      const after = value.slice(localEnd)
-
-      const replacement: MarkdownNode[] = []
-      if (before !== '') replacement.push(textNode(before, start, expansion.start))
-      replacement.push({ type: EXPANSION_NODE, id: expansion.id })
-      if (after !== '') replacement.push(textNode(after, expansion.end, end))
-
-      children.splice(index, 1, ...replacement)
-      return true
-    }
-
-    if (start <= expansion.start && expansion.end <= end && spliceInChildren(child, expansion)) {
-      return true
-    }
+  if (overlapping.length > 1) {
+    if (!PHRASING_PARENTS.has(parent.type)) return false
+    // An edge may only cut a text node; anything else must lie inside the range.
+    if (first.type !== 'text' && start < expansion.start) return false
+    if (last.type !== 'text' && end > expansion.end) return false
+    if (first.type === 'text' && start > expansion.start) return false
+    if (last.type === 'text' && end < expansion.end) return false
+    spliceRun(children, firstIndex, lastIndex, expansion)
+    return true
   }
 
-  return false
+  const contains = start <= expansion.start && expansion.end <= end
+  if (!contains) return false
+  if (first.type === 'text') {
+    spliceRun(children, firstIndex, firstIndex, expansion)
+    return true
+  }
+  const isWhole = start === expansion.start && end === expansion.end
+  if (isWhole && (ATOMS.has(first.type) || INLINE_WRAPPERS.has(first.type))) {
+    spliceRun(children, firstIndex, firstIndex, expansion)
+    return true
+  }
+  return spliceInChildren(first, expansion)
 }
 
 function markSourceText(node: MarkdownNode): void {
@@ -241,15 +423,31 @@ function markSourceText(node: MarkdownNode): void {
   for (const child of node.children ?? []) markSourceText(child)
 }
 
+/** Several expansions on one range share one place in the text: the active one. */
+function visibleExpansions(expansions: ExpansionNode[]): ExpansionNode[] {
+  const visible: ExpansionNode[] = []
+  for (const node of expansions) {
+    if (visible.some((other) => isSameRange(other, node))) continue
+    const active = activeExpansion(expansions.filter((other) => isSameRange(other, node)))
+    if (active) visible.push(active)
+  }
+  return visible.sort((a, b) => a.start - b.start)
+}
+
 /**
  * Parses `source` and splices every anchored expansion into the tree as an
  * `expansion` node between split text fragments. Each remaining text node is
- * converted to a `sourcedText` node carrying its absolute source offset.
+ * converted to a `sourcedText` node carrying its absolute source offset, and
+ * `suggested` ranges become their own text nodes so they can be underlined.
  */
-export function prepareMarkdownTree(source: string, expansions: ExpansionNode[]): MarkdownNode {
+export function prepareMarkdownTree(
+  source: string,
+  expansions: ExpansionNode[],
+  suggested: readonly ExpansionRange[] = []
+): MarkdownNode {
   const tree = parseMarkdown(source)
-  const ordered = [...expansions].sort((a, b) => a.start - b.start)
-  for (const expansion of ordered) spliceInChildren(tree, expansion)
+  for (const expansion of visibleExpansions(expansions)) spliceInChildren(tree, expansion)
+  for (const range of suggested) markSuggestedInChildren(tree, range)
   markSourceText(tree)
   return tree
 }

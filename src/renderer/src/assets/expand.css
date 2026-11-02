@@ -53,26 +53,143 @@
   text-overflow: ellipsis;
 }
 
+.frame-question {
+  display: block;
+  margin-bottom: 0.25em;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+  user-select: none;
+}
+
+.frame-source {
+  display: block;
+  margin-bottom: 0.4em;
+  padding-bottom: 0.4em;
+  border-bottom: 1px solid var(--border-strong);
+  user-select: none;
+}
+
 .frame-actions {
   display: flex;
-  gap: 6px;
-  margin-top: 0.4em;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 4px;
+  margin-top: 0.3em;
+  user-select: none;
 }
 
 .frame-action {
-  background: var(--surface-3);
-  border: 1px solid var(--border-strong);
+  background: transparent;
+  border: none;
   border-radius: var(--radius-sm);
-  color: var(--text-1);
+  color: var(--text-3);
   font: inherit;
   font-size: 12px;
-  padding: 2px 10px;
+  padding: 1px 6px;
   cursor: pointer;
+  transition:
+    background var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
 }
 
 .frame-action:hover {
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+
+.frame-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.frame.error .frame-action {
+  color: var(--text-1);
+}
+
+/* A term the document base suggests is new: quiet enough to read past. */
+.suggested-term {
+  text-decoration: underline dotted var(--accent);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.suggested-term:hover {
+  background: var(--accent-soft);
+  border-radius: 3px;
+}
+
+.suggested-term:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+
+/* A slice with bold or code renders through markdown, but a pill or term stays one line. */
+.queried .md-p,
+.frame-term .md-p {
+  display: inline;
+  margin: 0;
+}
+
+.queried-count {
+  margin-left: 5px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--surface-3);
+  color: var(--text-2);
+  font-size: 0.8em;
+}
+
+.expand-selection-bar {
+  position: fixed;
+  z-index: var(--z-menu);
+  display: flex;
+  gap: 2px;
+  max-width: calc(100vw - 16px);
+  padding: 3px;
   background: var(--surface-2);
-  border-color: var(--accent);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-3);
+  animation: menuIn var(--dur-1) var(--ease-out);
+}
+
+.expand-intents {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-top: 6px;
+}
+
+.expand-intent {
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  padding: 3px 7px;
+  cursor: pointer;
+  transition:
+    background var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
+}
+
+.expand-intent:hover {
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+
+.expand-intent:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.expand-intent--primary {
+  color: var(--accent);
+  font-weight: 600;
 }
 
 .expand-notice {
@@ -99,6 +216,7 @@
   width: 15px;
   height: 15px;
   margin-left: 4px;
+  margin-right: auto;
   border-radius: 4px;
   font-size: 10px;
   color: var(--accent);
@@ -184,6 +302,22 @@
   transition:
     background var(--dur-1) var(--ease-out),
     color var(--dur-1) var(--ease-out);
+}
+
+#ctxMenu .item--stacked {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  max-width: 320px;
+}
+
+#ctxMenu .item-detail {
+  max-width: 100%;
+  color: var(--text-3);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 #ctxMenu .item:hover:not(:disabled) {

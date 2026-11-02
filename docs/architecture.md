@@ -36,7 +36,7 @@ Both windows talk to the same main process. Everything the app knows about the u
 | `src/shared/conversation.ts`                                      | `ConversationState` / `Turn` / `ConversationRecord`: a turn is markdown `content` plus `expansions: ExpansionNode[]`. `persistableTurns`, `serializeForChat`, `buildConversationTitle`, and `migrateConversationRecord` (the load-time legacy boundary)                                                                                                      |
 | `src/shared/rich-text.ts`                                         | The rich-text model and all pure operations: `ExpansionNode` (absolute `[start,end)` anchors, markdown `answer`, `status`, `folded`, nested `children`), `validateInsertion`, `insertExpansion(InTurns)`, `updateExpansion`, `setExpansionFolded`, `findExpansionIn*`, `maxExpansionId`, `expansionMessageInput`, `flattenMarkdown`, `migrateLegacySegments` |
 | `src/shared/prompts.ts`                                           | Every LLM-facing string: system prompts, screen-context template, lookup default, expand instructions, KB prompts                                                                                                                                                                                                                                            |
-| `src/shared/expand-prompt.ts`                                     | `buildExpandMessages({ answer, selection, prompt? })`                                                                                                                                                                                                                                                                                                        |
+| `src/shared/expand-prompt.ts`                                     | `buildExpandRequest` (system prompt, recent history, ancestor chain, instruction) over `buildExpandMessages`                                                                                                                                                                                                                                                 |
 | `src/shared/context-budget.ts`                                    | Pure budgeting: `estimateTokens` (4 chars/token), `budgetFor` (85% of the window minus a capped output reserve, floor 1024), `trimMessages` (drops the oldest non-system messages, never the last)                                                                                                                                                           |
 | `src/main/index.ts`                                               | App lifecycle, main window, tray, streaming IPC (`chat-send`, `chat-expand`, `chat-cancel`) with `safeSend` + owner-scoped cancellation, lookup grow/transfer, conversation CRUD + search/export channels                                                                                                                                                    |
 | `src/main/context-budget.ts`                                      | `applyContextBudget(messages, role)`: trims sends using the cached models.dev entry (`getCachedModel`, no network); returns the input untouched on any missing input or error                                                                                                                                                                                |
@@ -113,13 +113,18 @@ Both windows talk to the same main process. Everything the app knows about the u
    `turn.content` at the top level, or one expansion's `answer` when the anchors sit inside its
    `data-expansion-id` frame. Endpoints in different scopes are refused. No string search and no
    `Range` survives into React state.
-2. A range is expandable only when it lies inside a single mdast text node
-   (`lib/markdown.ts: isAnchoredRange`) and `validateInsertion` (`shared/rich-text.ts`) accepts
-   it: in bounds, non-empty, no block boundary, and no overlap with an existing expansion.
-   The menu's disabled state and `expand()` use the same checks.
-3. `useChatStreaming.expand` calls `expansionMessageInput` (current markdown answer + selected
-   excerpt), inserts a `status: 'loading'` node via `insertExpansionInTurns`, then sends
-   `chat-expand` with `buildExpandMessages`.
+2. `lib/markdown.ts: anchoredRange` gives the range an expansion would take: part of one text
+   node, a run of siblings in one phrasing parent (an edge inside bold or a link widens over that
+   element), or one whole code block or formula, whose rendered elements carry
+   `data-atom-start`/`-end`. `validateInsertion` (`shared/rich-text.ts`) must accept it too: in
+   bounds, non-empty, no block boundary (skipped for those whole blocks), and no partial overlap
+   with an existing expansion. The exact same range is allowed and adds another answer there; one
+   shows at a time and the rest are reached from a list. The menu, the selection bar, the
+   Ctrl/Cmd+E shortcuts and `expand()` all use the same checks.
+3. `useChatStreaming.expand` builds the request with `buildExpandRequest` (question and recent
+   turns, plus the ancestor chain for a nested selection), inserts a `status: 'loading'` node via
+   `insertExpansionInTurns`, then sends `chat-expand`. Main adds the auto-loaded notes and applies
+   the context budget.
 4. `chat-expand-chunk` carries `{ text, done? }` or `{ error }`; a cancelled expand ends with
    `{ text: partial, done: true, cancelled: true }`. The handler patches `answer` with the
    cumulative text, flips `status` to `'done'` on completion and to `'error'` with the message on

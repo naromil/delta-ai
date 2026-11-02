@@ -38,8 +38,14 @@ export interface ExpansionRange {
 /** Insertion target: an offset range in a turn body or in one expansion answer. */
 export interface ExpansionTarget extends ExpansionRange {
   parentExpansionId?: number
-  /** The text the user actually selected, for the submit-time equality check. */
+  /** The source text the target was resolved from, for the submit-time equality check. */
   selection?: string
+  /**
+   * The range is one whole code block or formula, as resolved by the markdown
+   * parser. Such a block may contain blank lines, so the line-based block
+   * boundary check does not apply.
+   */
+  atomic?: boolean
 }
 
 /** Fields a caller may change on an existing node. Structure is immutable. */
@@ -153,11 +159,20 @@ export function crossesBlockBoundary(source: string, start: number, end: number)
 
 /* ---- Insertion ---- */
 
+export function isSameRange(a: ExpansionRange, b: ExpansionRange): boolean {
+  return a.start === b.start && a.end === b.end
+}
+
+/** The one expansion a range shows: the open one, else the newest. */
+export function activeExpansion(group: ExpansionNode[]): ExpansionNode | undefined {
+  return group.findLast((node) => !node.folded) ?? group[group.length - 1]
+}
+
 /** Returns the refusal reason, or `null` when the target is expandable. */
 export function validateInsertion(
   source: string,
   expansions: ExpansionNode[],
-  range: ExpansionRange
+  range: ExpansionRange & { atomic?: boolean }
 ): InsertionRefusal | null {
   const { start, end } = range
   const inBounds =
@@ -172,11 +187,13 @@ export function validateInsertion(
 
   for (const node of expansions) {
     if (end <= node.start || start >= node.end) continue
+    // The same range again is another question about that passage, not a conflict.
+    if (start === node.start && end === node.end) continue
     if (start >= node.start && end <= node.end) return 'inside-expansion'
     return 'overlaps-expansion'
   }
 
-  if (crossesBlockBoundary(source, start, end)) return 'cross-block'
+  if (!range.atomic && crossesBlockBoundary(source, start, end)) return 'cross-block'
   return null
 }
 
@@ -185,12 +202,11 @@ export function validateInsertion(
  * user selected. Offsets are re-resolved at submit time, but the source may
  * have changed underneath a stale snapshot; the covered slice must match.
  *
- * The comparison is exact and untrimmed by design: the renderer only anchors a
- * range inside one mdast text node, whose rendered text *is* the source slice
- * (markdown markers live outside text nodes), so `Selection.toString()` and
- * `source.slice(start, end)` agree byte for byte. A selection that includes
- * markdown markers necessarily spans several nodes and is refused by the
- * renderer's `isAnchoredRange` check before this function runs.
+ * The comparison is exact and untrimmed by design. Inside one mdast text node
+ * the rendered text *is* the source slice, so the renderer passes
+ * `Selection.toString()` and any drift is caught. A range covering markdown
+ * markers has no such rendered equivalent, so the renderer passes the slice it
+ * resolved against, which still catches a source that changed before submit.
  */
 export function validateExpansionTarget(
   source: string,
@@ -228,7 +244,11 @@ export function insertExpansion(
     children: []
   }
 
-  const next = [...expansions, node].sort((a, b) => a.start - b.start)
+  // One range shows one frame at a time, and the newest question is the one asked for.
+  const others = expansions.map((other) =>
+    isSameRange(other, node) && !other.folded ? { ...other, folded: true } : other
+  )
+  const next = [...others, node].sort((a, b) => a.start - b.start)
   return { ok: true, expansions: next, node }
 }
 
@@ -257,6 +277,21 @@ export function findExpansionInTurns<T extends RichTextTurn>(
   return null
 }
 
+/** Ancestors of `id`, outermost first, ending with the expansion itself. */
+export function expansionPath(nodes: ExpansionNode[], id: number): ExpansionNode[] | null {
+  for (const node of nodes) {
+    if (node.id === id) return [node]
+    const below = expansionPath(node.children, id)
+    if (below) return [node, ...below]
+  }
+  return null
+}
+
+/** The expansion and everything nested under it. */
+export function expansionSubtreeIds(node: ExpansionNode): number[] {
+  return [node.id, ...node.children.flatMap(expansionSubtreeIds)]
+}
+
 /** Highest expansion id across turns and nesting levels. */
 export function maxExpansionId(turns: RichTextTurn[]): number {
   let max = 0
@@ -272,16 +307,14 @@ export function maxExpansionId(turns: RichTextTurn[]): number {
 
 /* ---- Updates ---- */
 
-function patchMatches(node: ExpansionNode, patch: ExpansionPatch): boolean {
-  return (Object.keys(patch) as Array<keyof ExpansionPatch>).every(
-    (key) => node[key] === patch[key]
-  )
+function patchMatches(node: ExpansionNode, patch: Partial<ExpansionNode>): boolean {
+  return (Object.keys(patch) as Array<keyof ExpansionNode>).every((key) => node[key] === patch[key])
 }
 
 function updateInNodes(
   nodes: ExpansionNode[],
   id: number,
-  patch: ExpansionPatch,
+  patch: Partial<ExpansionNode>,
   state: { matched: boolean }
 ): ExpansionNode[] {
   let changed = false
@@ -301,11 +334,10 @@ function updateInNodes(
   return changed ? next : nodes
 }
 
-/** Apply a non-structural patch to one expansion, at any depth. */
-export function updateExpansion<T extends RichTextTurn>(
+function patchExpansion<T extends RichTextTurn>(
   turns: T[],
   id: number,
-  patch: ExpansionPatch
+  patch: Partial<ExpansionNode>
 ): T[] {
   const state = { matched: false }
   let changed = false
@@ -319,12 +351,45 @@ export function updateExpansion<T extends RichTextTurn>(
   return changed ? next : turns
 }
 
+/** Apply a non-structural patch to one expansion, at any depth. */
+export function updateExpansion<T extends RichTextTurn>(
+  turns: T[],
+  id: number,
+  patch: ExpansionPatch
+): T[] {
+  return patchExpansion(turns, id, patch)
+}
+
+/**
+ * Puts an expansion back to waiting for a fresh answer. Nested expansions go
+ * with the old answer: their offsets point into text that is about to change.
+ */
+export function restartExpansion<T extends RichTextTurn>(turns: T[], id: number): T[] {
+  return patchExpansion(turns, id, {
+    answer: '',
+    status: 'loading',
+    error: undefined,
+    folded: false,
+    children: []
+  })
+}
+
+/** Unfolding one expansion folds the others on its range: a range shows one frame at a time. */
 export function setExpansionFolded<T extends RichTextTurn>(
   turns: T[],
   id: number,
   folded: boolean
 ): T[] {
-  return updateExpansion(turns, id, { folded })
+  if (folded) return updateExpansion(turns, id, { folded })
+  const location = findExpansionInTurns(turns, id)
+  if (!location) return turns
+  let next = turns
+  for (const sibling of location.siblings) {
+    if (sibling.id !== id && !sibling.folded && isSameRange(sibling, location.node)) {
+      next = updateExpansion(next, sibling.id, { folded: true })
+    }
+  }
+  return updateExpansion(next, id, { folded })
 }
 
 function removeInNodes(

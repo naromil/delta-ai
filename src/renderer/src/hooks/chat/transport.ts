@@ -27,6 +27,8 @@ export interface ChatTransportHandlers {
   setLoading: (loading: boolean) => void
   setContextReady: (contextReady: boolean) => void
   requestSave: (touchContent: boolean) => void
+  /** A send finished normally, so its answer is final. */
+  onAnswerComplete?: (turnId: number, text: string) => void
   onReplaceConversation?: (payload: ReplaceConversationPayload) => void
   onGrown?: () => void
 }
@@ -69,6 +71,7 @@ export function subscribeChatTransport(handlers: ChatTransportHandlers): () => v
       })
       handlers.setLoading(false)
       handlers.requestSave(true)
+      if (!data.cancelled) handlers.onAnswerComplete?.(pending.turnId, data.text)
     })
   )
 

@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { EXPAND_INTENTS } from '../../../../shared/prompts'
 
 export interface ExpandPromptState {
   x: number
@@ -35,7 +36,7 @@ function ExpandPrompt({ state, onClose }: ExpandPromptProps): React.JSX.Element 
     const focusTimer = setTimeout(() => inputRef.current?.focus(), 0)
 
     const handleMouseDown = (e: MouseEvent): void => {
-      if (inputRef.current && !inputRef.current.contains(e.target as Node)) {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
         onClose()
       }
     }
@@ -55,9 +56,8 @@ function ExpandPrompt({ state, onClose }: ExpandPromptProps): React.JSX.Element 
 
   if (!state) return null
 
-  const handleSubmit = (): void => {
-    const value = inputRef.current?.value ?? ''
-    state.onSubmit(value)
+  const submit = (prompt: string): void => {
+    state.onSubmit(prompt)
     onClose()
   }
 
@@ -75,12 +75,25 @@ function ExpandPrompt({ state, onClose }: ExpandPromptProps): React.JSX.Element 
         placeholder="Expand on…"
         autoComplete="off"
         onKeyDown={(e) => {
-          if (e.key === 'Enter') {
+          if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
             e.preventDefault()
-            handleSubmit()
+            submit(inputRef.current?.value ?? '')
           }
         }}
       />
+      <div className="expand-intents">
+        {EXPAND_INTENTS.map((intent) => (
+          <button
+            key={intent.label}
+            type="button"
+            className="expand-intent"
+            title={intent.prompt}
+            onClick={() => submit(intent.prompt)}
+          >
+            {intent.label}
+          </button>
+        ))}
+      </div>
     </div>
   )
 }

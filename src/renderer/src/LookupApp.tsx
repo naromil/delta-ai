@@ -7,6 +7,7 @@ import Turn from './components/conversation/Turn'
 import ContextMenu from './components/conversation/ContextMenu'
 import { LOOKUP_DEFAULT_QUERY } from '../../shared/prompts'
 import ExpandPrompt from './components/conversation/ExpandPrompt'
+import ExpandSelectionBar from './components/conversation/ExpandSelectionBar'
 
 function readFileAsBase64(file: File): Promise<string | null> {
   return new Promise((resolve) => {
@@ -40,6 +41,7 @@ function LookupApp(): React.JSX.Element {
     expand,
     retryExpansion,
     dismissExpansion,
+    suggestedTerms,
     fold,
     unfold,
     setState,
@@ -56,12 +58,24 @@ function LookupApp(): React.JSX.Element {
   const {
     ctxMenu,
     expandPrompt,
+    selectionBar,
     notice,
     handleContextMenu,
+    handleSuggestedTerm,
+    regenerateExpansion,
+    removeExpansion,
+    askAnotherExpansion,
+    pickExpansionAnswer,
     closeContextMenu,
     closeExpandPrompt,
     dismissNotice
-  } = useExpansionContextMenu({ turns: state.turns, onExpand: expand })
+  } = useExpansionContextMenu({
+    turns: state.turns,
+    onExpand: expand,
+    onUnfold: unfold,
+    onRetryExpansion: retryExpansion,
+    onDismissExpansion: dismissExpansion
+  })
 
   /* ---- Flash hint helper ---- */
   const flashHint = useCallback((msg?: string) => {
@@ -328,14 +342,19 @@ function LookupApp(): React.JSX.Element {
               className="message-turn"
               data-turn-id={turn.id}
               onContextMenu={handleContextMenu}
+              onClick={handleSuggestedTerm}
+              onKeyDown={handleSuggestedTerm}
             >
               <Turn
                 turn={turn}
                 loading={loading}
                 onFold={fold}
                 onUnfold={unfold}
-                onRetryExpansion={retryExpansion}
-                onDismissExpansion={dismissExpansion}
+                onRetryExpansion={regenerateExpansion}
+                onDismissExpansion={removeExpansion}
+                onAskAnotherExpansion={askAnotherExpansion}
+                onPickExpansionAnswer={pickExpansionAnswer}
+                suggestedTerms={suggestedTerms[turn.id]}
               />
             </div>
           ))}
@@ -343,6 +362,7 @@ function LookupApp(): React.JSX.Element {
       </div>
       <ContextMenu state={ctxMenu} onClose={closeContextMenu} />
       <ExpandPrompt state={expandPrompt} onClose={closeExpandPrompt} />
+      <ExpandSelectionBar state={selectionBar} />
       {notice ? (
         <div className="expand-notice" role="status" onClick={dismissNotice}>
           {notice}

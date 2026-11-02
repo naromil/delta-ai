@@ -44,9 +44,17 @@ function settingsSnapshot(
   closeToTray: boolean,
   lookupContextMode: LookupContextMode,
   kbAutoMaintain: boolean,
+  suggestTerms: boolean,
   theme: ThemeMode
 ): string {
-  return JSON.stringify({ hotkey, closeToTray, lookupContextMode, kbAutoMaintain, theme })
+  return JSON.stringify({
+    hotkey,
+    closeToTray,
+    lookupContextMode,
+    kbAutoMaintain,
+    suggestTerms,
+    theme
+  })
 }
 
 function Settings(): React.JSX.Element {
@@ -62,6 +70,7 @@ function Settings(): React.JSX.Element {
   const [closeToTray, setCloseToTray] = useState(true)
   const [lookupContextMode, setLookupContextMode] = useState<LookupContextMode>('none')
   const [kbAutoMaintain, setKbAutoMaintain] = useState(true)
+  const [suggestTerms, setSuggestTerms] = useState(true)
   const [theme, setTheme] = useState<ThemeMode>('dark')
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -74,6 +83,7 @@ function Settings(): React.JSX.Element {
     closeToTray,
     lookupContextMode,
     kbAutoMaintain,
+    suggestTerms,
     theme
   })
   const hydratedRef = useRef(false)
@@ -103,6 +113,7 @@ function Settings(): React.JSX.Element {
         closeToTray?: boolean
         lookupContextMode?: string
         kbAutoMaintain?: boolean
+        suggestTerms?: boolean
         theme?: string
       } | null
       const config = (
@@ -117,6 +128,7 @@ function Settings(): React.JSX.Element {
           ? settings.lookupContextMode
           : 'none'
       const nextKbAutoMaintain = settings?.kbAutoMaintain ?? true
+      const nextSuggestTerms = settings?.suggestTerms ?? true
       const nextTheme: ThemeMode =
         settings?.theme === 'system' || settings?.theme === 'light' || settings?.theme === 'dark'
           ? settings.theme
@@ -129,6 +141,7 @@ function Settings(): React.JSX.Element {
         nextTray,
         nextMode,
         nextKbAutoMaintain,
+        nextSuggestTerms,
         nextTheme
       )
       setModelConfig(config)
@@ -136,6 +149,7 @@ function Settings(): React.JSX.Element {
       setCloseToTray(nextTray)
       setLookupContextMode(nextMode)
       setKbAutoMaintain(nextKbAutoMaintain)
+      setSuggestTerms(nextSuggestTerms)
       setTheme(nextTheme)
       hydratedRef.current = true
       setHydrated(true)
@@ -207,6 +221,7 @@ function Settings(): React.JSX.Element {
       nextTray: boolean,
       nextMode: LookupContextMode,
       nextKbAutoMaintain: boolean,
+      nextSuggestTerms: boolean,
       nextTheme: ThemeMode
     ): Promise<void> => {
       setSaveStatus('saving')
@@ -228,6 +243,7 @@ function Settings(): React.JSX.Element {
           nextTray,
           nextMode,
           nextKbAutoMaintain,
+          nextSuggestTerms,
           nextTheme
         )
         if (settingsJson !== savedSettingsRef.current) {
@@ -236,6 +252,7 @@ function Settings(): React.JSX.Element {
             closeToTray: nextTray,
             lookupContextMode: nextMode,
             kbAutoMaintain: nextKbAutoMaintain,
+            suggestTerms: nextSuggestTerms,
             theme: nextTheme
           })
           if (!settingsRes.success) {
@@ -263,11 +280,18 @@ function Settings(): React.JSX.Element {
       nextTray: boolean,
       nextMode: LookupContextMode,
       nextKbAutoMaintain: boolean,
+      nextSuggestTerms: boolean,
       nextTheme: ThemeMode
     ): boolean =>
       JSON.stringify(config) !== savedConfigRef.current ||
-      settingsSnapshot(nextHotkey, nextTray, nextMode, nextKbAutoMaintain, nextTheme) !==
-        savedSettingsRef.current,
+      settingsSnapshot(
+        nextHotkey,
+        nextTray,
+        nextMode,
+        nextKbAutoMaintain,
+        nextSuggestTerms,
+        nextTheme
+      ) !== savedSettingsRef.current,
     []
   )
 
@@ -278,16 +302,36 @@ function Settings(): React.JSX.Element {
       closeToTray,
       lookupContextMode,
       kbAutoMaintain,
+      suggestTerms,
       theme
     }
-  }, [modelConfig, hotkey, closeToTray, lookupContextMode, kbAutoMaintain, theme])
+  }, [modelConfig, hotkey, closeToTray, lookupContextMode, kbAutoMaintain, suggestTerms, theme])
 
   /* Debounced: typing an API key or a base URL must not hit the disk per keystroke. */
   useEffect(() => {
     if (!hydrated) return
-    if (!isDirty(modelConfig, hotkey, closeToTray, lookupContextMode, kbAutoMaintain, theme)) return
+    if (
+      !isDirty(
+        modelConfig,
+        hotkey,
+        closeToTray,
+        lookupContextMode,
+        kbAutoMaintain,
+        suggestTerms,
+        theme
+      )
+    )
+      return
     const timer = window.setTimeout(() => {
-      void persist(modelConfig, hotkey, closeToTray, lookupContextMode, kbAutoMaintain, theme)
+      void persist(
+        modelConfig,
+        hotkey,
+        closeToTray,
+        lookupContextMode,
+        kbAutoMaintain,
+        suggestTerms,
+        theme
+      )
     }, 500)
     return () => window.clearTimeout(timer)
   }, [
@@ -297,6 +341,7 @@ function Settings(): React.JSX.Element {
     closeToTray,
     lookupContextMode,
     kbAutoMaintain,
+    suggestTerms,
     theme,
     isDirty,
     persist
@@ -314,6 +359,7 @@ function Settings(): React.JSX.Element {
           latest.closeToTray,
           latest.lookupContextMode,
           latest.kbAutoMaintain,
+          latest.suggestTerms,
           latest.theme
         )
       ) {
@@ -325,6 +371,7 @@ function Settings(): React.JSX.Element {
         latest.closeToTray,
         latest.lookupContextMode,
         latest.kbAutoMaintain,
+        latest.suggestTerms,
         latest.theme
       )
     }
@@ -383,6 +430,8 @@ function Settings(): React.JSX.Element {
             onLookupContextModeChange={setLookupContextMode}
             kbAutoMaintain={kbAutoMaintain}
             onKbAutoMaintainChange={setKbAutoMaintain}
+            suggestTerms={suggestTerms}
+            onSuggestTermsChange={setSuggestTerms}
             theme={theme}
             onThemeChange={setTheme}
           />

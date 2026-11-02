@@ -4,9 +4,12 @@ import type { LegacySegment } from '../../src/shared/rich-text'
 import {
   EXPANSION_EMPTY_ERROR,
   EXPANSION_INTERRUPTED_ERROR,
+  activeExpansion,
   applyExpansionChunk,
   crossesBlockBoundary,
   expansionMessageInput,
+  expansionPath,
+  expansionSubtreeIds,
   finalizeTurns,
   findExpansionInNodes,
   findExpansionInTurns,
@@ -17,6 +20,7 @@ import {
   migrateLegacySegments,
   migrateLegacyTurn,
   removeExpansionInTurns,
+  restartExpansion,
   setExpansionFolded,
   updateExpansion,
   validateExpansionTarget,
@@ -630,5 +634,108 @@ describe('migrateLegacySegments', () => {
   it('leaves already-migrated turns alone', () => {
     const existing = turn({ id: 1, content: 'x', expansions: [node(1)] })
     expect(migrateLegacyTurn(existing).expansions).toBe(existing.expansions)
+  })
+})
+
+describe('several expansions on one range', () => {
+  const source = 'alpha beta'
+
+  it('accepts the exact same range but still refuses a partial overlap', () => {
+    const existing = [node(1, { start: 0, end: 5 })]
+    expect(validateInsertion(source, existing, { start: 0, end: 5 })).toBeNull()
+    expect(validateInsertion(source, existing, { start: 0, end: 3 })).toBe('inside-expansion')
+    expect(validateInsertion(source, existing, { start: 3, end: 8 })).toBe('overlaps-expansion')
+  })
+
+  it('opens the newest and folds the one it joins', () => {
+    const result = insertExpansion(
+      source,
+      [node(1, { start: 0, end: 5 }), node(2, { start: 6, end: 10 })],
+      { start: 0, end: 5 },
+      3,
+      'Why?'
+    )
+    if (!result.ok) throw new Error(result.reason)
+    expect(result.expansions.map((item) => [item.id, item.folded])).toEqual([
+      [1, true],
+      [3, false],
+      [2, false]
+    ])
+  })
+
+  it('unfolding one folds the others on its range only', () => {
+    const turns = [
+      turn({
+        id: 1,
+        content: source,
+        expansions: [
+          node(1, { start: 0, end: 5 }),
+          node(2, { start: 0, end: 5, folded: true }),
+          node(3, { start: 6, end: 10 })
+        ]
+      })
+    ]
+    const [next] = setExpansionFolded(turns, 2, false)
+    expect(next.expansions.map((item) => item.folded)).toEqual([true, false, false])
+  })
+
+  it('picks the open expansion, else the newest', () => {
+    const open = node(1)
+    const folded = node(2, { folded: true })
+    expect(activeExpansion([open, folded])?.id).toBe(1)
+    expect(activeExpansion([{ ...open, folded: true }, folded])?.id).toBe(2)
+  })
+})
+
+describe('atomic targets', () => {
+  it('skips the line-based block check only for a parser-resolved block', () => {
+    const fence = '```\na\n\nb\n```'
+    const range = { start: 0, end: fence.length }
+    expect(validateInsertion(fence, [], range)).toBe('cross-block')
+    expect(validateInsertion(fence, [], { ...range, atomic: true })).toBeNull()
+  })
+})
+
+describe('restartExpansion', () => {
+  it('clears the answer and nested expansions anchored into it', () => {
+    const turns = [
+      turn({
+        id: 1,
+        content: 'alpha',
+        expansions: [
+          node(1, {
+            answer: 'old answer',
+            status: 'error',
+            error: 'boom',
+            prompt: 'Why?',
+            folded: true,
+            children: [node(2, { start: 0, end: 3, originalText: 'old' })]
+          })
+        ]
+      })
+    ]
+    const [restarted] = restartExpansion(turns, 1)[0].expansions
+    expect(restarted).toMatchObject({
+      answer: '',
+      status: 'loading',
+      folded: false,
+      children: [],
+      prompt: 'Why?'
+    })
+    expect(restarted.error).toBeUndefined()
+  })
+})
+
+describe('expansion paths', () => {
+  const tree = [node(1, { children: [node(2, { children: [node(3)] })] }), node(4)]
+
+  it('lists ancestors outermost first, ending with the expansion', () => {
+    expect(expansionPath(tree, 3)?.map((item) => item.id)).toEqual([1, 2, 3])
+    expect(expansionPath(tree, 4)?.map((item) => item.id)).toEqual([4])
+    expect(expansionPath(tree, 99)).toBeNull()
+  })
+
+  it('collects a whole subtree', () => {
+    expect(expansionSubtreeIds(tree[0])).toEqual([1, 2, 3])
   })
 })

@@ -11,6 +11,8 @@ interface GeneralTabProps {
   onLookupContextModeChange: (value: LookupContextMode) => void
   kbAutoMaintain: boolean
   onKbAutoMaintainChange: (value: boolean) => void
+  suggestTerms: boolean
+  onSuggestTermsChange: (value: boolean) => void
   theme: ThemeMode
   onThemeChange: (value: ThemeMode) => void
 }
@@ -25,6 +27,8 @@ function GeneralTab({
   onLookupContextModeChange,
   kbAutoMaintain,
   onKbAutoMaintainChange,
+  suggestTerms,
+  onSuggestTermsChange,
   theme,
   onThemeChange
 }: GeneralTabProps): React.JSX.Element {
@@ -88,6 +92,28 @@ function GeneralTab({
           Delta AI periodically curates your conversations into private markdown notes, which
           personalize chats and look-ups. Runs use the Knowledge Base Maintenance model, which must
           support tool calling, and never block a look-up.
+        </p>
+      </div>
+      <div className="settings-section">
+        <label className="settings-label">Suggested terms</label>
+        <label className="toggle-row">
+          <input
+            type="checkbox"
+            className="toggle-input"
+            checked={suggestTerms}
+            onChange={(e) => onSuggestTermsChange(e.target.checked)}
+          />
+          <span className="toggle-track">
+            <span className="toggle-thumb" />
+          </span>
+          <span className="toggle-label">
+            {suggestTerms ? 'Underline terms that may be new to you' : 'No suggestions'}
+          </span>
+        </label>
+        <p className="settings-hint">
+          After each answer, the Knowledge Base Maintenance model compares it with your notes and
+          underlines up to five terms to expand with one click. This makes one extra request per
+          answer, and only runs once that model is assigned and notes exist.
         </p>
       </div>
       <div className="settings-section">

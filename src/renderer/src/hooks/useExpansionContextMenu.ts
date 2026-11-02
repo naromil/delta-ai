@@ -1,10 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Turn } from '../../../shared/conversation'
 import type { ExpansionRange, ExpansionTarget } from '../../../shared/rich-text'
-import { findExpansionInNodes, validateExpansionTarget } from '../../../shared/rich-text'
-import { isAnchoredRange } from '../lib/markdown'
-import type { ContextMenuState } from '../components/conversation/ContextMenu'
+import {
+  findExpansionInNodes,
+  findExpansionInTurns,
+  flattenMarkdown,
+  isSameRange,
+  validateExpansionTarget
+} from '../../../shared/rich-text'
+import { isTermSelection } from '../../../shared/prompts'
+import { anchoredRange, isAnchoredRange } from '../lib/markdown'
+import type { ContextMenuItem, ContextMenuState } from '../components/conversation/ContextMenu'
 import type { ExpandPromptState } from '../components/conversation/ExpandPrompt'
+import type { ExpandSelectionBarState } from '../components/conversation/ExpandSelectionBar'
+import type { FramePopupAt } from '../components/conversation/ExpansionFrame'
 import type { ExpandOutcome } from './useChatStreaming'
 
 export type { ExpansionTarget }
@@ -38,10 +47,26 @@ interface PendingSelection {
 interface UseExpansionContextMenuOptions {
   turns: Turn[]
   onExpand: ExpandRequest
+  onUnfold: (id: number) => void
+  onRetryExpansion?: (id: number) => void
+  onDismissExpansion?: (id: number) => void
+}
+
+/** A selection in an answer, with what it would expand if the user asks. */
+interface LiveSelection {
+  turnId: number
+  range: Range
+  text: string
+  resolved: TargetResult
 }
 
 const FRAME_SELECTOR = '[data-expansion-id]'
+const ATOM_SELECTOR = '[data-atom-start]'
+const PILL_SELECTOR = '.queried[data-expansion-id]'
+const SUGGESTED_SELECTOR = '[data-suggested]'
+const OVERLAY_SELECTOR = '.expand-selection-bar, #expandPrompt, #ctxMenu'
 const NOTICE_TIMEOUT_MS = 4000
+const ANSWER_PREVIEW_LENGTH = 70
 
 function frameIdOf(element: Element | null): number | null {
   const frame = element?.closest(FRAME_SELECTOR) as HTMLElement | null
@@ -55,9 +80,16 @@ function frameIdOf(element: Element | null): number | null {
  * Every rendered markdown text node is a leaf `[data-src]` element, so the
  * mapping is exact arithmetic — no string search.
  */
-function anchorOfText(text: Text, offset: number): SourceAnchor | null {
+function anchorOfText(text: Text, offset: number, prefer: 'start' | 'end'): SourceAnchor | null {
   const host = text.parentElement
-  if (!host || !host.hasAttribute('data-src')) return null
+  if (!host) return null
+  if (!host.hasAttribute('data-src')) {
+    // Code blocks and formulas have no per-character mapping: they count as a whole.
+    const atom = host.closest(ATOM_SELECTOR)
+    if (!atom) return null
+    const edge = Number(atom.getAttribute(prefer === 'start' ? 'data-atom-start' : 'data-atom-end'))
+    return Number.isFinite(edge) ? { offset: edge, frameId: frameIdOf(atom) } : null
+  }
   const base = Number(host.getAttribute('data-src'))
   if (!Number.isFinite(base)) return null
   return { offset: base + offset, frameId: frameIdOf(host) }
@@ -81,20 +113,20 @@ function lastTextInside(node: Node): Text | null {
 }
 
 function resolveAnchor(node: Node, offset: number, prefer: 'start' | 'end'): SourceAnchor | null {
-  if (node.nodeType === Node.TEXT_NODE) return anchorOfText(node as Text, offset)
+  if (node.nodeType === Node.TEXT_NODE) return anchorOfText(node as Text, offset, prefer)
 
   const children = Array.from((node as Element).childNodes)
   if (prefer === 'start') {
     for (const child of children.slice(offset)) {
       const text = firstTextInside(child)
-      const anchor = text ? anchorOfText(text, 0) : null
+      const anchor = text ? anchorOfText(text, 0, prefer) : null
       if (anchor) return anchor
     }
     return null
   }
   for (const child of children.slice(0, offset).reverse()) {
     const text = lastTextInside(child)
-    const anchor = text ? anchorOfText(text, text.length) : null
+    const anchor = text ? anchorOfText(text, text.length, prefer) : null
     if (anchor) return anchor
   }
   return null
@@ -128,20 +160,24 @@ type TargetResult = { ok: true; target: ExpansionTarget } | { ok: false; reason:
 /**
  * Resolves a DOM selection against the *current* turn state and validates it
  * with the same rules `expand()` enforces, so the menu and the commit cannot
- * disagree. The markdown text-node check comes first: a range that spans
- * several nodes (e.g. across `**bold**`) is reported as unanchored rather than
- * as a text mismatch.
+ * disagree. Edges inside an element that cannot be split widen to cover it.
  */
 function resolveTarget(turn: Turn, selection: SourceSelection, selectedText: string): TargetResult {
   const scope = sourceFor(turn, selection.frameId)
   if (!scope) return { ok: false, reason: 'parent-not-found' }
 
   const range: ExpansionRange = { start: selection.start, end: selection.end }
-  if (!isAnchoredRange(scope.source, range)) return { ok: false, reason: 'not-anchored' }
+  const anchored = anchoredRange(scope.source, range)
+  if (!anchored) return { ok: false, reason: 'not-anchored' }
 
+  // Rendered text equals the source only inside one text node. Anywhere else the
+  // target was widened or holds markers, so it is checked against its own slice.
+  const comparesRendered = anchored.kind === 'text' && isSameRange(anchored, range)
   const target: ExpansionTarget = {
-    ...range,
-    selection: selectedText,
+    start: anchored.start,
+    end: anchored.end,
+    selection: comparesRendered ? selectedText : scope.source.slice(anchored.start, anchored.end),
+    ...(anchored.kind === 'atom' ? { atomic: true } : {}),
     ...(scope.parentExpansionId !== undefined ? { parentExpansionId: scope.parentExpansionId } : {})
   }
 
@@ -168,7 +204,7 @@ function refusalMessage(reason: string): string {
     case 'turn-not-found':
       return 'That message is no longer on screen.'
     case 'not-anchored':
-      return 'Select text inside a single block.'
+      return 'Select text inside one paragraph, list item or heading.'
     default:
       return 'The selection cannot be expanded.'
   }
@@ -203,19 +239,88 @@ function selectAllInTurn(turnEl: HTMLElement): void {
   selection?.addRange(range)
 }
 
+function selectionBarPosition(range: Range): { x: number; y: number; bottom: number } | null {
+  const rect = range.getBoundingClientRect()
+  if (rect.width === 0 && rect.height === 0) return null
+  return { x: rect.left + rect.width / 2, y: rect.top, bottom: rect.bottom }
+}
+
+function readLiveSelection(turns: Turn[]): LiveSelection | null {
+  const selection = window.getSelection()
+  if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null
+  const text = selection.toString()
+  if (text.trim() === '') return null
+
+  const range = selection.getRangeAt(0)
+  const container = range.commonAncestorContainer
+  const element =
+    container.nodeType === Node.ELEMENT_NODE ? (container as Element) : container.parentElement
+  const turnEl = element?.closest('[data-turn-id]') as HTMLElement | null
+  if (!turnEl) return null
+  const turnId = Number(turnEl.dataset.turnId)
+  const turn = turns.find((item) => item.id === turnId)
+  if (!turn || turn.role !== 'assistant') return null
+
+  const anchors = anchorsFromRange(range)
+  const resolved: TargetResult = anchors
+    ? resolveTarget(turn, anchors, text)
+    : { ok: false, reason: 'not-anchored' }
+  return { turnId, range, text, resolved }
+}
+
+/** Addresses the range of an existing expansion, to ask about it again. */
+function targetOfExpansion(turns: Turn[], id: number): PendingSelection | null {
+  const location = findExpansionInTurns(turns, id)
+  if (!location) return null
+  const { node, parent, turn } = location
+  const source = parent ? parent.answer : turn.content
+  const anchored = anchoredRange(source, node)
+  return {
+    turnId: turn.id,
+    range: null,
+    selection: node.originalText,
+    target: {
+      start: node.start,
+      end: node.end,
+      selection: node.originalText,
+      ...(anchored?.kind === 'atom' ? { atomic: true } : {}),
+      ...(parent ? { parentExpansionId: parent.id } : {})
+    }
+  }
+}
+
+function answerLabel(node: Turn['expansions'][number]): string {
+  const question = node.prompt?.trim()
+  if (question) return question
+  return isTermSelection(node.originalText) ? 'Definition' : 'Explanation'
+}
+
+function answerDetail(node: Turn['expansions'][number]): string {
+  if (node.status === 'error') return node.error ?? 'Failed'
+  if (node.answer === '') return 'Thinking…'
+  return flattenMarkdown(node.answer).replace(/\s+/g, ' ').trim().slice(0, ANSWER_PREVIEW_LENGTH)
+}
+
 export function useExpansionContextMenu(options: UseExpansionContextMenuOptions): {
   ctxMenu: ContextMenuState | null
   expandPrompt: ExpandPromptState | null
+  selectionBar: ExpandSelectionBarState | null
   notice: string | null
   handleContextMenu: (e: React.MouseEvent) => void
+  handleSuggestedTerm: (e: React.MouseEvent | React.KeyboardEvent) => void
+  regenerateExpansion: (id: number) => void
+  removeExpansion: (id: number) => void
+  askAnotherExpansion: (id: number, at: FramePopupAt) => void
+  pickExpansionAnswer: (id: number, at: FramePopupAt) => void
   closeContextMenu: () => void
   closeExpandPrompt: () => void
   dismissNotice: () => void
 } {
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null)
   const [expandPrompt, setExpandPrompt] = useState<ExpandPromptState | null>(null)
+  const [selectionBar, setSelectionBar] = useState<ExpandSelectionBarState | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  const { turns, onExpand } = options
+  const { turns, onExpand, onUnfold, onRetryExpansion, onDismissExpansion } = options
 
   // Submits happen after the menu opened; read the newest turns, not the
   // closure captured when the menu rendered.
@@ -225,6 +330,7 @@ export function useExpansionContextMenu(options: UseExpansionContextMenuOptions)
   }, [turns])
 
   const pendingRef = useRef<PendingSelection | null>(null)
+  const barRangeRef = useRef<Range | null>(null)
   const noticeTimerRef = useRef<number | null>(null)
 
   useEffect(() => {
@@ -294,14 +400,45 @@ export function useExpansionContextMenu(options: UseExpansionContextMenuOptions)
     [onExpand, showNotice]
   )
 
+  const openPrompt = useCallback(
+    (pending: PendingSelection, at: FramePopupAt) => {
+      pendingRef.current = pending
+      setSelectionBar(null)
+      setExpandPrompt({ x: at.x, y: at.y, onSubmit: (prompt) => submit(prompt) })
+    },
+    [submit]
+  )
+
   const handleContextMenu = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault()
+      setSelectionBar(null)
 
       const turnEl = e.currentTarget as HTMLElement
       const turnId = Number(turnEl.dataset.turnId)
       const turn = Number.isFinite(turnId) ? turns.find((item) => item.id === turnId) : undefined
       if (!turn) return
+
+      const at = { x: e.clientX, y: e.clientY }
+      const openExpandMenu = (
+        pending: PendingSelection,
+        target: ExpansionTarget | null,
+        hint: string | undefined,
+        copied: string
+      ): void => {
+        pendingRef.current = pending
+        setCtxMenu({
+          ...at,
+          canExpand: target !== null,
+          hint,
+          onExpand: () => submit(),
+          onExpandPrompted: () => {
+            if (target) openPrompt(pending, at)
+          },
+          onCopy: () => void copyText(copied),
+          onSelectAll: () => selectAllInTurn(turnEl)
+        })
+      }
 
       const selection = window.getSelection()
       let selectedText = selection?.toString() ?? ''
@@ -318,14 +455,28 @@ export function useExpansionContextMenu(options: UseExpansionContextMenuOptions)
       if (turn.role === 'user') {
         pendingRef.current = null
         setCtxMenu({
-          x: e.clientX,
-          y: e.clientY,
+          ...at,
           canExpand: false,
           onExpand: () => {},
           onExpandPrompted: () => {},
           onCopy: () => void copyText(selectedText),
           onSelectAll: () => selectAllInTurn(turnEl)
         })
+        return
+      }
+
+      // A folded pill holds no anchored text; it stands for its expansion's range,
+      // so the menu asks about that range again.
+      const pill = (e.target as Element).closest?.(PILL_SELECTOR) as HTMLElement | null
+      const pillId = pill ? Number(pill.dataset.expansionId) : NaN
+      const pillPending = Number.isFinite(pillId) ? targetOfExpansion(turns, pillId) : null
+      if (pillPending) {
+        openExpandMenu(
+          pillPending,
+          pillPending.target,
+          undefined,
+          flattenMarkdown(pillPending.selection)
+        )
         return
       }
 
@@ -337,30 +488,12 @@ export function useExpansionContextMenu(options: UseExpansionContextMenuOptions)
         const hint = target
           ? undefined
           : refusalMessage(resolved && !resolved.ok ? resolved.reason : 'not-anchored')
-        pendingRef.current = {
-          turnId,
-          range: range.cloneRange(),
-          selection: selectedText,
-          target
-        }
-
-        setCtxMenu({
-          x: e.clientX,
-          y: e.clientY,
-          canExpand: target !== null,
+        openExpandMenu(
+          { turnId, range: range.cloneRange(), selection: selectedText, target },
+          target,
           hint,
-          onExpand: () => submit(),
-          onExpandPrompted: () => {
-            if (!target) return
-            setExpandPrompt({
-              x: e.clientX,
-              y: e.clientY,
-              onSubmit: (prompt) => submit(prompt)
-            })
-          },
-          onCopy: () => void copyText(selectedText),
-          onSelectAll: () => selectAllInTurn(turnEl)
-        })
+          selectedText
+        )
         return
       }
 
@@ -389,34 +522,40 @@ export function useExpansionContextMenu(options: UseExpansionContextMenuOptions)
           const hint = target
             ? undefined
             : refusalMessage(resolved && !resolved.ok ? resolved.reason : 'not-anchored')
-          pendingRef.current = {
-            turnId,
-            range: wordRange.cloneRange(),
-            selection: wordText,
-            target
-          }
 
           // Select the word so the menu's Copy/Expand act on what was clicked.
           selection?.removeAllRanges()
           selection?.addRange(wordRange.cloneRange())
 
-          setCtxMenu({
-            x: e.clientX,
-            y: e.clientY,
-            canExpand: target !== null,
+          openExpandMenu(
+            { turnId, range: wordRange.cloneRange(), selection: wordText, target },
+            target,
             hint,
-            onExpand: () => submit(),
-            onExpandPrompted: () => {
-              if (!target) return
-              setExpandPrompt({
-                x: e.clientX,
-                y: e.clientY,
-                onSubmit: (prompt) => submit(prompt)
-              })
+            wordText
+          )
+          return
+        }
+      }
+
+      // A formula's glyphs yield no word under the caret, but the formula is a target.
+      const atom = (e.target as Element).closest?.(ATOM_SELECTOR)
+      if (atom) {
+        const atomRange = document.createRange()
+        atomRange.selectNodeContents(atom)
+        const anchors = anchorsFromRange(atomRange)
+        const resolved = anchors ? resolveTarget(turn, anchors, '') : null
+        if (resolved?.ok) {
+          openExpandMenu(
+            {
+              turnId,
+              range: atomRange,
+              selection: resolved.target.selection ?? '',
+              target: resolved.target
             },
-            onCopy: () => void copyText(wordText),
-            onSelectAll: () => selectAllInTurn(turnEl)
-          })
+            resolved.target,
+            undefined,
+            resolved.target.selection ?? ''
+          )
           return
         }
       }
@@ -424,8 +563,7 @@ export function useExpansionContextMenu(options: UseExpansionContextMenuOptions)
       // Nothing targeted, but Copy / Select All must still be reachable.
       pendingRef.current = null
       setCtxMenu({
-        x: e.clientX,
-        y: e.clientY,
+        ...at,
         canExpand: false,
         onExpand: () => {},
         onExpandPrompted: () => {},
@@ -433,7 +571,173 @@ export function useExpansionContextMenu(options: UseExpansionContextMenuOptions)
         onSelectAll: () => selectAllInTurn(turnEl)
       })
     },
-    [turns, submit]
+    [turns, submit, openPrompt]
+  )
+
+  /* ---- Selection bar and shortcuts ---- */
+
+  const pendingFromLive = useCallback((live: LiveSelection): PendingSelection => {
+    return {
+      turnId: live.turnId,
+      range: live.range.cloneRange(),
+      selection: live.text,
+      target: live.resolved.ok ? live.resolved.target : null
+    }
+  }, [])
+
+  const submitLive = useCallback(
+    (pending: PendingSelection, prompt?: string) => {
+      pendingRef.current = pending
+      submit(prompt)
+      window.getSelection()?.removeAllRanges()
+      setSelectionBar(null)
+    },
+    [submit]
+  )
+
+  const refreshSelectionBar = useCallback(() => {
+    const live = readLiveSelection(turnsRef.current)
+    const position = live?.resolved.ok ? selectionBarPosition(live.range) : null
+    if (!live || !position) {
+      barRangeRef.current = null
+      setSelectionBar(null)
+      return
+    }
+    const pending = pendingFromLive(live)
+    barRangeRef.current = live.range
+    setSelectionBar({
+      ...position,
+      onExpand: (prompt) => submitLive(pending, prompt),
+      onAsk: () => openPrompt(pending, { x: position.x, y: position.bottom + 6 })
+    })
+  }, [pendingFromLive, submitLive, openPrompt])
+
+  useEffect(() => {
+    const isOverlay = (target: EventTarget | null): boolean =>
+      target instanceof Element && target.closest(OVERLAY_SELECTOR) !== null
+
+    const handleMouseUp = (e: MouseEvent): void => {
+      if (e.button !== 0 || isOverlay(e.target)) return
+      // The selection settles only after this event finishes.
+      window.setTimeout(refreshSelectionBar, 0)
+    }
+
+    const handleKeyUp = (e: KeyboardEvent): void => {
+      if (e.key === 'Shift' || e.shiftKey) refreshSelectionBar()
+    }
+
+    const handleSelectionChange = (): void => {
+      if (window.getSelection()?.isCollapsed ?? true) setSelectionBar(null)
+    }
+
+    const handleScroll = (): void => {
+      const range = barRangeRef.current
+      const position = range ? selectionBarPosition(range) : null
+      setSelectionBar((prev) => (prev && position ? { ...prev, ...position } : null))
+    }
+
+    const handleKeyDown = (e: KeyboardEvent): void => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.key.toLowerCase() !== 'e') return
+      const live = readLiveSelection(turnsRef.current)
+      if (!live) return
+      e.preventDefault()
+      if (!live.resolved.ok) {
+        showNotice(refusalMessage(live.resolved.reason))
+        return
+      }
+      const pending = pendingFromLive(live)
+      if (e.shiftKey) {
+        const position = selectionBarPosition(live.range)
+        openPrompt(pending, { x: position?.x ?? 8, y: (position?.bottom ?? 8) + 6 })
+      } else {
+        submitLive(pending)
+      }
+    }
+
+    document.addEventListener('mouseup', handleMouseUp)
+    document.addEventListener('keyup', handleKeyUp)
+    document.addEventListener('selectionchange', handleSelectionChange)
+    document.addEventListener('scroll', handleScroll, true)
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('mouseup', handleMouseUp)
+      document.removeEventListener('keyup', handleKeyUp)
+      document.removeEventListener('selectionchange', handleSelectionChange)
+      document.removeEventListener('scroll', handleScroll, true)
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [refreshSelectionBar, pendingFromLive, submitLive, openPrompt, showNotice])
+
+  /* ---- Frame and suggested-term actions ---- */
+
+  const confirmDroppingNested = useCallback((id: number, action: string): boolean => {
+    const nested = findExpansionInTurns(turnsRef.current, id)?.node.children.length ?? 0
+    if (nested === 0) return true
+    return window.confirm(`${action}? The expansions inside this answer will be removed.`)
+  }, [])
+
+  const regenerateExpansion = useCallback(
+    (id: number) => {
+      if (confirmDroppingNested(id, 'Regenerate this answer')) onRetryExpansion?.(id)
+    },
+    [confirmDroppingNested, onRetryExpansion]
+  )
+
+  const removeExpansion = useCallback(
+    (id: number) => {
+      if (confirmDroppingNested(id, 'Remove this answer')) onDismissExpansion?.(id)
+    },
+    [confirmDroppingNested, onDismissExpansion]
+  )
+
+  const askAnotherExpansion = useCallback(
+    (id: number, at: FramePopupAt) => {
+      const pending = targetOfExpansion(turnsRef.current, id)
+      if (pending) openPrompt(pending, at)
+    },
+    [openPrompt]
+  )
+
+  const pickExpansionAnswer = useCallback(
+    (id: number, at: FramePopupAt) => {
+      const location = findExpansionInTurns(turnsRef.current, id)
+      if (!location) return
+      const items: ContextMenuItem[] = location.siblings
+        .filter((node) => isSameRange(node, location.node))
+        .map((node) => ({
+          label: answerLabel(node),
+          detail: answerDetail(node),
+          onSelect: () => onUnfold(node.id)
+        }))
+      items.push({ label: 'Ask another…', onSelect: () => askAnotherExpansion(id, at) })
+      setCtxMenu({ ...at, items })
+    },
+    [askAnotherExpansion, onUnfold]
+  )
+
+  /** One click (or Enter) on an underlined term expands it. */
+  const handleSuggestedTerm = useCallback(
+    (e: React.MouseEvent | React.KeyboardEvent) => {
+      if ('key' in e && e.key !== 'Enter' && e.key !== ' ') return
+      const term = (e.target as Element).closest?.(SUGGESTED_SELECTOR) as HTMLElement | null
+      if (!term) return
+      // Finishing a drag over the word is a selection, not a click.
+      if (!('key' in e) && !(window.getSelection()?.isCollapsed ?? true)) return
+      e.preventDefault()
+
+      const turnId = Number((e.currentTarget as HTMLElement).dataset.turnId)
+      const start = Number(term.dataset.src)
+      const text = term.textContent ?? ''
+      if (!Number.isFinite(turnId) || !Number.isFinite(start)) return
+      pendingRef.current = {
+        turnId,
+        range: null,
+        selection: text,
+        target: { start, end: start + text.length, selection: text }
+      }
+      submit()
+    },
+    [submit]
   )
 
   const closeContextMenu = useCallback(() => {
@@ -447,8 +751,14 @@ export function useExpansionContextMenu(options: UseExpansionContextMenuOptions)
   return {
     ctxMenu,
     expandPrompt,
+    selectionBar,
     notice,
     handleContextMenu,
+    handleSuggestedTerm,
+    regenerateExpansion,
+    removeExpansion,
+    askAnotherExpansion,
+    pickExpansionAnswer,
     closeContextMenu,
     closeExpandPrompt,
     dismissNotice

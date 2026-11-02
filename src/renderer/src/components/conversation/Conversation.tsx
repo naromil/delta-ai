@@ -11,6 +11,7 @@ import { attachmentSrc } from '../../lib/image-attachments'
 import Turn from './Turn'
 import ContextMenu from './ContextMenu'
 import ExpandPrompt from './ExpandPrompt'
+import ExpandSelectionBar from './ExpandSelectionBar'
 
 interface ConversationProps {
   state: ConversationState
@@ -35,6 +36,7 @@ interface ConversationProps {
   onUnfold: (id: number) => void
   onRetryExpansion?: (expansionId: number) => void
   onDismissExpansion?: (expansionId: number) => void
+  suggestedTerms?: Readonly<Record<number, string[]>>
   hideToolbar?: boolean
   transferKey?: number
   conversationId?: string | null
@@ -69,6 +71,7 @@ function Conversation({
   onUnfold,
   onRetryExpansion,
   onDismissExpansion,
+  suggestedTerms,
   hideToolbar = false,
   transferKey,
   conversationId,
@@ -97,12 +100,24 @@ function Conversation({
   const {
     ctxMenu,
     expandPrompt,
+    selectionBar,
     notice,
     handleContextMenu,
+    handleSuggestedTerm,
+    regenerateExpansion,
+    removeExpansion,
+    askAnotherExpansion,
+    pickExpansionAnswer,
     closeContextMenu,
     closeExpandPrompt,
     dismissNotice
-  } = useExpansionContextMenu({ turns: state.turns, onExpand })
+  } = useExpansionContextMenu({
+    turns: state.turns,
+    onExpand,
+    onUnfold,
+    onRetryExpansion,
+    onDismissExpansion
+  })
 
   useEffect(() => {
     textareaRef.current?.focus()
@@ -434,6 +449,8 @@ function Conversation({
                 className="message-turn"
                 data-turn-id={turn.id}
                 onContextMenu={handleContextMenu}
+                onClick={handleSuggestedTerm}
+                onKeyDown={handleSuggestedTerm}
               >
                 <Turn
                   turn={turn}
@@ -443,8 +460,11 @@ function Conversation({
                   onRetry={onRetry}
                   onRegenerate={onRegenerate ? handleRegenerate : undefined}
                   onEdit={onEditMessage ? handleEditMessage : undefined}
-                  onRetryExpansion={onRetryExpansion}
-                  onDismissExpansion={onDismissExpansion}
+                  onRetryExpansion={regenerateExpansion}
+                  onDismissExpansion={removeExpansion}
+                  onAskAnotherExpansion={askAnotherExpansion}
+                  onPickExpansionAnswer={pickExpansionAnswer}
+                  suggestedTerms={suggestedTerms?.[turn.id]}
                 />
               </div>
             ))}
@@ -571,6 +591,7 @@ function Conversation({
       </div>
       <ContextMenu state={ctxMenu} onClose={closeContextMenu} />
       <ExpandPrompt state={expandPrompt} onClose={closeExpandPrompt} />
+      <ExpandSelectionBar state={selectionBar} />
       {notice ? (
         <div className="expand-notice" role="status" onClick={dismissNotice}>
           {notice}

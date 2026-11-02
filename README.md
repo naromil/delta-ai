@@ -10,7 +10,7 @@ Delta AI lives in two windows: a full **chat** interface and an **always-on-top 
 ## Features
 
 - **Screen-aware lookup** — Press `Ctrl+Shift+D` (configurable) to open an always-on-top popup over any app. Its context source is configurable in Settings → General: none (the default — just ask), the clipboard, or a full-screen capture OCR'd locally with tesseract.js. Pasting text or an image into the popup also sets the context.
-- **Inline expansions** — Right-click any word or selection in an assistant response to get an instant definition or custom explanation. Expansions render inline as foldable frames; nested expansions are supported.
+- **Inline expansions** — Select text in an assistant response (across bold, code or links, or a whole code block or formula) and use the floating bar, a right-click, or `Ctrl/Cmd+E` for a definition, an explanation or your own question, with one-click Simpler / Example / Why / Compare / Deeper. Answers know the conversation so far, render inline as foldable frames, can be regenerated, copied or removed, can nest, and a passage can hold several answers. Terms your notes suggest are new to you are lightly underlined for one-click expansion.
 - **Multi-provider AI** — Bring your own key (BYOK) for Google AI Studio, OpenAI, OpenAI-compatible endpoints, Ollama, or OpenRouter. Each conversation role (chat, lookup) maps independently to a provider + model.
 - **Role-based model assignment** — Chat and Lookup use separate model connections so you can run lightweight models for lookups and heavier ones for deep conversations.
 - **Memory personalization** — A background curator turns past chats into private markdown notes about you (needs a tool-capable model on the Knowledge Base Maintenance role; can be turned off in Settings → General). Your learning preferences live in `index-learning.md`, and chat and lookup always load any top-level note named `index*`, so answers adapt to you over time.
@@ -63,7 +63,7 @@ Renderer (React 19)          Preload (contextBridge)        Main process (Node)
 | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `src/shared/models.ts`                              | Provider/role type registries, connection & config types — pure TS, no runtime deps                                                                          |
 | `src/shared/conversation.ts`                        | `ConversationState` model + pure helpers: tokenize, expand/insert/fold/unfold, serialize for API                                                             |
-| `src/shared/expand-prompt.ts`                       | `buildExpandMessages` — constructs API messages for inline expansions with optional custom direction                                                         |
+| `src/shared/expand-prompt.ts`                       | `buildExpandRequest` — constructs API messages for inline expansions with optional custom direction                                                          |
 | `src/shared/prompts.ts`                             | All LLM-facing prompt strings (system prompts, context template, expand instructions, KB analysis)                                                           |
 | `src/main/index.ts`                                 | App lifecycle, main window, tray, streaming IPC handlers (chat-send, chat-expand, lookup-transfer)                                                           |
 | `src/main/config.ts`                                | Config persistence (providers.json, settings.json), Wayland detection, hotkey registry                                                                       |
@@ -95,6 +95,7 @@ Renderer (React 19)          Preload (contextBridge)        Main process (Node)
 | Channel                                                                            | Direction       | Purpose                                          |
 | ---------------------------------------------------------------------------------- | --------------- | ------------------------------------------------ |
 | `chat-send` / `chat-chunk` / `chat-response` / `chat-error`                        | Renderer ↔ Main | Streaming chat messages (keyed by `requestId`)   |
+| `chat-suggest-terms`                                                               | Renderer → Main | Terms in a finished answer worth underlining     |
 | `chat-expand` / `chat-expand-chunk`                                                | Renderer ↔ Main | Streaming inline expansions                      |
 | `chat-replace-conversation`                                                        | Main → Renderer | Hydrate transferred conversation (lookup → chat) |
 | `lookup-trigger-grow` / `lookup-grow`                                              | Lookup ↔ Main   | Window grow animation on first ask               |

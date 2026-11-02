@@ -110,6 +110,7 @@ function App(): React.JSX.Element {
     expand,
     retryExpansion,
     dismissExpansion,
+    suggestedTerms,
     fold,
     unfold,
     renameConversation,
@@ -229,6 +230,7 @@ function App(): React.JSX.Element {
             onUnfold={unfold}
             onRetryExpansion={retryExpansion}
             onDismissExpansion={dismissExpansion}
+            suggestedTerms={suggestedTerms}
             transferKey={transferKey}
           />
         )}
