@@ -48,6 +48,17 @@ const GUIDE_SECTIONS = [
   }
 ]
 
+const SHORTCUTS: ReadonlyArray<{ keys: string[]; action: string }> = [
+  { keys: ['Ctrl/Cmd', 'N'], action: 'Start a new chat from any view' },
+  { keys: ['Ctrl/Cmd', 'K'], action: 'Search conversations' },
+  { keys: ['Ctrl/Cmd', 'E'], action: 'Expand the selected text' },
+  {
+    keys: ['Ctrl/Cmd', 'Shift', 'E'],
+    action: 'Expand on\u2026 \u2014 ask a question about the selection'
+  },
+  { keys: ['Esc'], action: 'Stop a response while it is generating' }
+]
+
 const MODE_LABELS: Record<LookupContextMode, string> = {
   none: 'None',
   clipboard: 'Clipboard',
@@ -108,6 +119,23 @@ function LookupGuideView(): React.JSX.Element {
               </ul>
             </div>
           ))}
+          <div className="lookup-guide-section">
+            <h2 className="lookup-guide-section-title">Keyboard Shortcuts</h2>
+            <ul className="lookup-guide-shortcuts">
+              {SHORTCUTS.map((shortcut) => (
+                <li key={shortcut.action}>
+                  <span className="lookup-guide-shortcut-keys">
+                    {shortcut.keys.map((key, i) => (
+                      <kbd key={i} className="kbd">
+                        {key}
+                      </kbd>
+                    ))}
+                  </span>
+                  <span>{shortcut.action}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
         </div>
 
         <div className="lookup-guide-divider" />
