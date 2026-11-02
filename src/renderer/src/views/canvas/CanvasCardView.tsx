@@ -39,6 +39,9 @@ interface CanvasCardViewProps extends CanvasCardActions {
   /** Why the card has no answer, when `status` is `failed`. */
   failure?: string
   dragging: boolean
+  /** Whether a same-sized continuation fits against each side with a handle. */
+  roomRight: boolean
+  roomBottom: boolean
   invalid: boolean
   pulsing: boolean
   dimmed: boolean
@@ -135,7 +138,8 @@ function CardQuestionEditor({
 
 function CanvasCardView(props: CanvasCardViewProps): React.JSX.Element {
   const { card, rect, caption, question, answer, expansions, status, failure } = props
-  const { dragging, invalid, pulsing, dimmed, continued, pulseTermId } = props
+  const { dragging, roomRight, roomBottom, invalid, pulsing, dimmed, continued, pulseTermId } =
+    props
   const { onDragStart, onResizeStart, onStop, onRegenerate, onEdit, onDelete, onContinue } = props
   const { onAskAnother, onContextMenu, onOpenExpansion, onGoToSource, onCardKeyDown } = props
   const [editing, setEditing] = useState(false)
@@ -417,27 +421,27 @@ function CanvasCardView(props: CanvasCardViewProps): React.JSX.Element {
           onPointerDown={(e) => onResizeStart(e, card.id)}
         />
       </div>
-      {canContinue ? (
-        <>
-          <button
-            type="button"
-            className="canvas-continue canvas-continue--right"
-            aria-label="Continue on the right (Shift+Enter)"
-            title="Continue this session here (Shift+Enter)"
-            onClick={() => onContinue(card.id, 'right')}
-          >
-            +
-          </button>
-          <button
-            type="button"
-            className="canvas-continue canvas-continue--bottom"
-            aria-label="Reply below (Enter)"
-            title="Continue this session here (Enter)"
-            onClick={() => onContinue(card.id, 'bottom')}
-          >
-            +
-          </button>
-        </>
+      {canContinue && roomRight ? (
+        <button
+          type="button"
+          className="canvas-continue canvas-continue--right"
+          aria-label="Continue on the right (Shift+Enter)"
+          title="Continue this session here (Shift+Enter)"
+          onClick={() => onContinue(card.id, 'right')}
+        >
+          +
+        </button>
+      ) : null}
+      {canContinue && roomBottom ? (
+        <button
+          type="button"
+          className="canvas-continue canvas-continue--bottom"
+          aria-label="Reply below (Enter)"
+          title="Continue this session here (Enter)"
+          onClick={() => onContinue(card.id, 'bottom')}
+        >
+          +
+        </button>
       ) : null}
     </article>
   )

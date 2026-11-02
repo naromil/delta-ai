@@ -73,6 +73,9 @@ export const CLICK_DRAG_LIMIT = 6
 const SIDE_EPSILON = 1
 /** Two rectangles must meet along at least this much of a side to share it. */
 const MIN_SHARED_LENGTH = 24
+/** A seam stops short of the rounded corners of the cards either side of it (`canvas.css`). */
+const SEAM_CORNER = 6
+const MIN_LINK_REACH = 48
 
 /* ---- Rectangles ---- */
 
@@ -169,13 +172,21 @@ function overlapLength(aStart: number, aLength: number, bStart: number, bLength:
   return Math.min(aStart + aLength, bStart + bLength) - Math.max(aStart, bStart)
 }
 
+/** The side of `a` that touches `b`, if they share enough of one to count as touching. */
+export function sharedSide(a: CanvasRect, b: CanvasRect): CanvasSide | undefined {
+  if (overlapLength(a.y, a.h, b.y, b.h) >= MIN_SHARED_LENGTH) {
+    if (Math.abs(a.x + a.w - b.x) <= SIDE_EPSILON) return 'right'
+    if (Math.abs(b.x + b.w - a.x) <= SIDE_EPSILON) return 'left'
+  }
+  if (overlapLength(a.x, a.w, b.x, b.w) >= MIN_SHARED_LENGTH) {
+    if (Math.abs(a.y + a.h - b.y) <= SIDE_EPSILON) return 'bottom'
+    if (Math.abs(b.y + b.h - a.y) <= SIDE_EPSILON) return 'top'
+  }
+  return undefined
+}
+
 export function sharesSide(a: CanvasRect, b: CanvasRect): boolean {
-  const touchesVertically =
-    Math.abs(a.x + a.w - b.x) <= SIDE_EPSILON || Math.abs(b.x + b.w - a.x) <= SIDE_EPSILON
-  if (touchesVertically && overlapLength(a.y, a.h, b.y, b.h) >= MIN_SHARED_LENGTH) return true
-  const touchesHorizontally =
-    Math.abs(a.y + a.h - b.y) <= SIDE_EPSILON || Math.abs(b.y + b.h - a.y) <= SIDE_EPSILON
-  return touchesHorizontally && overlapLength(a.x, a.w, b.x, b.w) >= MIN_SHARED_LENGTH
+  return sharedSide(a, b) !== undefined
 }
 
 /* ---- Snapping ---- */
@@ -737,6 +748,20 @@ export function turnsThroughCard(cards: CanvasCard[], turns: Turn[], id: string)
 
 /* ---- Links ---- */
 
+/** A curve leaving and arriving squarely, heading `direction` (+1 or -1) along its axis. */
+function squareCurve(
+  from: CanvasPoint,
+  to: CanvasPoint,
+  horizontal: boolean,
+  direction: number,
+  reach: number
+): string {
+  const step = direction * reach
+  const c1 = horizontal ? { x: from.x + step, y: from.y } : { x: from.x, y: from.y + step }
+  const c2 = horizontal ? { x: to.x - step, y: to.y } : { x: to.x, y: to.y - step }
+  return `M ${from.x} ${from.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${to.x} ${to.y}`
+}
+
 /** A curve from a term to the facing side of its expansion, leaving and arriving squarely. */
 export function linkPath(from: CanvasPoint, to: CanvasRect): string {
   const centerX = to.x + to.w / 2
@@ -745,14 +770,88 @@ export function linkPath(from: CanvasPoint, to: CanvasRect): string {
   const end = horizontal
     ? { x: from.x < centerX ? to.x : to.x + to.w, y: centerY }
     : { x: centerX, y: from.y < centerY ? to.y : to.y + to.h }
+  const direction = Math.sign(horizontal ? end.x - from.x : end.y - from.y)
   const reach = Math.max(Math.hypot(end.x - from.x, end.y - from.y) * 0.4, 24)
-  const c1 = horizontal
-    ? { x: from.x + Math.sign(end.x - from.x) * reach, y: from.y }
-    : { x: from.x, y: from.y + Math.sign(end.y - from.y) * reach }
-  const c2 = horizontal
-    ? { x: end.x - Math.sign(end.x - from.x) * reach, y: end.y }
-    : { x: end.x, y: end.y - Math.sign(end.y - from.y) * reach }
-  return `M ${from.x} ${from.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${end.x} ${end.y}`
+  return squareCurve(from, end, horizontal, direction, reach)
+}
+
+/**
+ * How a card follows the one before it in its session, always shown one way: `seam` is
+ * the boundary they share, and `link` a curve across whatever separates them. `side` is
+ * the way the session travels, from the earlier card to `id`.
+ */
+export type CanvasContinuation =
+  | { kind: 'seam'; id: string; start: CanvasPoint; end: CanvasPoint; side: CanvasSide }
+  | {
+      kind: 'link'
+      id: string
+      start: CanvasPoint
+      end: CanvasPoint
+      side: CanvasSide
+      d: string
+    }
+
+function seamBetween(
+  id: string,
+  a: CanvasRect,
+  b: CanvasRect,
+  side: CanvasSide
+): CanvasContinuation {
+  if (side === 'left' || side === 'right') {
+    const x = side === 'right' ? a.x + a.w : a.x
+    return {
+      kind: 'seam',
+      id,
+      side,
+      start: { x, y: Math.max(a.y, b.y) + SEAM_CORNER },
+      end: { x, y: Math.min(a.y + a.h, b.y + b.h) - SEAM_CORNER }
+    }
+  }
+  const y = side === 'bottom' ? a.y + a.h : a.y
+  return {
+    kind: 'seam',
+    id,
+    side,
+    start: { x: Math.max(a.x, b.x) + SEAM_CORNER, y },
+    end: { x: Math.min(a.x + a.w, b.x + b.w) - SEAM_CORNER, y }
+  }
+}
+
+/**
+ * A curve between the facing sides of two cards. Two cards meeting at a corner have no
+ * gap to cross, so the curve always bows out rather than lying along their boundary.
+ */
+function linkBetween(id: string, a: CanvasRect, b: CanvasRect): CanvasContinuation {
+  const dx = b.x + b.w / 2 - (a.x + a.w / 2)
+  const dy = b.y + b.h / 2 - (a.y + a.h / 2)
+  const horizontal = Math.abs(dx) - (a.w + b.w) / 2 >= Math.abs(dy) - (a.h + b.h) / 2
+  if (horizontal) {
+    const start = { x: dx >= 0 ? a.x + a.w : a.x, y: a.y + a.h / 2 }
+    const end = { x: dx >= 0 ? b.x : b.x + b.w, y: b.y + b.h / 2 }
+    const reach = Math.max(Math.abs(end.x - start.x) / 2, MIN_LINK_REACH)
+    const d = squareCurve(start, end, true, dx >= 0 ? 1 : -1, reach)
+    return { kind: 'link', id, side: dx >= 0 ? 'right' : 'left', start, end, d }
+  }
+  const start = { x: a.x + a.w / 2, y: dy >= 0 ? a.y + a.h : a.y }
+  const end = { x: b.x + b.w / 2, y: dy >= 0 ? b.y : b.y + b.h }
+  const reach = Math.max(Math.abs(end.y - start.y) / 2, MIN_LINK_REACH)
+  const d = squareCurve(start, end, false, dy >= 0 ? 1 : -1, reach)
+  return { kind: 'link', id, side: dy >= 0 ? 'bottom' : 'top', start, end, d }
+}
+
+/** One entry per message that continues another card. */
+export function canvasContinuations(cards: CanvasCard[]): CanvasContinuation[] {
+  return cards.flatMap((card) => {
+    if (card.kind !== 'message') return []
+    const parent = cardById(cards, card.parentId)
+    if (!parent) return []
+    const side = isTopLevel(parent) ? sharedSide(parent.rect, card.rect) : undefined
+    return [
+      side
+        ? seamBetween(card.id, parent.rect, card.rect, side)
+        : linkBetween(card.id, parent.rect, card.rect)
+    ]
+  })
 }
 
 /* ---- Viewport ---- */

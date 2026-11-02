@@ -510,7 +510,7 @@
   white-space: nowrap;
 }
 
-/* ---- Links, from a term to its expansion ---- */
+/* ---- Links, from a term to its expansion and from a card to its continuation ---- */
 
 .canvas-links {
   position: absolute;
@@ -534,6 +534,15 @@
   stroke-opacity: 0.28;
 }
 
+.canvas-links--over .canvas-link-arrow {
+  fill-opacity: 0.28;
+}
+
+/* Above a dragged block, whose own boundaries travel with it. */
+.canvas-links--seams {
+  z-index: 6;
+}
+
 .canvas-link-line {
   fill: none;
   stroke: var(--accent);
@@ -552,8 +561,49 @@
     cy var(--canvas-settle) var(--canvas-ease);
 }
 
+/* The way a session travels, arriving at the card that continues it. */
+.canvas-link-arrow {
+  fill: var(--accent);
+  animation: canvas-mark-in 300ms var(--canvas-ease-out) 220ms both;
+  transition: transform var(--canvas-settle) var(--canvas-ease);
+}
+
+/* A boundary between two cards of one session; any other boundary stays plain. */
+.canvas-seam {
+  animation: canvas-mark-in 300ms var(--canvas-ease-out) both;
+}
+
+.canvas-seam-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: calc(2px / var(--canvas-zoom));
+  stroke-linecap: round;
+  transition: d var(--canvas-settle) var(--canvas-ease);
+}
+
+.canvas-seam-mark {
+  transition: transform var(--canvas-settle) var(--canvas-ease);
+}
+
+.canvas-seam-mark circle {
+  fill: var(--surface-2);
+  stroke: var(--accent);
+  stroke-width: 1.25px;
+}
+
+.canvas-seam-mark path {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.75px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .canvas-links.is-dragging .canvas-link-line,
-.canvas-links.is-dragging .canvas-link-dot {
+.canvas-links.is-dragging .canvas-link-dot,
+.canvas-links.is-dragging .canvas-link-arrow,
+.canvas-links.is-dragging .canvas-seam-line,
+.canvas-links.is-dragging .canvas-seam-mark {
   transition: none;
 }
 
@@ -949,6 +999,12 @@
   }
   to {
     stroke-dashoffset: 0;
+  }
+}
+
+@keyframes canvas-mark-in {
+  from {
+    opacity: 0;
   }
 }
 

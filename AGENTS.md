@@ -224,6 +224,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | Canvas streaming and saving            | `hooks/useCanvas.ts`                                                                                   |
 | Canvas sizing instruction              | `shared/prompts.ts` (`buildCanvasFitNote`)                                                             |
 | Canvas keys, composer, follow, links   | `views/canvas/CanvasView.tsx` (+ `CanvasShortcuts.tsx` list, `nearestCardInDirection` in `canvas.ts`)  |
+| Canvas session links and seams         | `shared/canvas.ts` (`canvasContinuations`) + `views/canvas/CanvasLinks.tsx`                            |
 | Provider config form                   | `components/settings/models/ModelsTab.tsx` (+ `RoleRow.tsx`, `ConnectionCard.tsx`)                     |
 | Model picker / catalog                 | `shared/model-catalog.ts` (pure), `services/model-catalog.ts` (fetch+cache)                            |
 | Change the model-config schema         | `models/config-schema.ts` — add a vN→vN+1 step, bump `MODEL_CONFIG_VERSION`                            |
@@ -405,6 +406,11 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   `followRef` keeps the draft and its parent on screen (or just the draft, under the answer's newest
   lines, when both do not fit); any manual pan, wheel or zoom lets go, typing in the draft or "Back
   to your question" re-pins. A streaming card body sticks to its newest line (`nextPinned`).
+- **A session always shows between its cards.** `canvasContinuations` gives each continuation one
+  mark pointing from the earlier card to the later one: on the boundary they share (`seam`) when they
+  touch, otherwise a link. Touching alone joins cards but says nothing about history, so a boundary
+  with no mark is two cards merely placed together, and a card joined to its parent only through a
+  third card still gets a link. A side with no room for a same-sized continuation shows no `+` handle.
 - **Canvas is keyboard-drivable.** Cards are focusable: arrows move to `nearestCardInDirection`,
   Enter/Shift+Enter continue below/right, B goes back (`sourceCardId`; an expansion returns to its
   term, flashed and scrolled into its card), E edits, Delete deletes, PgUp/PgDn scroll. With no card

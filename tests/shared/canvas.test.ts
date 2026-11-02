@@ -7,6 +7,7 @@ import type {
 } from '../../src/shared/canvas'
 import {
   adjacentSlot,
+  canvasContinuations,
   cascadeCardIds,
   clampRectInside,
   containsRect,
@@ -784,5 +785,95 @@ describe('navigation', () => {
     expect(fitsOnScreen(rect(0, 0, 800, 600), 1, size)).toBe(true)
     expect(fitsOnScreen(rect(0, 0, 800, 700), 1, size)).toBe(false)
     expect(fitsOnScreen(rect(0, 0, 800, 700), 0.5, size)).toBe(true)
+  })
+})
+
+describe('canvasContinuations', () => {
+  it('marks the boundary when a card touches the one it continues', () => {
+    const [mark] = canvasContinuations([
+      message('a', 1, rect(0, 0)),
+      message('b', 3, rect(0, 100), 'a')
+    ])
+    expect(mark).toEqual({
+      kind: 'seam',
+      id: 'b',
+      side: 'bottom',
+      start: { x: 6, y: 100 },
+      end: { x: 94, y: 100 }
+    })
+  })
+
+  it('runs the seam along only the part the two cards share', () => {
+    const [mark] = canvasContinuations([
+      message('a', 1, rect(0, 0)),
+      message('b', 3, rect(100, 40), 'a')
+    ])
+    expect(mark).toMatchObject({
+      kind: 'seam',
+      side: 'right',
+      start: { x: 100, y: 46 },
+      end: { x: 100, y: 94 }
+    })
+  })
+
+  it('points the way the session travels, whichever side the next card is on', () => {
+    const sideOf = (at: CanvasRect): unknown =>
+      canvasContinuations([message('a', 1, rect(0, 0)), message('b', 3, at, 'a')])[0]
+    expect(sideOf(rect(-100, 0))).toMatchObject({ kind: 'seam', side: 'left' })
+    expect(sideOf(rect(0, -100))).toMatchObject({ kind: 'seam', side: 'top' })
+    expect(sideOf(rect(-400, 0))).toMatchObject({ kind: 'link', side: 'left' })
+    expect(sideOf(rect(0, -400))).toMatchObject({ kind: 'link', side: 'top' })
+  })
+
+  it('links facing sides when a card stands apart from the one it continues', () => {
+    const [mark] = canvasContinuations([
+      message('a', 1, rect(0, 0)),
+      message('b', 3, rect(400, 50), 'a')
+    ])
+    expect(mark).toMatchObject({
+      kind: 'link',
+      id: 'b',
+      side: 'right',
+      start: { x: 100, y: 50 },
+      end: { x: 400, y: 100 }
+    })
+  })
+
+  it('links a card joined to its parent only through another card', () => {
+    const marks = canvasContinuations([
+      message('a', 1, rect(0, 0)),
+      message('between', 5, rect(0, 100)),
+      message('b', 3, rect(0, 200), 'a')
+    ])
+    expect(marks).toHaveLength(1)
+    expect(marks[0]).toMatchObject({ kind: 'link', id: 'b', side: 'bottom' })
+  })
+
+  it('leaves two touching cards of different sessions unmarked', () => {
+    expect(
+      canvasContinuations([message('a', 1, rect(0, 0)), message('b', 3, rect(100, 0))])
+    ).toEqual([])
+  })
+
+  it('counts a continuation of a standing expansion, and not the expansion itself', () => {
+    const marks = canvasContinuations([
+      message('a', 1, rect(0, 0)),
+      expansion('e', 1, 2, 'a', false, rect(0, 100)),
+      message('b', 3, rect(100, 100), 'e')
+    ])
+    expect(marks.map((mark) => [mark.kind, mark.id])).toEqual([['seam', 'b']])
+  })
+
+  it('links from an inset parent, which has no boundary of its own on the plane', () => {
+    const marks = canvasContinuations([
+      message('a', 1, rect(0, 0)),
+      expansion('e', 1, 2, 'a', true, rect(10, 10, 90, 90)),
+      message('b', 3, rect(100, 0), 'e')
+    ])
+    expect(marks[0]).toMatchObject({ kind: 'link', id: 'b' })
+  })
+
+  it('ignores a parent that no longer exists', () => {
+    expect(canvasContinuations([message('b', 3, rect(0, 0), 'gone')])).toEqual([])
   })
 })

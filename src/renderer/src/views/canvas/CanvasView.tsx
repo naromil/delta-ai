@@ -907,17 +907,17 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
 
   /** A link click travels to whichever end is farther from where it was clicked. */
   const handleFollowLink = useCallback(
-    (e: React.MouseEvent, id: string, term: CanvasPoint): void => {
+    (e: React.MouseEvent, id: string, start: CanvasPoint): void => {
       const card = cardsRef.current.find((item) => item.id === id)
       if (!card) return
       const at = pointerInWorld(e)
       const onCard = clampPointInside(at, card.rect)
       const toCard = Math.hypot(at.x - onCard.x, at.y - onCard.y)
-      const toTerm = Math.hypot(at.x - term.x, at.y - term.y)
-      if (toTerm < toCard) focusCard(id, true)
-      else returnToTerm(id)
+      const toStart = Math.hypot(at.x - start.x, at.y - start.y)
+      if (toStart < toCard) focusCard(id, true)
+      else goToSource(id)
     },
-    [focusCard, pointerInWorld, returnToTerm]
+    [focusCard, goToSource, pointerInWorld]
   )
 
   /* ---- The composer: drafts, and the conversation they follow ---- */
@@ -1361,6 +1361,8 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
                 {...cardContent(card, canvas)}
                 {...actions}
                 dragging={dragging}
+                roomRight={adjacentSlot(card, 'right', displayed) !== null}
+                roomBottom={adjacentSlot(card, 'bottom', displayed) !== null}
                 invalid={invalid}
                 pulsing={pulseId === card.id}
                 dimmed={placing !== null && placing.hostId !== card.id}

@@ -1,7 +1,12 @@
 import { useEffect, useLayoutEffect, useState } from 'react'
 import type { RefObject } from 'react'
-import type { CanvasCard, CanvasExpansionCard, CanvasPoint } from '../../../../shared/canvas'
-import { clampPointInside, linkPath } from '../../../../shared/canvas'
+import type {
+  CanvasCard,
+  CanvasExpansionCard,
+  CanvasPoint,
+  CanvasSide
+} from '../../../../shared/canvas'
+import { canvasContinuations, clampPointInside, linkPath } from '../../../../shared/canvas'
 
 interface CanvasLinksProps {
   cards: CanvasCard[]
@@ -9,10 +14,17 @@ interface CanvasLinksProps {
   /** Links of cards being dragged follow the pointer instead of easing after it. */
   dragging: boolean
   /** A click on a link, which travels to whichever end is farther from the click. */
-  onFollow: (e: React.MouseEvent, id: string, term: CanvasPoint) => void
+  onFollow: (e: React.MouseEvent, id: string, start: CanvasPoint) => void
 }
 
 type TermOffsets = Readonly<Record<string, CanvasPoint>>
+
+const SIDE_ANGLE: Readonly<Record<CanvasSide, number>> = {
+  right: 0,
+  bottom: 90,
+  left: 180,
+  top: 270
+}
 
 function isLinked(card: CanvasCard): card is CanvasExpansionCard {
   return card.kind === 'expansion' && !card.inset
@@ -63,7 +75,20 @@ function LinkLine({ d }: { d: string }): React.JSX.Element {
   )
 }
 
-/** Draws a link from each expanded term to its expansion once it stands on its own. */
+const ARROW = 'M -8 -4.5 L 0 0 L -8 4.5 Z'
+const CHEVRON = 'M -1.75 -3.5 L 1.75 0 L -1.75 3.5'
+
+/** A mark that keeps its size on screen at any zoom, pointing the way a session travels. */
+function pointerStyle(at: CanvasPoint, side: CanvasSide): React.CSSProperties {
+  const place = `translate(${at.x}px, ${at.y}px) rotate(${SIDE_ANGLE[side]}deg)`
+  return { transform: `${place} scale(calc(1 / var(--canvas-zoom)))` }
+}
+
+/**
+ * What ties cards together: a link from each expanded term to its expansion once it stands
+ * on its own, and for each continuation a mark on the boundary the two cards share, or a
+ * link when they do not touch. A boundary with no mark is two cards merely placed together.
+ */
 function CanvasLinks({
   cards,
   surfaceRef,
@@ -104,6 +129,9 @@ function CanvasLinks({
     const from = clampPointInside({ x: host.rect.x + raw.x, y: host.rect.y + raw.y }, host.rect)
     return [{ id: card.id, from, d: linkPath(from, card.rect) }]
   })
+  const continuations = canvasContinuations(cards)
+  const sessionLinks = continuations.filter((item) => item.kind === 'link')
+  const seams = continuations.filter((item) => item.kind === 'seam')
   const dragClass = dragging ? ' is-dragging' : ''
 
   // Drawn twice: strong under the cards for open space, and faint over them so a
@@ -120,12 +148,44 @@ function CanvasLinks({
             </path>
           </g>
         ))}
+        {sessionLinks.map(({ id, d, start, end, side }) => (
+          <g key={id} data-canvas-session-link={id}>
+            <LinkLine d={d} />
+            <path className="canvas-link-arrow" d={ARROW} style={pointerStyle(end, side)} />
+            <path className="canvas-link-hit" d={d} onClick={(e) => onFollow(e, id, start)}>
+              <title>Follow this link</title>
+            </path>
+          </g>
+        ))}
       </svg>
       <svg className={`canvas-links canvas-links--over${dragClass}`} aria-hidden="true">
         {links.map(({ id, d, from }) => (
           <g key={id}>
             <LinkLine d={d} />
             <circle className="canvas-link-dot" cx={from.x} cy={from.y} r={3.5} />
+          </g>
+        ))}
+        {sessionLinks.map(({ id, d, end, side }) => (
+          <g key={id}>
+            <LinkLine d={d} />
+            <path className="canvas-link-arrow" d={ARROW} style={pointerStyle(end, side)} />
+          </g>
+        ))}
+      </svg>
+      <svg className={`canvas-links canvas-links--seams${dragClass}`} aria-hidden="true">
+        {seams.map(({ id, start, end, side }) => (
+          <g key={id} className="canvas-seam" data-canvas-seam={id}>
+            <path
+              className="canvas-seam-line"
+              style={{ d: `path("M ${start.x} ${start.y} L ${end.x} ${end.y}")` }}
+            />
+            <g
+              className="canvas-seam-mark"
+              style={pointerStyle({ x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 }, side)}
+            >
+              <circle r={8} />
+              <path d={CHEVRON} />
+            </g>
           </g>
         ))}
       </svg>
