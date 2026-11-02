@@ -53,6 +53,8 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
   contextReady: boolean
   conversationId: string | null
   conversationTitle: string
+  /** Why the newest autosave of the open conversation failed, if it did. */
+  saveError: string | null
   /** Terms to underline per turn id. Session-only: never written to the conversation. */
   suggestedTerms: Readonly<Record<number, string[]>>
   send: (content: string, attachments?: ImageAttachment[]) => void
@@ -96,7 +98,8 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
     stateRef.current = state
   }, [state])
 
-  const { requestSave, saveSnapshot } = useConversationPersistence(state, role, conversationMetaRef)
+  const { requestSave, saveSnapshot, saveError, reportSaveOutcome, clearSaveError } =
+    useConversationPersistence(state, role, conversationMetaRef)
 
   const getRequests = useCallback((): RequestBookkeeping => requestsRef.current, [])
 
@@ -135,6 +138,7 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
         setLoading(false)
         setConversationId(imported.conversationId)
         setConversationTitle(imported.conversationTitle)
+        clearSaveError()
         // Keep the meta so the next message updates the transferred record
         // instead of creating a second conversation under a new id.
         conversationMetaRef.current = {
@@ -464,8 +468,9 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
     setLoading(false)
     setConversationId(null)
     setConversationTitle('')
+    clearSaveError()
     conversationMetaRef.current = null
-  }, [cancelAllRequests, saveSnapshot])
+  }, [cancelAllRequests, saveSnapshot, clearSaveError])
 
   const deleteConversation = useCallback(async (): Promise<void> => {
     const meta = conversationMetaRef.current
@@ -477,8 +482,9 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
     setLoading(false)
     setConversationId(null)
     setConversationTitle('')
+    clearSaveError()
     await window.api.deleteConversation(meta.id)
-  }, [cancelAllRequests])
+  }, [cancelAllRequests, clearSaveError])
 
   const loadConversation = useCallback(
     async (id: string) => {
@@ -486,7 +492,12 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
       setLoading(false)
 
       const meta = conversationMetaRef.current
-      if (meta) await saveConversationState(stateRef.current, role, meta)
+      if (meta) {
+        const outcome = await saveConversationState(stateRef.current, role, meta)
+        reportSaveOutcome(meta.id, outcome)
+        // Stay on the unsaved chat so its error is seen and its content is not lost.
+        if (outcome && !outcome.ok) return
+      }
 
       const loaded = await window.api.loadConversation(id)
       if (!loaded) return
@@ -501,9 +512,10 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
         updatedAt: loaded.updatedAt,
         kbFed: loaded.kbFed
       }
+      clearSaveError()
       expansionIdCounterRef.current = maxExpansionId(loaded.state.turns) + 1
     },
-    [cancelAllRequests, role]
+    [cancelAllRequests, role, reportSaveOutcome, clearSaveError]
   )
 
   return {
@@ -512,6 +524,7 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
     contextReady,
     conversationId,
     conversationTitle,
+    saveError,
     suggestedTerms,
     send,
     stop,

@@ -118,7 +118,8 @@ function App(): React.JSX.Element {
     deleteConversation,
     loadConversation,
     conversationId,
-    conversationTitle
+    conversationTitle,
+    saveError
   } = useChatStreaming({
     onReplaceConversation: () => {
       setView('chat')
@@ -225,6 +226,7 @@ function App(): React.JSX.Element {
             onAttachmentsChange={setDraftAttachments}
             conversationId={conversationId}
             conversationTitle={conversationTitle}
+            saveError={saveError}
             onExpand={expand}
             onFold={fold}
             onUnfold={unfold}

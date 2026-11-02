@@ -41,6 +41,7 @@ interface ConversationProps {
   transferKey?: number
   conversationId?: string | null
   conversationTitle?: string | null
+  saveError?: string | null
 }
 
 const SUGGESTIONS = [
@@ -75,7 +76,8 @@ function Conversation({
   hideToolbar = false,
   transferKey,
   conversationId,
-  conversationTitle
+  conversationTitle,
+  saveError
 }: ConversationProps): React.JSX.Element {
   const { scrollRef, atBottom, pin, jumpToLatest } = useStickToBottom(state.turns)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -485,6 +487,11 @@ function Conversation({
             </svg>
             Latest
           </button>
+        )}
+        {saveError && (
+          <p className="composer-notice" role="alert">
+            {saveError}
+          </p>
         )}
         {attachNotice && (
           <p className="composer-notice" role="status">

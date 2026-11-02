@@ -383,7 +383,9 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   a curator pass are curated too. `markConversationKbFed(id, curatedUpdatedAt)` refuses to mark a
   record that changed during the pass. A stop after output keeps the partial text and saves it; a stop
   before the first token saves only the user turn. Empty conversations are never saved. Error
-  turns are persisted for Retry.
+  turns are persisted for Retry. A failed save resolves to `{ ok: false, error }` (never rejects): the
+  chat shows it above the composer until the next successful save, and opening another
+  conversation stays on the unsaved one when its pre-switch save fails.
 - **Stop/retry/regenerate live in the chat window**: while loading, the composer send button
   becomes a Stop button wired to `stop()` (Escape triggers it too, unless a menu, prompt, search
   or editor claims the key first), which cancels in-flight expands first and then the
