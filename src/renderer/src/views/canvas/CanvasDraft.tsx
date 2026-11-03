@@ -12,6 +12,8 @@ interface CanvasDraftProps {
   /** Cards this rectangle could continue, newest first; empty means a new session. */
   sessions: CanvasDraftSession[]
   parentId: string | undefined
+  /** How many selected cards the question is about. */
+  sourceCount: number
   /** Why it cannot be sent yet (the answer it continues is still being written), or null. */
   waiting: string | null
   onParentChange: (parentId: string | undefined) => void
@@ -34,6 +36,7 @@ function CanvasDraft({
   rect,
   sessions,
   parentId,
+  sourceCount,
   waiting,
   onParentChange,
   onActivity,
@@ -69,7 +72,11 @@ function CanvasDraft({
       >
         <div className="canvas-draft-meta">
           {sessions.length === 0 ? (
-            <span>New session</span>
+            <span>
+              {sourceCount > 0
+                ? `About ${sourceCount === 1 ? 'this card' : `these ${sourceCount} cards`}`
+                : 'New session'}
+            </span>
           ) : (
             <label className="canvas-draft-session">
               <span>Continues</span>
