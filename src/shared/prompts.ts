@@ -139,6 +139,23 @@ export function buildCanvasFitNote(words: number): string {
   ].join(' ')
 }
 
+export interface CanvasSourceExcerpt {
+  title: string
+  text: string
+}
+
+/** Cards the user selected and asked about. They are material, not conversation history. */
+export function buildCanvasSourcesNote(sources: CanvasSourceExcerpt[]): string {
+  const blocks = sources.map(({ title, text }, index) => {
+    const heading = title.trim() === '' ? `Card ${index + 1}` : `Card ${index + 1}: ${title.trim()}`
+    return `<card>\n${heading}\n\n${text.trim()}\n</card>`
+  })
+  return [
+    'The question below is about these cards, which the user selected on their canvas:',
+    ...blocks
+  ].join('\n\n')
+}
+
 /* ---- Expand Instructions ---- */
 
 const EXPAND_SHARED_CONSTRAINTS = [

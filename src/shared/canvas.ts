@@ -6,7 +6,8 @@
  * nothing new. This layout is the only addition. Everything here is pure.
  */
 import type { Turn } from './conversation'
-import { buildExpandAncestorQuestion, buildCanvasFitNote } from './prompts'
+import type { CanvasSourceExcerpt } from './prompts'
+import { buildCanvasFitNote, buildCanvasSourcesNote, buildExpandAncestorQuestion } from './prompts'
 import type { ProviderMessage } from './models'
 import { expansionPath, findExpansionInTurns } from './rich-text'
 
@@ -25,6 +26,9 @@ export interface CanvasViewport extends CanvasPoint {
   zoom: number
 }
 
+export const CANVAS_COLORS = ['red', 'amber', 'green', 'teal', 'blue', 'violet'] as const
+export type CanvasColor = (typeof CANVAS_COLORS)[number]
+
 /** One question and its answer. */
 export interface CanvasMessageCard {
   kind: 'message'
@@ -34,6 +38,11 @@ export interface CanvasMessageCard {
   turnId: number
   /** The card this one continues; its session history is what the model sees. */
   parentId?: string
+  /** Cards asked about: their text goes with the request, not their history. */
+  sources?: string[]
+  color?: CanvasColor
+  /** Shown as its title alone; this is the height to return to. */
+  collapsedFrom?: number
 }
 
 /** One expansion, drawn over its host's text (`inset`) or dragged out and linked. */
@@ -46,25 +55,61 @@ export interface CanvasExpansionCard {
   /** The card whose text holds the expanded term. */
   hostId: string
   inset: boolean
+  color?: CanvasColor
+  collapsedFrom?: number
 }
 
-export type CanvasCard = CanvasMessageCard | CanvasExpansionCard
+/** The user's own text. It stands on the plane like a card, but holds no turn. */
+export interface CanvasNoteCard {
+  kind: 'note'
+  id: string
+  rect: CanvasRect
+  text: string
+  color?: CanvasColor
+}
+
+export type CanvasCard = CanvasMessageCard | CanvasExpansionCard | CanvasNoteCard
+
+/** A titled region under the cards. What it holds is decided by geometry, at the moment it moves. */
+export interface CanvasFrame {
+  id: string
+  rect: CanvasRect
+  title: string
+  color?: CanvasColor
+}
+
+/** An arrow the user drew between two cards, labelled with how they relate. */
+export interface CanvasLink {
+  id: string
+  from: string
+  to: string
+  label?: string
+}
 
 export interface CanvasLayout {
   cards: CanvasCard[]
   viewport: CanvasViewport
+  frames: CanvasFrame[]
+  links: CanvasLink[]
 }
 
 export type CanvasSide = 'right' | 'bottom' | 'left' | 'top'
 
-export const MIN_ZOOM = 0.25
+export const MIN_ZOOM = 0.1
 export const MAX_ZOOM = 2
+/** Below this zoom body text cannot be read, so a card shows its title at a legible size. */
+export const FAR_ZOOM = 0.5
 export const DEFAULT_VIEWPORT: CanvasViewport = { x: 0, y: 0, zoom: 1 }
 
 export const MIN_MESSAGE_SIZE = { w: 200, h: 120 }
 export const MIN_EXPANSION_SIZE = { w: 140, h: 84 }
 export const DEFAULT_MESSAGE_SIZE = { w: 400, h: 280 }
 export const DEFAULT_EXPANSION_SIZE = { w: 280, h: 150 }
+export const MIN_NOTE_SIZE = { w: 100, h: 60 }
+export const DEFAULT_NOTE_SIZE = { w: 240, h: 150 }
+export const MIN_FRAME_SIZE = { w: 160, h: 100 }
+/** Enough for a header holding one line of caption (see .canvas-card-header). */
+export const COLLAPSED_CARD_HEIGHT = 40
 
 /** Below this many world pixels of drag, a gesture counts as a click. */
 export const CLICK_DRAG_LIMIT = 6
@@ -76,6 +121,13 @@ const MIN_SHARED_LENGTH = 24
 /** A seam stops short of the rounded corners of the cards either side of it (`canvas.css`). */
 const SEAM_CORNER = 6
 const MIN_LINK_REACH = 48
+
+/** A copy without one optional field, keeping the object's own type. */
+export function withoutField<T extends object>(item: T, field: keyof T): T {
+  const copy = { ...item }
+  delete copy[field]
+  return copy
+}
 
 /* ---- Rectangles ---- */
 
@@ -292,6 +344,21 @@ export function estimateWords(rect: CanvasRect, captionChars = 0): number {
   return Math.max(Math.round(words / 5) * 5, MIN_WORDS)
 }
 
+/** Adds the cards asked about to the newest user message, so stored turns never carry them. */
+export function withCanvasSources(
+  messages: ProviderMessage[],
+  sources: CanvasSourceExcerpt[]
+): ProviderMessage[] {
+  if (sources.length === 0) return messages
+  const index = messages.findLastIndex((message) => message.role === 'user')
+  if (index < 0) return messages
+  return messages.map((message, i) =>
+    i === index
+      ? { ...message, content: `${buildCanvasSourcesNote(sources)}\n\n${message.content}` }
+      : message
+  )
+}
+
 /** Adds the length to the newest user message, so stored turns never carry it. */
 export function withCanvasFit(messages: ProviderMessage[], words: number): ProviderMessage[] {
   const index = messages.findLastIndex((message) => message.role === 'user')
@@ -311,7 +378,7 @@ function cardById(cards: CanvasCard[], id: string | undefined): CanvasCard | und
 
 /** A card that stands on the plane itself, rather than sitting over another card's text. */
 export function isTopLevel(card: CanvasCard): boolean {
-  return card.kind === 'message' || !card.inset
+  return card.kind !== 'expansion' || !card.inset
 }
 
 export function topLevelRects(cards: CanvasCard[], except?: ReadonlySet<string>): CanvasRect[] {
@@ -323,7 +390,9 @@ export function topLevelRects(cards: CanvasCard[], except?: ReadonlySet<string>)
  * sessions continues only one: the history of the others is not sent.
  */
 export function continuationCandidates(rect: CanvasRect, cards: CanvasCard[]): CanvasCard[] {
-  return cards.filter((card) => isTopLevel(card) && sharesSide(rect, card.rect)).reverse()
+  return cards
+    .filter((card) => card.kind !== 'note' && isTopLevel(card) && sharesSide(rect, card.rect))
+    .reverse()
 }
 
 /** The newest card sharing a side with `rect`; none means `rect` starts a new session. */
@@ -360,6 +429,7 @@ export function adjacentSlot(
 
 /** The card a card came from: an expansion's host, or the card a message continues. */
 export function sourceCardId(card: CanvasCard): string | undefined {
+  if (card.kind === 'note') return undefined
   return card.kind === 'expansion' ? card.hostId : card.parentId
 }
 
@@ -688,7 +758,8 @@ export function fitCardHeight(
   contentHeight: number
 ): CanvasMoveUpdate[] {
   const card = cardById(cards, id)
-  if (!card) return []
+  // A note is the size the user made it, and a collapsed card has no body to fit.
+  if (!card || card.kind === 'note' || card.collapsedFrom !== undefined) return []
   const minimum = card.kind === 'message' ? MIN_MESSAGE_SIZE.h : MIN_EXPANSION_SIZE.h
   const insetBottoms = cards.flatMap((other) =>
     other.kind === 'expansion' && other.inset && other.hostId === id
@@ -708,6 +779,57 @@ export function fitCardHeight(
   const updates = resizeCard(cards, id, { w: card.rect.w, h: wanted }) ?? []
   const unchanged = updates.find((update) => update.id === id)?.rect.h === card.rect.h
   return unchanged ? [] : updates
+}
+
+/* ---- Collapsing a card to its title ---- */
+
+/** The size a card has when open, whether or not it is collapsed now. */
+export function openCardSize(card: CanvasCard): { w: number; h: number } {
+  const collapsedFrom = card.kind === 'note' ? undefined : card.collapsedFrom
+  return { w: card.rect.w, h: collapsedFrom ?? card.rect.h }
+}
+
+/** Cards drawn over the text of a collapsed card, which therefore are not on screen. */
+export function hiddenInsetIds(cards: CanvasCard[]): Set<string> {
+  const hidden = new Set<string>()
+  // Walks up to the card it stands on; `seen` is for a stored layout whose hosts form a loop.
+  const isHidden = (card: CanvasCard, seen = new Set<string>()): boolean => {
+    if (card.kind !== 'expansion' || !card.inset || seen.has(card.id)) return false
+    seen.add(card.id)
+    const host = cardById(cards, card.hostId)
+    if (!host) return false
+    return (host.kind !== 'note' && host.collapsedFrom !== undefined) || isHidden(host, seen)
+  }
+  for (const card of cards) {
+    if (isHidden(card)) hidden.add(card.id)
+  }
+  return hidden
+}
+
+/**
+ * Collapses or reopens a card through `resizeCard`, so what is joined below follows.
+ * The same list comes back when nothing changes: a note cannot collapse, and a card
+ * cannot reopen when what it would push cannot get out of the way.
+ */
+export function setCardCollapsed(
+  cards: CanvasCard[],
+  id: string,
+  collapsed: boolean
+): CanvasCard[] {
+  const card = cardById(cards, id)
+  if (!card || card.kind === 'note') return cards
+  if ((card.collapsedFrom !== undefined) === collapsed) return cards
+  const height = collapsed ? COLLAPSED_CARD_HEIGHT : openCardSize(card).h
+  const updates = resizeCard(cards, id, { w: card.rect.w, h: height })
+  if (!updates) return cards
+  const rects = new Map(updates.map((update) => [update.id, update.rect]))
+  return cards.map((item) => {
+    const rect = rects.get(item.id) ?? item.rect
+    if (item.id !== id || item.kind === 'note') return { ...item, rect }
+    return collapsed
+      ? { ...item, rect, collapsedFrom: item.rect.h }
+      : { ...withoutField(item, 'collapsedFrom'), rect }
+  })
 }
 
 /* ---- Session history ---- */
@@ -734,6 +856,7 @@ function expansionHistory(turns: Turn[], card: CanvasExpansionCard): Turn[] {
 export function turnsThroughCard(cards: CanvasCard[], turns: Turn[], id: string): Turn[] {
   const card = cardById(cards, id)
   if (!card) return []
+  if (card.kind === 'note') return []
   if (card.kind === 'message') {
     const before = card.parentId === undefined ? [] : turnsThroughCard(cards, turns, card.parentId)
     const own = turns.filter((turn) => turn.id === card.userTurnId || turn.id === card.turnId)
@@ -852,6 +975,54 @@ export function canvasContinuations(cards: CanvasCard[]): CanvasContinuation[] {
         : linkBetween(card.id, parent.rect, card.rect)
     ]
   })
+}
+
+/**
+ * The lines from cards asked about. The card a message continues already has its mark
+ * from `canvasContinuations`, so it gets no second line.
+ */
+export function askedAboutRelations(cards: CanvasCard[]): Array<{ from: string; to: string }> {
+  const ids = new Set(cards.map((card) => card.id))
+  return cards.flatMap((card) => {
+    if (card.kind !== 'message') return []
+    const froms = new Set((card.sources ?? []).filter((id) => ids.has(id) && id !== card.parentId))
+    return [...froms].map((from) => ({ from, to: card.id }))
+  })
+}
+
+export interface ConnectorGeometry {
+  d: string
+  /** The curve's middle, where its label sits. */
+  mid: CanvasPoint
+}
+
+/** A curve between the facing sides of two rectangles, leaving and arriving squarely. */
+export function connectorGeometry(from: CanvasRect, to: CanvasRect): ConnectorGeometry {
+  const a = rectCenter(from)
+  const b = rectCenter(to)
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  const horizontal = Math.abs(dx) / (from.w + to.w) >= Math.abs(dy) / (from.h + to.h)
+  const start = horizontal
+    ? { x: dx >= 0 ? from.x + from.w : from.x, y: a.y }
+    : { x: a.x, y: dy >= 0 ? from.y + from.h : from.y }
+  const end = horizontal
+    ? { x: dx >= 0 ? to.x : to.x + to.w, y: b.y }
+    : { x: b.x, y: dy >= 0 ? to.y : to.y + to.h }
+  const reach = Math.max(Math.hypot(end.x - start.x, end.y - start.y) * 0.4, 24)
+  const c1 = horizontal
+    ? { x: start.x + Math.sign(dx || 1) * reach, y: start.y }
+    : { x: start.x, y: start.y + Math.sign(dy || 1) * reach }
+  const c2 = horizontal
+    ? { x: end.x - Math.sign(dx || 1) * reach, y: end.y }
+    : { x: end.x, y: end.y - Math.sign(dy || 1) * reach }
+  return {
+    d: `M ${start.x} ${start.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${end.x} ${end.y}`,
+    mid: {
+      x: (start.x + 3 * c1.x + 3 * c2.x + end.x) / 8,
+      y: (start.y + 3 * c1.y + 3 * c2.y + end.y) / 8
+    }
+  }
 }
 
 /* ---- Viewport ---- */
@@ -1005,11 +1176,18 @@ function isRect(value: unknown): value is CanvasRect {
   )
 }
 
+function isColor(value: unknown): value is CanvasColor {
+  return CANVAS_COLORS.includes(value as CanvasColor)
+}
+
 function isCardSound(value: unknown, turns: Turn[]): value is CanvasCard {
   if (typeof value !== 'object' || value === null) return false
-  const card = value as Partial<CanvasMessageCard> & Partial<CanvasExpansionCard>
+  const card = value as Partial<CanvasMessageCard> &
+    Partial<CanvasExpansionCard> &
+    Partial<CanvasNoteCard>
   if (typeof card.id !== 'string' || !isRect(card.rect)) return false
   const hasTurn = (id: unknown): boolean => turns.some((turn) => turn.id === id)
+  if (card.kind === 'note') return typeof card.text === 'string'
   if (card.kind === 'message') return hasTurn(card.userTurnId) && hasTurn(card.turnId)
   return (
     card.kind === 'expansion' &&
@@ -1022,8 +1200,63 @@ function isCardSound(value: unknown, turns: Turn[]): value is CanvasCard {
 
 function dropOrphans(cards: CanvasCard[]): CanvasCard[] {
   const ids = new Set(cards.map((card) => card.id))
-  const kept = cards.filter((card) => card.kind === 'message' || ids.has(card.hostId))
+  const kept = cards.filter((card) => card.kind !== 'expansion' || ids.has(card.hostId))
   return kept.length === cards.length ? cards : dropOrphans(kept)
+}
+
+/** The same card with its optional fields made sound; the same object when they already are. */
+function soundCard(card: CanvasCard, ids: ReadonlySet<string>): CanvasCard {
+  let next = card
+  if (card.color !== undefined && !isColor(card.color)) next = withoutField(next, 'color')
+  if (next.kind === 'note') return next
+  const collapsedFrom = next.collapsedFrom
+  if (collapsedFrom !== undefined && !(Number.isFinite(collapsedFrom) && collapsedFrom > 0)) {
+    next = withoutField(next, 'collapsedFrom')
+  }
+  if (next.kind !== 'message') return next
+  // The session it continued is gone; it stands on its own now.
+  if (next.parentId !== undefined && !ids.has(next.parentId)) {
+    next = withoutField(next, 'parentId')
+  }
+  const sources = next.sources
+  if (sources === undefined) return next
+  const known = Array.isArray(sources) ? sources.filter((id) => ids.has(id)) : []
+  if (known.length === 0) return withoutField(next, 'sources')
+  return known.length === sources.length ? next : { ...next, sources: known }
+}
+
+function soundFrames(raw: unknown): CanvasFrame[] {
+  if (!Array.isArray(raw)) return []
+  return raw.flatMap((value): CanvasFrame[] => {
+    const frame = value as Partial<CanvasFrame> | null
+    if (typeof frame?.id !== 'string' || !isRect(frame.rect)) return []
+    return [
+      {
+        id: frame.id,
+        rect: frame.rect,
+        title: typeof frame.title === 'string' ? frame.title : '',
+        ...(isColor(frame.color) ? { color: frame.color } : {})
+      }
+    ]
+  })
+}
+
+function soundLinks(raw: unknown, ids: ReadonlySet<string>): CanvasLink[] {
+  if (!Array.isArray(raw)) return []
+  return raw.flatMap((value): CanvasLink[] => {
+    const link = value as Partial<CanvasLink> | null
+    if (typeof link?.id !== 'string' || typeof link.from !== 'string') return []
+    if (typeof link.to !== 'string' || link.from === link.to) return []
+    if (!ids.has(link.from) || !ids.has(link.to)) return []
+    return [
+      {
+        id: link.id,
+        from: link.from,
+        to: link.to,
+        ...(typeof link.label === 'string' && link.label !== '' ? { label: link.label } : {})
+      }
+    ]
+  })
 }
 
 /** A stored layout is never trusted: a card that lost its turn or host is left out. */
@@ -1037,19 +1270,9 @@ export function normalizeCanvasLayout(raw: unknown, turns: Turn[]): CanvasLayout
   const viewportOk =
     Number.isFinite(viewport?.x) && Number.isFinite(viewport?.y) && Number.isFinite(viewport?.zoom)
   return {
-    cards: cards.map((card) => {
-      if (card.kind !== 'message' || card.parentId === undefined || ids.has(card.parentId)) {
-        return card
-      }
-      // The session it continued is gone; it stands on its own now.
-      return {
-        kind: 'message',
-        id: card.id,
-        rect: card.rect,
-        userTurnId: card.userTurnId,
-        turnId: card.turnId
-      }
-    }),
+    cards: cards.map((card) => soundCard(card, ids)),
+    frames: soundFrames(value.frames),
+    links: soundLinks(value.links, ids),
     viewport: viewportOk
       ? {
           x: viewport!.x,

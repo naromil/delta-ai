@@ -1,5 +1,10 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { CanvasCard, CanvasRect, CanvasSide } from '../../../../shared/canvas'
+import type {
+  CanvasExpansionCard,
+  CanvasMessageCard,
+  CanvasRect,
+  CanvasSide
+} from '../../../../shared/canvas'
 import type { ExpansionNode } from '../../../../shared/rich-text'
 import { flattenMarkdown } from '../../../../shared/rich-text'
 import Markdown from '../../components/conversation/Markdown'
@@ -25,10 +30,14 @@ export interface CanvasCardActions {
   onGoToSource: (id: string) => void
   /** Keys pressed while the card itself has focus (not a button or field inside it). */
   onCardKeyDown: (e: React.KeyboardEvent, id: string) => void
+  /** A click that reached the card rather than a control inside it. */
+  onCardClick: (e: React.MouseEvent, id: string) => void
+  onCardMenu: (e: React.MouseEvent, id: string) => void
+  onToggleCollapse: (id: string) => void
 }
 
 interface CanvasCardViewProps extends CanvasCardActions {
-  card: CanvasCard
+  card: CanvasMessageCard | CanvasExpansionCard
   rect: CanvasRect
   caption: string
   /** The question typed about an expanded term; a message's caption is its question. */
@@ -45,6 +54,9 @@ interface CanvasCardViewProps extends CanvasCardActions {
   invalid: boolean
   pulsing: boolean
   dimmed: boolean
+  selected: boolean
+  /** On the session history of the selected card. */
+  onPath: boolean
   /** The card a rectangle being drawn, or a waiting draft, would continue. */
   continued: boolean
   /** An expanded term in this card to flash, after navigating back to it. */
@@ -138,8 +150,8 @@ function CardQuestionEditor({
 
 function CanvasCardView(props: CanvasCardViewProps): React.JSX.Element {
   const { card, rect, caption, question, answer, expansions, status, failure } = props
-  const { dragging, roomRight, roomBottom, invalid, pulsing, dimmed, continued, pulseTermId } =
-    props
+  const { dragging, roomRight, roomBottom, invalid, pulsing, dimmed, selected, onPath } = props
+  const { continued, pulseTermId, onCardClick, onCardMenu, onToggleCollapse } = props
   const { onDragStart, onResizeStart, onStop, onRegenerate, onEdit, onDelete, onContinue } = props
   const { onAskAnother, onContextMenu, onOpenExpansion, onGoToSource, onCardKeyDown } = props
   const [editing, setEditing] = useState(false)
@@ -223,10 +235,14 @@ function CanvasCardView(props: CanvasCardViewProps): React.JSX.Element {
     [onOpenExpansion, pulseTermId]
   )
 
+  const collapsed = card.collapsedFrom !== undefined
   const classes = [
     'canvas-card',
     `canvas-card--${card.kind}`,
     card.kind === 'expansion' && card.inset ? 'is-inset' : '',
+    collapsed ? 'is-collapsed' : '',
+    selected ? 'is-selected' : '',
+    onPath ? 'is-on-path' : '',
     status === 'streaming' ? 'is-streaming' : '',
     status === 'failed' ? 'is-failed' : '',
     dragging ? 'is-dragging' : '',
@@ -237,7 +253,7 @@ function CanvasCardView(props: CanvasCardViewProps): React.JSX.Element {
   ]
     .filter(Boolean)
     .join(' ')
-  const canContinue = (card.kind === 'message' || !card.inset) && status === 'done'
+  const canContinue = (card.kind === 'message' || !card.inset) && status === 'done' && !collapsed
   const waiting = status === 'streaming' && answer === ''
   const expansionId = card.kind === 'expansion' ? card.expansionId : undefined
   const hasSource = card.kind === 'expansion' || card.parentId !== undefined
@@ -248,13 +264,20 @@ function CanvasCardView(props: CanvasCardViewProps): React.JSX.Element {
       ref={articleRef}
       className={classes}
       data-canvas-card={card.id}
+      data-color={card.color}
       tabIndex={0}
       aria-label={`${card.kind === 'expansion' ? 'Expansion' : 'Question'}: ${label.slice(0, 120)}`}
       aria-busy={status === 'streaming'}
       style={{ transform: `translate(${rect.x}px, ${rect.y}px)`, width: rect.w, height: rect.h }}
+      onClick={(e) => onCardClick(e, card.id)}
       onKeyDown={(e) => {
         if (e.target !== e.currentTarget || e.ctrlKey || e.metaKey || e.altKey) return
-        if ((e.key === 'e' || e.key === 'E') && card.kind === 'message' && status !== 'streaming') {
+        if (
+          (e.key === 'e' || e.key === 'E') &&
+          card.kind === 'message' &&
+          status !== 'streaming' &&
+          !collapsed
+        ) {
           e.preventDefault()
           setEditing(true)
           return
@@ -272,8 +295,9 @@ function CanvasCardView(props: CanvasCardViewProps): React.JSX.Element {
       <div className="canvas-card-surface">
         <header
           className="canvas-card-header"
-          title="Drag to move"
+          title="Drag to move, double-click to zoom"
           onPointerDown={(e) => onDragStart(e, card.id)}
+          onContextMenu={(e) => onCardMenu(e, card.id)}
         >
           <div className="canvas-card-caption">
             {card.kind === 'expansion' ? <span className="canvas-card-kind">Expansion</span> : null}
@@ -330,7 +354,7 @@ function CanvasCardView(props: CanvasCardViewProps): React.JSX.Element {
                 </ActionIcon>
               </button>
             ) : null}
-            {card.kind === 'message' && status !== 'streaming' && !editing ? (
+            {card.kind === 'message' && status !== 'streaming' && !editing && !collapsed ? (
               <button
                 type="button"
                 className="canvas-icon-btn"
@@ -357,7 +381,7 @@ function CanvasCardView(props: CanvasCardViewProps): React.JSX.Element {
                 Ask…
               </button>
             ) : null}
-            {status === 'done' && !editing ? (
+            {status === 'done' && !editing && !collapsed ? (
               <button
                 type="button"
                 className="canvas-icon-btn"
@@ -371,6 +395,17 @@ function CanvasCardView(props: CanvasCardViewProps): React.JSX.Element {
                 </ActionIcon>
               </button>
             ) : null}
+            <button
+              type="button"
+              className="canvas-icon-btn"
+              aria-label={collapsed ? 'Expand (.)' : 'Collapse to title (.)'}
+              title={collapsed ? 'Expand (.)' : 'Collapse to title (.)'}
+              onClick={() => onToggleCollapse(card.id)}
+            >
+              <ActionIcon>
+                <path d={collapsed ? 'M6 9l6 6 6-6' : 'M6 15l6-6 6 6'} />
+              </ActionIcon>
+            </button>
             <button
               type="button"
               className="canvas-icon-btn canvas-icon-btn--close"
@@ -415,11 +450,20 @@ function CanvasCardView(props: CanvasCardViewProps): React.JSX.Element {
             </div>
           )}
         </div>
-        <span
-          className="canvas-card-resize"
-          title="Drag to resize"
-          onPointerDown={(e) => onResizeStart(e, card.id)}
-        />
+        {collapsed ? null : (
+          <span
+            className="canvas-card-resize"
+            title="Drag to resize"
+            onPointerDown={(e) => onResizeStart(e, card.id)}
+          />
+        )}
+        <div
+          className="canvas-card-lod"
+          onPointerDown={(e) => onDragStart(e, card.id)}
+          onContextMenu={(e) => onCardMenu(e, card.id)}
+        >
+          {label}
+        </div>
       </div>
       {canContinue && roomRight ? (
         <button

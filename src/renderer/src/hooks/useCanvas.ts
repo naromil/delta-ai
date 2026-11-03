@@ -7,16 +7,37 @@
  * line: what a request sends is found by walking a card's session.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { CanvasCard, CanvasLayout, CanvasRect, CanvasViewport } from '../../../shared/canvas'
+import type {
+  CanvasCard,
+  CanvasColor,
+  CanvasFrame,
+  CanvasLayout,
+  CanvasLink,
+  CanvasMessageCard,
+  CanvasRect,
+  CanvasViewport
+} from '../../../shared/canvas'
 import {
   DEFAULT_VIEWPORT,
   cascadeCardIds,
   estimateWords,
   fitCardHeight,
   normalizeCanvasLayout,
+  setCardCollapsed,
   turnsThroughCard,
-  withCanvasFit
+  withCanvasFit,
+  withoutField,
+  withCanvasSources
 } from '../../../shared/canvas'
+import type { CanvasFrameUpdate } from '../../../shared/canvas-arrange'
+import { duplicateSelection } from '../../../shared/canvas-arrange'
+import type {
+  CanvasPatch,
+  CanvasPatchDirection,
+  CanvasSnapshot
+} from '../../../shared/canvas-history'
+import { applyCanvasPatch, diffCanvas } from '../../../shared/canvas-history'
+import { sourceExcerpts } from '../../../shared/canvas-selection'
 import type { ConversationMeta, ProviderMessage, Turn } from '../../../shared/conversation'
 import {
   CONVERSATION_TITLE_MAX_LENGTH,
@@ -43,6 +64,7 @@ import type { ExpandOutcome } from './useChatStreaming'
 
 const SAVE_DELAY_MS = 300
 const UNTITLED = 'Untitled canvas'
+const HISTORY_LIMIT = 100
 
 interface CanvasDoc {
   turns: Turn[]
@@ -67,6 +89,9 @@ export interface CanvasCardUpdate {
   inset?: boolean
 }
 
+/** What undo or redo did, with the reason when it could not. */
+export type CanvasHistoryStep = { ok: true; label: string } | { ok: false; reason: string }
+
 export interface CanvasExpandPlacement {
   hostId: string
   rect: CanvasRect
@@ -77,8 +102,12 @@ let nextTurnId = Date.now()
 
 const emptyDoc = (): CanvasDoc => ({
   turns: [],
-  layout: { cards: [], viewport: DEFAULT_VIEWPORT }
+  layout: { cards: [], frames: [], links: [], viewport: DEFAULT_VIEWPORT }
 })
+
+function snapshotOf({ turns, layout }: CanvasDoc): CanvasSnapshot {
+  return { turns, cards: layout.cards, frames: layout.frames, links: layout.links }
+}
 
 function newMeta(): CanvasMeta {
   const now = new Date().toISOString()
@@ -97,6 +126,7 @@ function captionLength(text: string): number {
 }
 
 function requestBelongsTo(request: PendingRequest, card: CanvasCard): boolean {
+  if (card.kind === 'note') return false
   return card.kind === 'message'
     ? request.kind === 'send' && request.turnId === card.turnId
     : request.kind === 'expand' && request.expansionId === card.expansionId
@@ -109,7 +139,12 @@ export function useCanvas(): {
   title: string
   turns: Turn[]
   cards: CanvasCard[]
+  frames: CanvasFrame[]
+  links: CanvasLink[]
   viewport: CanvasViewport
+  /** What undo and redo would do next; null when there is nothing. */
+  undoLabel: string | null
+  redoLabel: string | null
   /** Assistant turns with a request in flight. */
   streamingTurnIds: ReadonlySet<number>
   /** Cards whose height should be fitted to their answer the next time they are on screen. */
@@ -121,13 +156,32 @@ export function useCanvas(): {
   deleteCanvas: () => void
   rename: (title: string) => void
   setViewport: (viewport: CanvasViewport) => void
-  updateCards: (updates: CanvasCardUpdate[]) => void
+  /** Moves cards and frames as one undoable step. */
+  moveItems: (label: string, cards: CanvasCardUpdate[], frames?: CanvasFrameUpdate[]) => void
+  undo: () => CanvasHistoryStep | null
+  redo: () => CanvasHistoryStep | null
+  addNote: (rect: CanvasRect, text: string) => string
+  updateNote: (id: string, text: string) => void
+  addFrame: (rect: CanvasRect, title: string) => string
+  renameFrame: (id: string, title: string) => void
+  addLink: (from: string, to: string) => string | null
+  labelLink: (id: string, label: string) => void
+  reverseLink: (id: string) => void
+  setColor: (ids: ReadonlySet<string>, color: CanvasColor | undefined) => void
+  setCollapsed: (ids: ReadonlySet<string>, collapsed: boolean) => void
+  /** Returns the new items' ids; empty when nothing could be copied. */
+  duplicate: (ids: ReadonlySet<string>) => string[]
   requestFit: (id: string) => void
   /** `null` means there was nothing to measure, so the card stays as it is. */
   fitCard: (id: string, contentHeight: number | null) => void
   exportCanvas: () => Promise<{ ok: true; path: string } | { ok: false; error: string }>
   /** Returns the new card's id. */
-  ask: (rect: CanvasRect, question: string, parentId: string | undefined) => string
+  ask: (
+    rect: CanvasRect,
+    question: string,
+    parentId: string | undefined,
+    sources?: readonly string[]
+  ) => string
   expand: (
     turnId: number,
     target: ExpansionTarget,
@@ -137,7 +191,8 @@ export function useCanvas(): {
   stopCard: (id: string) => void
   regenerateCard: (id: string) => void
   editCard: (id: string, question: string) => void
-  deleteCard: (id: string) => void
+  /** Removes cards with what depends on them, frames (not what they hold) and links. */
+  removeItems: (ids: ReadonlySet<string>) => void
 } {
   const [doc, setDoc] = useState<CanvasDoc>(emptyDoc)
   const [loaded, setLoaded] = useState(false)
@@ -153,6 +208,12 @@ export function useCanvas(): {
   const expansionCounterRef = useRef(1)
   const saveTimerRef = useRef<number | null>(null)
   const loadStartedRef = useRef(false)
+  const undoStackRef = useRef<CanvasPatch[]>([])
+  const redoStackRef = useRef<CanvasPatch[]>([])
+  const [historyLabels, setHistoryLabels] = useState<{
+    undo: string | null
+    redo: string | null
+  }>({ undo: null, redo: null })
 
   const updateDoc = useCallback((change: (prev: CanvasDoc) => CanvasDoc): void => {
     docRef.current = change(docRef.current)
@@ -179,7 +240,7 @@ export function useCanvas(): {
     const { turns, layout } = docRef.current
     const onFailure = (err: unknown): void => console.warn('Failed to save canvas:', err)
 
-    if (layout.cards.length === 0) {
+    if (layout.cards.length === 0 && layout.frames.length === 0) {
       if (!current.persisted) return Promise.resolve()
       updateMeta({ persisted: false })
       return window.api.deleteConversation(current.id).then(refreshCanvases, onFailure)
@@ -211,6 +272,60 @@ export function useCanvas(): {
     [flushSave, updateMeta]
   )
 
+  /* ---- Undo and redo ---- */
+
+  const syncHistory = useCallback((): void => {
+    setHistoryLabels({
+      undo: undoStackRef.current.at(-1)?.label ?? null,
+      redo: redoStackRef.current.at(-1)?.label ?? null
+    })
+  }, [])
+
+  /** Runs one user action and remembers what it changed, so it can be taken back. */
+  const recorded = useCallback(
+    (label: string, action: () => void): void => {
+      const before = snapshotOf(docRef.current)
+      action()
+      const patch = diffCanvas(label, before, snapshotOf(docRef.current))
+      if (!patch) return
+      undoStackRef.current = [...undoStackRef.current, patch].slice(-HISTORY_LIMIT)
+      redoStackRef.current = []
+      syncHistory()
+    },
+    [syncHistory]
+  )
+
+  const stepHistory = useCallback(
+    (direction: CanvasPatchDirection): CanvasHistoryStep | null => {
+      const undoing = direction === 'undo'
+      const from = undoing ? undoStackRef : redoStackRef
+      const to = undoing ? redoStackRef : undoStackRef
+      const patch = from.current.at(-1)
+      if (!patch) return null
+      const result = applyCanvasPatch(snapshotOf(docRef.current), patch, direction)
+      if (!result.ok) {
+        if (result.reason === 'blocked') {
+          return { ok: false, reason: 'Something is in the way now. Move it, then try again.' }
+        }
+        // That answer has moved on, so this step can never apply again.
+        from.current = from.current.slice(0, -1)
+        syncHistory()
+        return { ok: false, reason: `“${patch.label}” can no longer be taken back.` }
+      }
+      from.current = from.current.slice(0, -1)
+      to.current = [...to.current, patch]
+      const { turns, cards, frames, links } = result.snapshot
+      updateDoc((prev) => ({ turns, layout: { ...prev.layout, cards, frames, links } }))
+      requestSave(patch.turns.length > 0)
+      syncHistory()
+      return { ok: true, label: patch.label }
+    },
+    [requestSave, syncHistory, updateDoc]
+  )
+
+  const undo = useCallback(() => stepHistory('undo'), [stepHistory])
+  const redo = useCallback(() => stepHistory('redo'), [stepHistory])
+
   /* ---- Requests ---- */
 
   const syncStreaming = useCallback((): void => {
@@ -235,7 +350,7 @@ export function useCanvas(): {
   )
 
   const startSend = useCallback(
-    (card: CanvasCard, messages: ProviderMessage[]): void => {
+    (card: CanvasMessageCard, messages: ProviderMessage[]): void => {
       const requestId = generateRequestId()
       requestsRef.current.set(requestId, { kind: 'send', turnId: card.turnId })
       syncStreaming()
@@ -251,7 +366,8 @@ export function useCanvas(): {
       const question = turns.find((turn) => turn.id === card.userTurnId)
       // The answer being written is blank, which serialization leaves out.
       const path = turnsThroughCard(layout.cards, turns, card.id)
-      const messages = serializeForChat({ turns: path }, 'chat')
+      const sources = sourceExcerpts(layout.cards, turns, card.sources ?? [])
+      const messages = withCanvasSources(serializeForChat({ turns: path }, 'chat'), sources)
       const words = estimateWords(card.rect, captionLength(question?.content ?? ''))
       startSend(card, withCanvasFit(messages, words))
     },
@@ -338,7 +454,12 @@ export function useCanvas(): {
   )
 
   const ask = useCallback(
-    (rect: CanvasRect, question: string, parentId: string | undefined): string => {
+    (
+      rect: CanvasRect,
+      question: string,
+      parentId: string | undefined,
+      sources: readonly string[] = []
+    ): string => {
       const userTurnId = nextTurnId++
       const turnId = nextTurnId++
       const card: CanvasCard = {
@@ -347,7 +468,8 @@ export function useCanvas(): {
         rect,
         userTurnId,
         turnId,
-        ...(parentId !== undefined ? { parentId } : {})
+        ...(parentId !== undefined ? { parentId } : {}),
+        ...(sources.length > 0 ? { sources: [...sources] } : {})
       }
       if (metaRef.current.title === UNTITLED) {
         updateMeta({ title: buildConversationTitle(question) })
@@ -383,6 +505,7 @@ export function useCanvas(): {
       const doomedTurns = new Set<number>()
       const doomedExpansions = new Set<number>()
       for (const card of doomedCards) {
+        if (card.kind === 'note') continue
         if (card.kind === 'message') {
           doomedTurns.add(card.userTurnId)
           doomedTurns.add(card.turnId)
@@ -409,7 +532,10 @@ export function useCanvas(): {
           turns: nextTurns,
           layout: {
             ...prev.layout,
-            cards: prev.layout.cards.filter((card) => !doomed.has(card.id))
+            cards: prev.layout.cards.filter((card) => !doomed.has(card.id)),
+            links: prev.layout.links.filter(
+              (link) => !doomed.has(link.from) && !doomed.has(link.to)
+            )
           }
         }
       })
@@ -417,12 +543,29 @@ export function useCanvas(): {
     [cancelRequests, updateDoc]
   )
 
-  const deleteCard = useCallback(
-    (id: string): void => {
-      removeCards(cascadeCardIds(docRef.current.layout.cards, id))
-      requestSave(true)
+  const removeItems = useCallback(
+    (ids: ReadonlySet<string>): void => {
+      const { cards } = docRef.current.layout
+      const doomed = new Set<string>()
+      for (const card of cards) {
+        if (ids.has(card.id)) {
+          for (const id of cascadeCardIds(cards, card.id)) doomed.add(id)
+        }
+      }
+      recorded('Delete', () => {
+        if (doomed.size > 0) removeCards(doomed)
+        updateDoc((prev) => ({
+          ...prev,
+          layout: {
+            ...prev.layout,
+            frames: prev.layout.frames.filter((frame) => !ids.has(frame.id)),
+            links: prev.layout.links.filter((link) => !ids.has(link.id))
+          }
+        }))
+      })
+      requestSave(doomed.size > 0)
     },
-    [removeCards, requestSave]
+    [recorded, removeCards, requestSave, updateDoc]
   )
 
   /**
@@ -434,7 +577,7 @@ export function useCanvas(): {
     (id: string): void => {
       const { turns, layout } = docRef.current
       const card = layout.cards.find((item) => item.id === id)
-      if (!card) return
+      if (!card || card.kind === 'note') return
       const dependents = cascadeCardIds(layout.cards, id)
       dependents.delete(id)
 
@@ -523,6 +666,186 @@ export function useCanvas(): {
     [requestSave, updateDoc]
   )
 
+  const moveItems = useCallback(
+    (label: string, cards: CanvasCardUpdate[], frames: CanvasFrameUpdate[] = []): void => {
+      const rects = new Map(frames.map((frame) => [frame.id, frame.rect]))
+      recorded(label, () => {
+        updateCards(cards)
+        if (rects.size === 0) return
+        updateDoc((prev) => ({
+          ...prev,
+          layout: {
+            ...prev.layout,
+            frames: prev.layout.frames.map((frame) => {
+              const rect = rects.get(frame.id)
+              return rect ? { ...frame, rect } : frame
+            })
+          }
+        }))
+      })
+    },
+    [recorded, updateCards, updateDoc]
+  )
+
+  /** A change to the layout alone: never a change of content, so recents keep their order. */
+  const editLayout = useCallback(
+    (label: string, change: (layout: CanvasLayout) => CanvasLayout): void => {
+      recorded(label, () => {
+        updateDoc((prev) => ({ ...prev, layout: change(prev.layout) }))
+      })
+      requestSave(false)
+    },
+    [recorded, requestSave, updateDoc]
+  )
+
+  const addNote = useCallback(
+    (rect: CanvasRect, text: string): string => {
+      const id = crypto.randomUUID()
+      editLayout('Add note', (layout) => ({
+        ...layout,
+        cards: [...layout.cards, { kind: 'note', id, rect, text }]
+      }))
+      return id
+    },
+    [editLayout]
+  )
+
+  const updateNote = useCallback(
+    (id: string, text: string): void => {
+      editLayout('Edit note', (layout) => ({
+        ...layout,
+        cards: layout.cards.map((card) =>
+          card.id === id && card.kind === 'note' && card.text !== text ? { ...card, text } : card
+        )
+      }))
+    },
+    [editLayout]
+  )
+
+  const addFrame = useCallback(
+    (rect: CanvasRect, title: string): string => {
+      const id = crypto.randomUUID()
+      editLayout('Add frame', (layout) => ({
+        ...layout,
+        frames: [...layout.frames, { id, rect, title }]
+      }))
+      return id
+    },
+    [editLayout]
+  )
+
+  const renameFrame = useCallback(
+    (id: string, title: string): void => {
+      editLayout('Rename frame', (layout) => ({
+        ...layout,
+        frames: layout.frames.map((frame) =>
+          frame.id === id && frame.title !== title ? { ...frame, title } : frame
+        )
+      }))
+    },
+    [editLayout]
+  )
+
+  const addLink = useCallback(
+    (from: string, to: string): string | null => {
+      const { cards, links } = docRef.current.layout
+      const known = (id: string): boolean => cards.some((card) => card.id === id)
+      if (from === to || !known(from) || !known(to)) return null
+      const existing = links.find((link) => link.from === from && link.to === to)
+      if (existing) return existing.id
+      const id = crypto.randomUUID()
+      editLayout('Connect', (layout) => ({
+        ...layout,
+        links: [...layout.links, { id, from, to }]
+      }))
+      return id
+    },
+    [editLayout]
+  )
+
+  const editLink = useCallback(
+    (label: string, id: string, change: (link: CanvasLink) => CanvasLink): void => {
+      editLayout(label, (layout) => ({
+        ...layout,
+        links: layout.links.map((link) => (link.id === id ? change(link) : link))
+      }))
+    },
+    [editLayout]
+  )
+
+  const labelLink = useCallback(
+    (id: string, label: string): void => {
+      const text = label.trim()
+      editLink('Label connection', id, (link) => {
+        if ((link.label ?? '') === text) return link
+        return text === '' ? withoutField(link, 'label') : { ...link, label: text }
+      })
+    },
+    [editLink]
+  )
+
+  const reverseLink = useCallback(
+    (id: string): void => {
+      editLink('Reverse connection', id, (link) => ({ ...link, from: link.to, to: link.from }))
+    },
+    [editLink]
+  )
+
+  const setColor = useCallback(
+    (ids: ReadonlySet<string>, color: CanvasColor | undefined): void => {
+      const paint = <T extends { id: string; color?: CanvasColor }>(item: T): T => {
+        if (!ids.has(item.id) || item.color === color) return item
+        return color === undefined ? withoutField(item, 'color') : { ...item, color }
+      }
+      editLayout('Colour', (layout) => ({
+        ...layout,
+        cards: layout.cards.map(paint),
+        frames: layout.frames.map(paint)
+      }))
+    },
+    [editLayout]
+  )
+
+  const setCollapsed = useCallback(
+    (ids: ReadonlySet<string>, collapsed: boolean): void => {
+      editLayout(collapsed ? 'Collapse' : 'Expand', (layout) => ({
+        ...layout,
+        cards: [...ids].reduce((cards, id) => setCardCollapsed(cards, id, collapsed), layout.cards)
+      }))
+    },
+    [editLayout]
+  )
+
+  const duplicate = useCallback(
+    (ids: ReadonlySet<string>): string[] => {
+      const { turns, layout } = docRef.current
+      const copy = duplicateSelection(layout, turns, ids, {
+        newId: () => crypto.randomUUID(),
+        newTurnId: () => nextTurnId++,
+        streamingTurnIds: new Set(
+          [...requestsRef.current.values()].flatMap((request) =>
+            request.kind === 'send' ? [request.turnId] : []
+          )
+        )
+      })
+      if (!copy) return []
+      recorded('Duplicate', () => {
+        updateDoc((prev) => ({
+          turns: [...prev.turns, ...copy.turns],
+          layout: {
+            ...prev.layout,
+            cards: [...prev.layout.cards, ...copy.cards],
+            frames: [...prev.layout.frames, ...copy.frames],
+            links: [...prev.layout.links, ...copy.links]
+          }
+        }))
+      })
+      requestSave(copy.turns.length > 0)
+      return copy.ids
+    },
+    [recorded, requestSave, updateDoc]
+  )
+
   const requestFit = useCallback((id: string): void => {
     setFitCardIds((prev) => new Set(prev).add(id))
   }, [])
@@ -564,13 +887,16 @@ export function useCanvas(): {
       if (saveTimerRef.current !== null) void flushSave()
       cancelRequests(() => true)
       setFitCardIds(new Set())
+      undoStackRef.current = []
+      redoStackRef.current = []
+      syncHistory()
       metaRef.current = nextMeta
       setMeta(nextMeta)
       docRef.current = nextDoc
       setDoc(nextDoc)
       expansionCounterRef.current = maxExpansionId(nextDoc.turns) + 1
     },
-    [cancelRequests, flushSave]
+    [cancelRequests, flushSave, syncHistory]
   )
 
   const newCanvas = useCallback((): void => {
@@ -701,7 +1027,11 @@ export function useCanvas(): {
     title: meta.title,
     turns: doc.turns,
     cards: doc.layout.cards,
+    frames: doc.layout.frames,
+    links: doc.layout.links,
     viewport: doc.layout.viewport,
+    undoLabel: historyLabels.undo,
+    redoLabel: historyLabels.redo,
     streamingTurnIds,
     fitCardIds,
     ensureLoaded,
@@ -711,7 +1041,19 @@ export function useCanvas(): {
     deleteCanvas,
     rename,
     setViewport,
-    updateCards,
+    moveItems,
+    undo,
+    redo,
+    addNote,
+    updateNote,
+    addFrame,
+    renameFrame,
+    addLink,
+    labelLink,
+    reverseLink,
+    setColor,
+    setCollapsed,
+    duplicate,
     requestFit,
     fitCard,
     exportCanvas,
@@ -720,6 +1062,6 @@ export function useCanvas(): {
     stopCard,
     regenerateCard,
     editCard,
-    deleteCard
+    removeItems
   }
 }

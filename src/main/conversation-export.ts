@@ -1,10 +1,13 @@
 import { BrowserWindow, dialog } from 'electron'
+import { cardText } from '../shared/canvas-selection'
 import type { ConversationRecord, ExpansionNode } from '../shared/conversation'
+import { flattenMarkdown } from '../shared/rich-text'
 import { loadConversation } from './conversations'
 import { writeFileAtomic } from './services/atomic-file'
 
 const EXPORT_FALLBACK_TITLE = 'conversation'
 const FILE_NAME_MAX_LENGTH = 80
+const LINK_NAME_MAX_LENGTH = 60
 
 /** One presented block of an expansion, nested one quote level deeper per reply. */
 function expansionLines(node: ExpansionNode, depth: number): string[] {
@@ -16,6 +19,36 @@ function expansionLines(node: ExpansionNode, depth: number): string[] {
     for (const line of answer.split('\n')) lines.push(`${prefix}${line}`)
   }
   for (const child of node.children) lines.push(...expansionLines(child, depth + 1))
+  return lines
+}
+
+/** A canvas's notes and connections, which hold no turn and so appear nowhere else. */
+function canvasLines(record: ConversationRecord): string[] {
+  const layout = record.state.canvas
+  if (!layout) return []
+  const { turns } = record.state
+  const notes = layout.cards.filter((card) => card.kind === 'note')
+  const nameOf = (id: string): string => {
+    const card = layout.cards.find((item) => item.id === id)
+    if (!card) return 'a removed card'
+    const { title, body } = cardText(card, turns)
+    const name = flattenMarkdown(title || body)
+      .replace(/\s+/g, ' ')
+      .trim()
+    return name.length > LINK_NAME_MAX_LENGTH ? `${name.slice(0, LINK_NAME_MAX_LENGTH)}…` : name
+  }
+  const lines: string[] = []
+  if (notes.length > 0) {
+    lines.push('', '## Notes')
+    for (const note of notes) lines.push('', note.text.trimEnd())
+  }
+  if (layout.links.length > 0) {
+    lines.push('', '## Connections', '')
+    for (const link of layout.links) {
+      const relation = link.label ? ` — ${link.label} → ` : ' → '
+      lines.push(`- ${nameOf(link.from)}${relation}${nameOf(link.to)}`)
+    }
+  }
   return lines
 }
 
@@ -40,6 +73,7 @@ export function renderConversationMarkdown(record: ConversationRecord): string {
     }
   }
 
+  lines.push(...canvasLines(record))
   return `${lines.join('\n')}\n`
 }
 

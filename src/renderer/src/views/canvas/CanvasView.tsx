@@ -11,8 +11,12 @@ import {
   CLICK_DRAG_LIMIT,
   DEFAULT_EXPANSION_SIZE,
   DEFAULT_MESSAGE_SIZE,
+  DEFAULT_NOTE_SIZE,
+  FAR_ZOOM,
   MIN_EXPANSION_SIZE,
+  MIN_FRAME_SIZE,
   MIN_MESSAGE_SIZE,
+  MIN_NOTE_SIZE,
   adjacentSlot,
   cascadeCardIds,
   clampPointInside,
@@ -24,10 +28,10 @@ import {
   fitViewport,
   fitsOnScreen,
   gridSpacing,
+  hiddenInsetIds,
   isTopLevel,
-  movingCardIds,
-  pulledOutCardIds,
   nearestCardInDirection,
+  openCardSize,
   rectAgainst,
   rectCenteredAt,
   rectClearBelow,
@@ -48,10 +52,30 @@ import {
   wheelZoomFactor,
   zoomAt
 } from '../../../../shared/canvas'
-import type { ExpansionNode, ExpansionTarget } from '../../../../shared/rich-text'
-import { findExpansionInTurns, flattenMarkdown } from '../../../../shared/rich-text'
+import type { CanvasArrangeResult } from '../../../../shared/canvas-arrange'
+import {
+  alignSelection,
+  distributeSelection,
+  selectionBlockCount,
+  tidySelection
+} from '../../../../shared/canvas-arrange'
+import { canvasOutline } from '../../../../shared/canvas-outline'
+import {
+  boundsOf,
+  cardAtPoint,
+  cardsInsideFrame,
+  marqueeHits,
+  movingBounds,
+  movingForSelection,
+  selectedCards,
+  selectionMarkdown,
+  sessionAncestorIds,
+  sharedColor
+} from '../../../../shared/canvas-selection'
+import type { ExpansionTarget } from '../../../../shared/rich-text'
+import { flattenMarkdown } from '../../../../shared/rich-text'
 import ContextMenu from '../../components/conversation/ContextMenu'
-import type { ContextMenuState } from '../../components/conversation/ContextMenu'
+import type { ContextMenuItem, ContextMenuState } from '../../components/conversation/ContextMenu'
 import ExpandPrompt from '../../components/conversation/ExpandPrompt'
 import ExpandSelectionBar from '../../components/conversation/ExpandSelectionBar'
 import type { useCanvas } from '../../hooks/useCanvas'
@@ -60,27 +84,68 @@ import { formatRelativeTime } from '../../lib/format'
 import type { ViewportMotion } from '../../lib/viewport-motion'
 import { createViewportMotion } from '../../lib/viewport-motion'
 import CanvasCardView from './CanvasCardView'
-import type { CanvasCardActions, CanvasCardStatus } from './CanvasCardView'
+import type { CanvasCardActions } from './CanvasCardView'
 import CanvasDraft from './CanvasDraft'
+import CanvasFrameView from './CanvasFrames'
+import CanvasIcon from './CanvasIcons'
 import CanvasLinks from './CanvasLinks'
+import type { CanvasMinimapHandle } from './CanvasMinimap'
+import CanvasMinimap from './CanvasMinimap'
+import CanvasNoteView, { CanvasNoteDraft } from './CanvasNoteView'
+import CanvasOutline from './CanvasOutline'
+import CanvasSelectionBar from './CanvasSelectionBar'
 import CanvasShortcuts from './CanvasShortcuts'
+import type { CanvasTool } from './CanvasToolRail'
+import CanvasToolRail from './CanvasToolRail'
+import {
+  canScrollBy,
+  confirmCascade,
+  deletedNotice,
+  dependentsPhrase,
+  measureCardHeight,
+  readMinimapPreference,
+  releaseFocus,
+  saveMinimapPreference,
+  scrollIntoBody,
+  wheelPanDelta
+} from './board-helpers'
+import { cardContent } from './card-content'
+import { createRightDrag } from './right-drag'
+import { cardMenuItems, frameMenuItems, linkMenuItems, planeMenuItems } from './canvas-menus'
+import { ZOOM_STEP, useCanvasKeyboard } from './useCanvasKeyboard'
+import { useEdgePan } from './useEdgePan'
 
 type Canvas = ReturnType<typeof useCanvas>
-type Tool = 'move' | 'select'
+type DrawKind = 'answer' | 'note' | 'frame'
 
 type Gesture =
   | { type: 'pan'; pointer: CanvasPoint; origin: CanvasViewport }
-  | { type: 'draw'; start: CanvasPoint; end: CanvasPoint }
+  | { type: 'draw'; what: DrawKind; start: CanvasPoint; end: CanvasPoint }
+  | {
+      type: 'marquee'
+      start: CanvasPoint
+      end: CanvasPoint
+      /** What stays selected whatever the box catches: Shift adds to the selection. */
+      base: ReadonlySet<string>
+    }
   | {
       type: 'drag'
+      /** The card or frame under the pointer. */
       id: string
       ids: Set<string>
+      frameIds: Set<string>
+      /** Snaps the moving bounds rather than one card, since several things were chosen. */
+      group: boolean
       /** Alt+drag: only this card moves, and it snaps to nothing. */
       pulledOut: boolean
+      /** Without Shift, a press that never moves selects just this item. */
+      plainPress: boolean
       start: CanvasPoint
       pointer: CanvasPoint
     }
   | { type: 'resize'; id: string; start: CanvasPoint; pointer: CanvasPoint }
+  | { type: 'frameResize'; id: string; start: CanvasPoint; pointer: CanvasPoint }
+  | { type: 'connect'; from: string; pointer: CanvasPoint }
 
 /** A rectangle waiting for its question: the canvas's composer. */
 interface Draft {
@@ -93,6 +158,8 @@ interface Draft {
   side?: CanvasSide
   /** The cards it could continue, newest first; the user picks one in the draft. */
   sessions: string[]
+  /** Cards the question is about: their text goes along, not their history. */
+  sourceIds?: string[]
 }
 
 /** A chosen expansion waiting for the rectangle that decides its size. */
@@ -102,6 +169,12 @@ interface Placing {
   prompt?: string
   hostId: string
   label: string
+}
+
+interface CanvasNotice {
+  text: string
+  /** The notice offers to take back what it reports. */
+  undoable?: boolean
 }
 
 interface DrawOutcome {
@@ -117,7 +190,6 @@ const SNAP_SCREEN_PX = 10
 const VIEWPORT_TRANSITION_MS = 360
 const PULSE_MS = 900
 const NOTICE_MS = 4000
-const ZOOM_STEP = 1.25
 const EXPORT_SAVED_MS = 2000
 
 const REFUSE_TOO_SMALL = 'That rectangle is too small to hold an answer. Draw a larger one.'
@@ -126,15 +198,37 @@ const REFUSE_OVERLAP =
 const REFUSE_IN_MESSAGE =
   'To draw inside a message, select some text in it and choose Expand first.'
 const REFUSE_MOVE = 'There is something in the way, so the card went back.'
+const REFUSE_ARRANGE = 'Other cards are in the way of that arrangement.'
+const NO_CARD_TO_CONNECT = 'Start a connection on a card.'
+const CONNECT_ANOTHER = 'Drag to a different card to connect them.'
 const NO_ROOM = 'There is no room on that side. Draw the next rectangle by hand.'
 const NO_CONTINUE_INSET = 'Drag this expansion clear of its message to continue it.'
 const NO_CONTINUE_FAILED = 'Retry this answer before continuing it.'
 const WAITING_PARENT = 'Waiting for the answer it continues…'
 const FAILED_PARENT = 'The answer it continues failed. Retry it first.'
 
-/** How far an arrow key pans, in screen pixels; Shift pans further. */
-const PAN_STEP = 80
-const PAN_STEP_LARGE = 320
+const TOOL_HINTS: Readonly<Partial<Record<CanvasTool, string>>> = {
+  answer: 'Draw a rectangle for the answer, or click for the default size.',
+  note: 'Draw where the note goes, or click for the default size.',
+  frame: 'Draw a region. Whatever stands inside it moves with it.',
+  connect: 'Drag from one card to another.',
+  hand: 'Drag anywhere to pan.'
+}
+
+/** Below this much pointer travel on screen, a press is a click rather than a drag. */
+const DRAG_START_PX = 3
+const DOUBLE_PRESS_MS = 400
+const NUDGE = 10
+const NUDGE_LARGE = 50
+/** Room left around what a new frame wraps, and the size of one made with a click. */
+const FRAME_PADDING = 32
+const DEFAULT_FRAME_SIZE = { w: 520, h: 360 }
+/** How much of the surface the open outline covers, rail included. */
+const OUTLINE_WIDTH = 344
+/** Where a jump lands if the view is too far out to read what it was looking for. */
+const READING_ZOOM = 0.8
+const VIEW_HISTORY_LIMIT = 50
+
 /** Space kept around a new session opened from the keyboard. */
 const NEW_SESSION_GAP = 48
 /** How much of the plane around a term is brought on screen when returning to it. */
@@ -147,135 +241,31 @@ const ARROW_SIDES: Readonly<Record<string, CanvasSide>> = {
   ArrowUp: 'top'
 }
 
-function isTyping(target: EventTarget | null): boolean {
-  return (
-    target instanceof HTMLElement &&
-    (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
-  )
-}
-
-/** Keys on these belong to them: Enter presses a button, arrows move a caret or scroll text. */
-function ownsKeys(target: EventTarget | null): boolean {
-  return (
-    target instanceof Element &&
-    target.closest(
-      'button, a, select, [role="button"], [data-canvas-card], [data-canvas-draft]'
-    ) !== null
-  )
-}
-
-function canScrollBy(element: Element, dx: number, dy: number): boolean {
-  const { scrollTop, scrollHeight, clientHeight, scrollLeft, scrollWidth, clientWidth } = element
-  if (dy < 0 && scrollTop > 0) return true
-  if (dy > 0 && scrollTop + clientHeight < scrollHeight - 1) return true
-  if (dx < 0 && scrollLeft > 0) return true
-  return dx > 0 && scrollLeft + clientWidth < scrollWidth - 1
-}
-
-/** Chromium leaves Shift+wheel vertical here, and it is a plain mouse's only way sideways. */
-function wheelPanDelta(e: WheelEvent): { deltaX: number; deltaY: number } {
-  if (e.shiftKey && e.deltaX === 0) return { deltaX: e.deltaY, deltaY: 0 }
-  return { deltaX: e.deltaX, deltaY: e.deltaY }
-}
-
-/** A claimed press takes no focus by itself, so whatever held it would otherwise keep it. */
-function releaseFocus(pressed: Element): void {
-  const active = document.activeElement
-  if (active instanceof HTMLElement && !active.contains(pressed)) active.blur()
-}
-
-/** The height a card needs for its answer at its current width, in world pixels. */
-function measureCardHeight(surface: HTMLElement, id: string): number | null {
-  const card = surface.querySelector<HTMLElement>(`[data-canvas-card="${id}"] .canvas-card-surface`)
-  const body = card?.querySelector<HTMLElement>('.canvas-card-body')
-  const content = body?.querySelector<HTMLElement>('.message-content')
-  if (!card || !body || !content) return null
-  // Without this, the scrollbar of an overflowing answer narrows the text being measured.
-  const overflowY = body.style.overflowY
-  body.style.overflowY = 'hidden'
-  const { paddingTop, paddingBottom } = getComputedStyle(body)
-  const height =
-    card.offsetHeight -
-    body.clientHeight +
-    parseFloat(paddingTop) +
-    parseFloat(paddingBottom) +
-    content.offsetHeight
-  body.style.overflowY = overflowY
-  return height
-}
-
-/** Scrolls a card body so `el` sits in its middle, without moving anything around it. */
-function scrollIntoBody(el: Element, scale: number): void {
-  const body = el.closest<HTMLElement>('.canvas-card-body')
-  if (!body) return
-  const offset =
-    (el.getBoundingClientRect().top - body.getBoundingClientRect().top) / scale + body.scrollTop
-  body.scrollTop = offset - body.clientHeight / 2
-}
-
-function dependentsPhrase(count: number): string {
-  return count === 1 ? 'the card that depends on it' : `the ${count} cards that depend on it`
-}
-
-/** Taking other cards along is asked about twice, as they may be far off screen. */
-function confirmCascade(question: string, dependents: number): boolean {
-  return (
-    window.confirm(question) &&
-    window.confirm(
-      `Are you sure? ${dependents === 1 ? '1 other card' : `${dependents} other cards`} will be permanently deleted. This cannot be undone.`
-    )
-  )
-}
-
 /** Keeps a run of wheel events on what it started moving as things pass under the pointer. */
 const WHEEL_LATCH_MS = 160
 
-/** Reads the status a card should show from its turn or expansion. */
-function cardContent(
-  card: CanvasCard,
-  canvas: Canvas
-): {
-  caption: string
-  question?: string
-  answer: string
-  expansions: ExpansionNode[]
-  status: CanvasCardStatus
-  failure?: string
-} {
-  if (card.kind === 'message') {
-    const user = canvas.turns.find((turn) => turn.id === card.userTurnId)
-    const turn = canvas.turns.find((item) => item.id === card.turnId)
-    const content = turn?.content ?? ''
-    const streaming = canvas.streamingTurnIds.has(card.turnId)
-    const blank = content.trim() === ''
-    const failed = !streaming && (turn?.error === true || blank)
-    return {
-      caption: user?.content ?? '',
-      answer: content,
-      expansions: turn?.expansions ?? [],
-      status: streaming ? 'streaming' : failed ? 'failed' : 'done',
-      ...(failed ? { failure: blank ? 'Stopped before an answer.' : content } : {})
-    }
-  }
-  const node = findExpansionInTurns(canvas.turns, card.expansionId)?.node
-  return {
-    caption: flattenMarkdown(node?.originalText ?? ''),
-    ...(node?.prompt?.trim() ? { question: node.prompt.trim() } : {}),
-    answer: node?.answer ?? '',
-    expansions: node?.children ?? [],
-    status: node?.status === 'loading' ? 'streaming' : node?.status === 'error' ? 'failed' : 'done',
-    ...(node?.status === 'error' ? { failure: node.error ?? 'The answer failed.' } : {})
-  }
-}
-
 function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
-  const { cards, viewport, turns, setViewport, updateCards } = canvas
+  const { cards, frames, links, viewport, turns, setViewport, moveItems } = canvas
   const surfaceRef = useRef<HTMLDivElement>(null)
-  const [tool, setTool] = useState<Tool>(cards.length === 0 ? 'select' : 'move')
+  const [tool, setTool] = useState<CanvasTool>(cards.length === 0 ? 'answer' : 'select')
   const [gesture, setGesture] = useState<Gesture | null>(null)
   const [draft, setDraft] = useState<Draft | null>(null)
   const [placing, setPlacing] = useState<Placing | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
+  const [notice, setNotice] = useState<CanvasNotice | null>(null)
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set())
+  const [noteDraft, setNoteDraft] = useState<{ key: number; rect: CanvasRect } | null>(null)
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null)
+  const [editingFrameId, setEditingFrameId] = useState<string | null>(null)
+  const [editingLinkId, setEditingLinkId] = useState<string | null>(null)
+  const [outlineOpen, setOutlineOpen] = useState(false)
+  const [outlineFocus, setOutlineFocus] = useState(0)
+  const [searchMatches, setSearchMatches] = useState<ReadonlySet<string> | null>(null)
+  const [minimapOpen, setMinimapOpen] = useState(readMinimapPreference)
+  const [hoverCardId, setHoverCardId] = useState<string | null>(null)
+  const outlineOpenRef = useRef(outlineOpen)
+  useEffect(() => {
+    outlineOpenRef.current = outlineOpen
+  }, [outlineOpen])
   const [pulseId, setPulseId] = useState<string | null>(null)
   const [animating, setAnimating] = useState(false)
   const [spaceHeld, setSpaceHeld] = useState(false)
@@ -299,6 +289,17 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
 
   const worldRef = useRef<HTMLDivElement>(null)
   const zoomValueRef = useRef<HTMLSpanElement>(null)
+  const minimapRef = useRef<CanvasMinimapHandle>(null)
+  const viewBackRef = useRef<CanvasViewport[]>([])
+  const viewForwardRef = useRef<CanvasViewport[]>([])
+  /** Where the pointer last was on the surface: for edge panning and pasting. */
+  const lastPointerRef = useRef<{ clientX: number; clientY: number } | null>(null)
+  /** Where the gesture under way began: a press that has not moved does not edge-pan. */
+  const pressRef = useRef<{ clientX: number; clientY: number } | null>(null)
+  const lastPressRef = useRef<{ key: string; at: number } | null>(null)
+  const doublePressedRef = useRef(false)
+  const lastCopyRef = useRef<{ text: string; ids: ReadonlySet<string> } | null>(null)
+  const zoomToItemRef = useRef<(id: string) => void>(() => undefined)
   const motionRef = useRef<ViewportMotion | null>(null)
 
   const viewportRef = useRef(viewport)
@@ -314,6 +315,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       surfaceRef.current.style.backgroundPosition = `${x}px ${y}px`
     }
     if (zoomValueRef.current) zoomValueRef.current.textContent = `${Math.round(zoom * 100)}%`
+    minimapRef.current?.paint(next)
   }, [])
 
   // The plane's position is never a React style prop: frames in motion are written
@@ -322,6 +324,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     paintViewport(viewport)
     // Inherited by every card, so it is restyled only at rest, never frame by frame.
     worldRef.current?.style.setProperty('--canvas-zoom', String(viewport.zoom))
+    surfaceRef.current?.toggleAttribute('data-far', viewport.zoom < FAR_ZOOM)
   }, [paintViewport, viewport])
 
   useEffect(() => {
@@ -353,8 +356,8 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     }
   }, [])
 
-  const showNotice = useCallback((message: string): void => {
-    setNotice(message)
+  const showNotice = useCallback((text: string, undoable = false): void => {
+    setNotice({ text, undoable })
     if (noticeTimerRef.current !== null) window.clearTimeout(noticeTimerRef.current)
     noticeTimerRef.current = window.setTimeout(() => setNotice(null), NOTICE_MS)
   }, [])
@@ -408,9 +411,32 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
   /* ---- Expansions: choose a term, then draw its size ---- */
 
   const cardsRef = useRef(cards)
+  const framesRef = useRef(frames)
+  const linksRef = useRef(links)
+  const selectedRef = useRef(selectedIds)
   useEffect(() => {
     cardsRef.current = cards
-  }, [cards])
+    framesRef.current = frames
+    linksRef.current = links
+    selectedRef.current = selectedIds
+  }, [cards, frames, links, selectedIds])
+
+  const select = useCallback((ids: Iterable<string>): void => {
+    const next = new Set(ids)
+    selectedRef.current = next
+    setSelectedIds(next)
+  }, [])
+
+  // Undo, a cascade or a canvas load can take away what was selected.
+  useEffect(() => {
+    const known = new Set([
+      ...cards.map((card) => card.id),
+      ...frames.map((frame) => frame.id),
+      ...links.map((link) => link.id)
+    ])
+    const kept = [...selectedRef.current].filter((id) => known.has(id))
+    if (kept.length !== selectedRef.current.size) select(kept)
+  }, [cards, frames, links, select])
 
   const beginPlacing = useCallback((turnId: number, target: ExpansionTarget, prompt?: string) => {
     const host = cardsRef.current.find((card) =>
@@ -440,12 +466,22 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
   /* ---- Drawing ---- */
 
   const drawnRect = useCallback(
-    (start: CanvasPoint, end: CanvasPoint): DrawOutcome => {
+    (what: DrawKind, start: CanvasPoint, end: CanvasPoint): DrawOutcome => {
       const threshold = SNAP_SCREEN_PX / viewport.zoom
       const others = topLevelRects(cards)
       const raw = rectFromPoints(start, end)
       const isClick = raw.w < CLICK_DRAG_LIMIT && raw.h < CLICK_DRAG_LIMIT
       const host = placing ? cards.find((card) => card.id === placing.hostId) : undefined
+
+      if (what === 'frame') {
+        const snapped = snapEdges(
+          isClick ? rectCenteredAt(end, DEFAULT_FRAME_SIZE) : raw,
+          others,
+          threshold
+        )
+        const tooSmall = snapped.rect.w < MIN_FRAME_SIZE.w || snapped.rect.h < MIN_FRAME_SIZE.h
+        return { ...snapped, refusal: tooSmall ? REFUSE_TOO_SMALL : null, inset: false }
+      }
 
       if (placing && host && containsPoint(host.rect, start)) {
         const rect = clampRectInside(
@@ -462,8 +498,12 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
         }
       }
 
-      const min = placing ? MIN_EXPANSION_SIZE : MIN_MESSAGE_SIZE
-      const clickSize = placing ? DEFAULT_EXPANSION_SIZE : DEFAULT_MESSAGE_SIZE
+      const min = placing ? MIN_EXPANSION_SIZE : what === 'note' ? MIN_NOTE_SIZE : MIN_MESSAGE_SIZE
+      const clickSize = placing
+        ? DEFAULT_EXPANSION_SIZE
+        : what === 'note'
+          ? DEFAULT_NOTE_SIZE
+          : DEFAULT_MESSAGE_SIZE
       const snapped: SnapResult = snapEdges(
         isClick ? rectCenteredAt(end, clickSize) : raw,
         others,
@@ -475,7 +515,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
         snapped.rect.w < min.w || snapped.rect.h < min.h
           ? REFUSE_TOO_SMALL
           : overlaps
-            ? !placing && startedInCard
+            ? !placing && what === 'answer' && startedInCard
               ? REFUSE_IN_MESSAGE
               : REFUSE_OVERLAP
             : null
@@ -485,10 +525,22 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
   )
 
   const finishDraw = useCallback(
-    (start: CanvasPoint, end: CanvasPoint): void => {
-      const outcome = drawnRect(start, end)
+    (what: DrawKind, start: CanvasPoint, end: CanvasPoint): void => {
+      const outcome = drawnRect(what, start, end)
       if (outcome.refusal) {
         showNotice(outcome.refusal)
+        return
+      }
+      if (what === 'frame') {
+        const id = canvas.addFrame(outcome.rect, '')
+        select([id])
+        setEditingFrameId(id)
+        setTool('select')
+        return
+      }
+      if (what === 'note') {
+        setNoteDraft({ key: ++draftKeyRef.current, rect: outcome.rect })
+        setTool('select')
         return
       }
       if (placing) {
@@ -499,7 +551,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
         })
         if (!result.ok) showNotice('That selection is no longer available. Select it again.')
         setPlacing(null)
-        setTool('move')
+        setTool('select')
         return
       }
       const sessions = continuationCandidates(outcome.rect, cards).map((card) => card.id)
@@ -510,12 +562,16 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
         ...(sessions.length > 0 ? { parentId: sessions[0] } : {}),
         sessions
       })
-      setTool('move')
+      setTool('select')
     },
-    [canvas, cards, drawnRect, placing, showNotice]
+    [canvas, cards, drawnRect, placing, select, showNotice]
   )
 
   /* ---- Pointer gestures ---- */
+
+  const drawKind: DrawKind | null =
+    tool === 'answer' || tool === 'note' || tool === 'frame' ? tool : null
+  const isDrawMode = drawKind !== null || placing !== null
 
   /*
    * A gesture owns its press from here. It cannot cancel pointerdown for that: doing so
@@ -524,6 +580,8 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
   const claimedPressRef = useRef(false)
   const claimPress = useCallback((e: React.PointerEvent): void => {
     claimedPressRef.current = true
+    pressRef.current = { clientX: e.clientX, clientY: e.clientY }
+    lastPointerRef.current = pressRef.current
     motionRef.current?.settle()
     surfaceRef.current?.setPointerCapture(e.pointerId)
   }, [])
@@ -531,47 +589,150 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
   // Stops text selection and middle-click autoscroll. Runs after a closing menu has
   // handed focus back, so that focus is released too.
   const handleSurfaceMouseDown = (e: React.MouseEvent): void => {
+    if (doublePressedRef.current) {
+      // The press already opened an editor; focusing what it landed on would close it.
+      doublePressedRef.current = false
+      e.preventDefault()
+      return
+    }
     if (!claimedPressRef.current) return
     claimedPressRef.current = false
     e.preventDefault()
     releaseFocus(e.target as Element)
   }
 
+  /**
+   * Whether this press and the one before it, on the same thing, make a double click.
+   * It is counted by hand: a claimed press captures the pointer, so `dblclick` would
+   * reach the surface rather than what was pressed.
+   */
+  const isDoublePress = useCallback((key: string, at: number): boolean => {
+    const last = lastPressRef.current
+    const double = last !== null && last.key === key && at - last.at < DOUBLE_PRESS_MS
+    lastPressRef.current = double ? null : { key, at }
+    doublePressedRef.current = double
+    return double
+  }, [])
+
+  const [rightDrag] = useState(createRightDrag)
+
   const handleSurfaceDown = (e: React.PointerEvent): void => {
+    rightDrag.onPress(e)
     const target = e.target as Element
-    const startPan = e.button === 1 || (e.button === 0 && spaceHeld)
-    const drawing = tool === 'select' || placing !== null
-    if (!startPan && !drawing && target.closest('.canvas-link-hit')) return
-    if (startPan || (e.button === 0 && !drawing && !target.closest('.canvas-card'))) {
+    const startPan = e.button === 1 || (e.button === 0 && (spaceHeld || tool === 'hand'))
+    if (startPan) {
       window.getSelection()?.removeAllRanges()
       claimPress(e)
       unfollow()
       setGesture({ type: 'pan', pointer: pointerOnSurface(e), origin: viewportRef.current })
       return
     }
-    if (e.button === 0 && drawing) {
+    if (e.button !== 0) return
+    if (isDrawMode) {
       const start = pointerInWorld(e)
       claimPress(e)
-      setGesture({ type: 'draw', start, end: start })
+      setGesture({
+        type: 'draw',
+        what: placing ? 'answer' : (drawKind as DrawKind),
+        start,
+        end: start
+      })
+      return
     }
+    if (tool === 'connect') {
+      const start = pointerInWorld(e)
+      const from = cardAtPoint(cardsRef.current, start)
+      if (!from) {
+        showNotice(NO_CARD_TO_CONNECT)
+        return
+      }
+      claimPress(e)
+      setGesture({ type: 'connect', from: from.id, pointer: start })
+      return
+    }
+    // Links, labels, cards and frame titles each deal with their own press.
+    if (
+      target.closest(
+        '.canvas-link-hit, .canvas-connector-label, .canvas-card, .canvas-frame-title, .canvas-frame-resize'
+      )
+    ) {
+      return
+    }
+    const start = pointerInWorld(e)
+    window.getSelection()?.removeAllRanges()
+    if (isDoublePress('plane', e.timeStamp)) {
+      askAt(start)
+      return
+    }
+    claimPress(e)
+    setGesture({
+      type: 'marquee',
+      start,
+      end: start,
+      base: e.shiftKey || e.ctrlKey || e.metaKey ? selectedRef.current : new Set()
+    })
   }
 
-  const handleSurfaceMove = (e: React.PointerEvent): void => {
+  const moveGesture = (at: { clientX: number; clientY: number }): void => {
     if (!gesture) return
     if (gesture.type === 'pan') {
-      const pointer = pointerOnSurface(e)
+      const pointer = pointerOnSurface(at)
       const next = {
         ...gesture.origin,
         x: gesture.origin.x + pointer.x - gesture.pointer.x,
         y: gesture.origin.y + pointer.y - gesture.pointer.y
       }
       motionRef.current?.steer(() => next, true)
-    } else if (gesture.type === 'draw') {
-      setGesture({ ...gesture, end: pointerInWorld(e) })
+    } else if (gesture.type === 'draw' || gesture.type === 'marquee') {
+      setGesture({ ...gesture, end: pointerInWorld(at) })
     } else {
-      setGesture({ ...gesture, pointer: pointerInWorld(e) })
+      setGesture({ ...gesture, pointer: pointerInWorld(at) })
     }
   }
+
+  const handleSurfaceMove = (e: React.PointerEvent): void => {
+    lastPointerRef.current = { clientX: e.clientX, clientY: e.clientY }
+    const rightPress = rightDrag.onMove(e)
+    if (rightPress) {
+      window.getSelection()?.removeAllRanges()
+      motionRef.current?.settle()
+      surfaceRef.current?.setPointerCapture(rightPress.pointerId)
+      unfollow()
+      setGesture({
+        type: 'pan',
+        pointer: pointerOnSurface(rightPress),
+        origin: viewportRef.current
+      })
+      return
+    }
+    if (gesture) {
+      moveGesture(e)
+    } else if (tool === 'connect') {
+      setHoverCardId(cardAtPoint(cardsRef.current, pointerInWorld(e))?.id ?? null)
+    }
+  }
+
+  useEdgePan({
+    active: gesture !== null && gesture.type !== 'pan' && gesture.type !== 'frameResize',
+    surfaceRef,
+    pressRef,
+    pointerRef: lastPointerRef,
+    onPan: useCallback(
+      (dx: number, dy: number, at: { clientX: number; clientY: number }): void => {
+        followRef.current = false
+        motionRef.current?.steer((view) => ({ ...view, x: view.x + dx, y: view.y + dy }), true)
+        const world = pointerInWorld(at)
+        setGesture((current) => {
+          if (!current || current.type === 'pan') return current
+          if (current.type === 'draw' || current.type === 'marquee') {
+            return { ...current, end: world }
+          }
+          return { ...current, pointer: world }
+        })
+      },
+      [pointerInWorld]
+    )
+  })
 
   const dragDelta = useMemo((): {
     dx: number
@@ -581,28 +742,37 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
   } => {
     const still = { dx: 0, dy: 0, guidesX: [], guidesY: [] }
     if (gesture?.type !== 'drag') return still
-    const card = cards.find((item) => item.id === gesture.id)
-    if (!card) return still
-    const moved = {
-      ...card.rect,
-      x: card.rect.x + gesture.pointer.x - gesture.start.x,
-      y: card.rect.y + gesture.pointer.y - gesture.start.y
-    }
+    const items = { cards, frames }
+    const single = cards.find((item) => item.id === gesture.id)
+    const subject =
+      gesture.group || !single
+        ? movingBounds(items, { cards: gesture.ids, frames: gesture.frameIds })
+        : single.rect
+    if (!subject) return still
+    const travelX = gesture.pointer.x - gesture.start.x
+    const travelY = gesture.pointer.y - gesture.start.y
+    if (Math.hypot(travelX, travelY) * viewport.zoom < DRAG_START_PX) return still
+    const moved = { ...subject, x: subject.x + travelX, y: subject.y + travelY }
     const snapDistance = gesture.pulledOut ? -1 : SNAP_SCREEN_PX / viewport.zoom
     const snap = snapMove(moved, topLevelRects(cards, gesture.ids), snapDistance)
     return {
-      dx: snap.rect.x - card.rect.x,
-      dy: snap.rect.y - card.rect.y,
+      dx: snap.rect.x - subject.x,
+      dy: snap.rect.y - subject.y,
       guidesX: snap.guidesX,
       guidesY: snap.guidesY
     }
-  }, [cards, gesture, viewport.zoom])
+  }, [cards, frames, gesture, viewport.zoom])
 
   const resizedRect = useMemo((): CanvasRect | null => {
     if (gesture?.type !== 'resize') return null
     const card = cards.find((item) => item.id === gesture.id)
     if (!card) return null
-    const min = card.kind === 'message' ? MIN_MESSAGE_SIZE : MIN_EXPANSION_SIZE
+    const min =
+      card.kind === 'message'
+        ? MIN_MESSAGE_SIZE
+        : card.kind === 'note'
+          ? MIN_NOTE_SIZE
+          : MIN_EXPANSION_SIZE
     const rect = {
       ...card.rect,
       w: Math.max(card.rect.w + gesture.pointer.x - gesture.start.x, min.w),
@@ -621,6 +791,27 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     ).rect
     return { ...rect, w: snapped.x + snapped.w - rect.x, h: snapped.y + snapped.h - rect.y }
   }, [cards, gesture, viewport.zoom])
+
+  const resizedFrameRect = useMemo((): CanvasRect | null => {
+    if (gesture?.type !== 'frameResize') return null
+    const frame = frames.find((item) => item.id === gesture.id)
+    if (!frame) return null
+    return {
+      ...frame.rect,
+      w: Math.max(frame.rect.w + gesture.pointer.x - gesture.start.x, MIN_FRAME_SIZE.w),
+      h: Math.max(frame.rect.h + gesture.pointer.y - gesture.start.y, MIN_FRAME_SIZE.h)
+    }
+  }, [frames, gesture])
+
+  // What the box being dragged would select, shown live and committed when it is let go.
+  const marqueeSelection =
+    gesture?.type === 'marquee'
+      ? new Set([
+          ...gesture.base,
+          ...marqueeHits({ cards, frames }, rectFromPoints(gesture.start, gesture.end))
+        ])
+      : null
+  const liveSelection = marqueeSelection ?? selectedIds
 
   const dragResult = useMemo(
     () =>
@@ -648,47 +839,118 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     return new Set()
   }, [cards, dragResult, gesture, resizeBlocked])
 
-  const handleSurfaceUp = (): void => {
+  const focusCardElement = (id: string): void => {
+    surfaceRef.current
+      ?.querySelector<HTMLElement>(`[data-canvas-card="${id}"]`)
+      ?.focus({ preventScroll: true })
+  }
+
+  const finishConnect = (from: string, at: CanvasPoint): void => {
+    const target = cardAtPoint(cards, at)
+    if (!target || target.id === from) {
+      showNotice(CONNECT_ANOTHER)
+      return
+    }
+    const id = canvas.addLink(from, target.id)
+    if (id === null) return
+    select([id])
+    setEditingLinkId(id)
+    setTool('select')
+  }
+
+  const handleSurfaceUp = (e: React.PointerEvent): void => {
+    rightDrag.onRelease(e)
     claimedPressRef.current = false
     if (!gesture) return
     setGesture(null)
     if (gesture.type === 'draw') {
-      finishDraw(gesture.start, gesture.end)
+      finishDraw(gesture.what, gesture.start, gesture.end)
+    } else if (gesture.type === 'marquee') {
+      select(marqueeSelection ?? [])
+    } else if (gesture.type === 'connect') {
+      finishConnect(gesture.from, gesture.pointer)
+    } else if (gesture.type === 'frameResize') {
+      if (resizedFrameRect) {
+        moveItems('Resize frame', [], [{ id: gesture.id, rect: resizedFrameRect }])
+      }
     } else if (gesture.type === 'drag') {
-      if (dragDelta.dx === 0 && dragDelta.dy === 0) return
+      if (dragDelta.dx === 0 && dragDelta.dy === 0) {
+        if (gesture.plainPress) {
+          select([gesture.id])
+          focusCardElement(gesture.id)
+        }
+        return
+      }
       if (!dragResult?.ok) {
         showNotice(REFUSE_MOVE)
         return
       }
-      updateCards(dragResult.updates)
+      const frameUpdates = frames
+        .filter((frame) => gesture.frameIds.has(frame.id))
+        .map((frame) => ({
+          id: frame.id,
+          rect: { ...frame.rect, x: frame.rect.x + dragDelta.dx, y: frame.rect.y + dragDelta.dy }
+        }))
+      moveItems('Move', dragResult.updates, frameUpdates)
       // Inside its host the answer may have been cut short; out here it has room.
       const wasInset = cards.some((card) => card.id === gesture.id && !isTopLevel(card))
       const isOut = dragResult.updates.some((item) => item.id === gesture.id && !item.inset)
       if (wasInset && isOut) canvas.requestFit(gesture.id)
     } else if (gesture.type === 'resize' && resizedRect) {
-      if (resizeUpdates) updateCards(resizeUpdates)
+      if (resizeUpdates) moveItems('Resize', resizeUpdates)
       else showNotice(REFUSE_MOVE)
     }
   }
 
   const handleDragStart = useCallback<CanvasCardActions['onDragStart']>(
     (e, id) => {
-      if (e.button !== 0 || (e.target as Element).closest('button')) return
+      const target = e.target as Element
+      if (e.button !== 0 || (target.closest('button') && !target.closest('.canvas-frame-handle'))) {
+        return
+      }
+      if (isDoublePress(id, e.timeStamp)) {
+        if (framesRef.current.some((frame) => frame.id === id)) setEditingFrameId(id)
+        else if (cardsRef.current.some((card) => card.id === id && card.kind === 'note')) {
+          setEditingNoteId(id)
+        } else zoomToItemRef.current(id)
+        return
+      }
       const start = pointerInWorld(e)
+      const items = { cards: cardsRef.current, frames: framesRef.current }
+      const additive = e.shiftKey || e.ctrlKey || e.metaKey
+      let chosen = selectedRef.current
+      if (additive) {
+        const next = new Set(chosen)
+        if (!next.delete(id)) next.add(id)
+        chosen = next
+        select(next)
+        if (!next.has(id)) return
+      } else if (!chosen.has(id)) {
+        chosen = new Set([id])
+        select(chosen)
+      }
+      let moving = movingForSelection(items, chosen, e.altKey)
+      // An inset card chosen among others stays put, but one being dragged means itself.
+      if (framesRef.current.every((frame) => frame.id !== id) && !moving.cards.has(id)) {
+        chosen = new Set([id])
+        select(chosen)
+        moving = movingForSelection(items, chosen, e.altKey)
+      }
       claimPress(e)
       currentIdRef.current = id
       setGesture({
         type: 'drag',
         id,
-        ids: e.altKey
-          ? pulledOutCardIds(cardsRef.current, id)
-          : movingCardIds(cardsRef.current, id),
+        ids: moving.cards,
+        frameIds: moving.frames,
+        group: chosen.size > 1 || moving.frames.size > 0,
         pulledOut: e.altKey,
+        plainPress: !additive,
         start,
         pointer: start
       })
     },
-    [claimPress, pointerInWorld]
+    [claimPress, isDoublePress, pointerInWorld, select]
   )
 
   const handleResizeStart = useCallback<CanvasCardActions['onResizeStart']>(
@@ -697,6 +959,16 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       const start = pointerInWorld(e)
       claimPress(e)
       setGesture({ type: 'resize', id, start, pointer: start })
+    },
+    [claimPress, pointerInWorld]
+  )
+
+  const handleFrameResizeStart = useCallback<CanvasCardActions['onResizeStart']>(
+    (e, id) => {
+      if (e.button !== 0) return
+      const start = pointerInWorld(e)
+      claimPress(e)
+      setGesture({ type: 'frameResize', id, start, pointer: start })
     },
     [claimPress, pointerInWorld]
   )
@@ -755,18 +1027,44 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
 
   /* ---- Card actions ---- */
 
-  const { stopCard, regenerateCard, editCard, deleteCard, exportCanvas } = canvas
+  const { stopCard, regenerateCard, editCard, removeItems, exportCanvas, setCollapsed } = canvas
+  const { undo, redo, addLink, setColor, duplicate, addNote, updateNote, addFrame } = canvas
+  const { labelLink, reverseLink, renameFrame } = canvas
   const { askAnotherExpansion } = selection
+
+  /** Deletes, asking only about cards it would take along that were not chosen. */
+  const deleteItems = useCallback(
+    (ids: ReadonlySet<string>): void => {
+      if (ids.size === 0) return
+      const all = cardsRef.current
+      const takenAlong = new Set<string>()
+      for (const id of ids) {
+        if (all.some((card) => card.id === id)) {
+          for (const dependent of cascadeCardIds(all, id)) {
+            if (!ids.has(dependent)) takenAlong.add(dependent)
+          }
+        }
+      }
+      const confirmed =
+        takenAlong.size === 0 ||
+        confirmCascade(
+          `Delete this and ${dependentsPhrase(takenAlong.size)}?`,
+          takenAlong.size,
+          true
+        )
+      if (!confirmed) return
+      removeItems(ids)
+      select([])
+      showNotice(deletedNotice(ids.size + takenAlong.size), true)
+    },
+    [removeItems, select, showNotice]
+  )
 
   const handleDelete = useCallback(
     (id: string): void => {
-      const dependents = cascadeCardIds(cardsRef.current, id).size - 1
-      const confirmed =
-        dependents === 0 ||
-        confirmCascade(`Delete this card and ${dependentsPhrase(dependents)}?`, dependents)
-      if (confirmed) deleteCard(id)
+      deleteItems(selectedRef.current.has(id) ? selectedRef.current : new Set([id]))
     },
-    [deleteCard]
+    [deleteItems]
   )
 
   const confirmReplacing = useCallback((id: string): boolean => {
@@ -774,15 +1072,19 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     if (dependents === 0) return true
     return confirmCascade(
       `This replaces the answer and removes ${dependentsPhrase(dependents)}. Continue?`,
-      dependents
+      dependents,
+      false
     )
   }, [])
 
   const handleRegenerate = useCallback(
     (id: string): void => {
-      if (confirmReplacing(id)) regenerateCard(id)
+      if (!confirmReplacing(id)) return
+      // The rectangle decides the answer's length, so it needs its real height back.
+      setCollapsed(new Set([id]), false)
+      regenerateCard(id)
     },
-    [confirmReplacing, regenerateCard]
+    [confirmReplacing, regenerateCard, setCollapsed]
   )
 
   const handleEdit = useCallback(
@@ -792,6 +1094,86 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       return true
     },
     [confirmReplacing, editCard]
+  )
+
+  const handleUndo = useCallback(
+    (step: typeof undo): void => {
+      const result = step()
+      if (result && !result.ok) showNotice(result.reason)
+    },
+    [showNotice]
+  )
+
+  const handleCollapse = useCallback(
+    (ids: ReadonlySet<string>): void => {
+      const chosen = cardsRef.current.filter((card) => ids.has(card.id) && card.kind !== 'note')
+      const allCollapsed = chosen.every(
+        (card) => card.kind !== 'note' && card.collapsedFrom !== undefined
+      )
+      setCollapsed(ids, !allCollapsed)
+    },
+    [setCollapsed]
+  )
+
+  const handleToggleCollapse = useCallback(
+    (id: string): void => handleCollapse(new Set([id])),
+    [handleCollapse]
+  )
+
+  const applyArrangement = useCallback(
+    (label: string, result: CanvasArrangeResult): void => {
+      if (result.ok) moveItems(label, result.cards, result.frames)
+      else showNotice(REFUSE_ARRANGE)
+    },
+    [moveItems, showNotice]
+  )
+
+  const handleDuplicate = useCallback(
+    (ids: ReadonlySet<string>): void => {
+      const copies = duplicate(ids)
+      if (copies.length > 0) select(copies)
+      else showNotice('Nothing here can be copied yet.')
+    },
+    [duplicate, select, showNotice]
+  )
+
+  const handleCopy = useCallback(
+    (ids: ReadonlySet<string>): void => {
+      const items = { cards: cardsRef.current, frames: framesRef.current }
+      const covered = new Set(selectedCards(items, ids).map((card) => card.id))
+      const text = selectionMarkdown(items.cards, canvasRef.current.turns, covered)
+      if (text === '') return
+      lastCopyRef.current = { text, ids }
+      navigator.clipboard.writeText(text).then(
+        () => showNotice('Copied as markdown.'),
+        () => showNotice('The clipboard is not available.')
+      )
+    },
+    [showNotice]
+  )
+
+  /** A frame around the selection, with its title ready to type. */
+  const frameSelection = useCallback(
+    (ids: ReadonlySet<string>): void => {
+      const bounds = boundsOf(
+        [...cardsRef.current, ...framesRef.current]
+          .filter((item) => ids.has(item.id))
+          .map((item) => item.rect)
+      )
+      if (!bounds) return
+      const id = addFrame(
+        {
+          x: bounds.x - FRAME_PADDING,
+          y: bounds.y - FRAME_PADDING,
+          w: bounds.w + FRAME_PADDING * 2,
+          h: bounds.h + FRAME_PADDING * 2
+        },
+        ''
+      )
+      select([id])
+      setEditingFrameId(id)
+    },
+    [addFrame, select]
   )
 
   const handleExport = async (): Promise<void> => {
@@ -814,13 +1196,43 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
 
   /* ---- Moving between cards ---- */
 
+  /** The part of the surface a jump should land in: not behind the outline. */
+  const openArea = useCallback((): { left: number; width: number; height: number } => {
+    const { width, height } = surfaceSize()
+    const left = outlineOpenRef.current ? OUTLINE_WIDTH : 0
+    return { left, width: width - left, height }
+  }, [surfaceSize])
+
   /** The smallest glide that brings a rectangle on screen; none when it already is. */
   const revealOnScreen = useCallback(
     (rect: CanvasRect): void => {
-      const next = revealRect(viewportRef.current, rect, surfaceSize())
-      if (next.x !== viewportRef.current.x || next.y !== viewportRef.current.y) glideTo(next)
+      const { left, width, height } = openArea()
+      const view = viewportRef.current
+      const moved = revealRect({ ...view, x: view.x - left }, rect, { width, height })
+      const next = { ...moved, x: moved.x + left }
+      if (next.x !== view.x || next.y !== view.y) glideTo(next)
     },
-    [glideTo, surfaceSize]
+    [glideTo, openArea]
+  )
+
+  /** Remembers where the view is, before a jump, for Alt+Left. */
+  const rememberView = useCallback((): void => {
+    viewBackRef.current = [...viewBackRef.current, viewportRef.current].slice(-VIEW_HISTORY_LIMIT)
+    viewForwardRef.current = []
+  }, [])
+
+  const travelViewHistory = useCallback(
+    (direction: 'back' | 'forward'): void => {
+      const [from, to] =
+        direction === 'back' ? [viewBackRef, viewForwardRef] : [viewForwardRef, viewBackRef]
+      const next = from.current.at(-1)
+      if (!next) return
+      from.current = from.current.slice(0, -1)
+      to.current = [...to.current, viewportRef.current]
+      followRef.current = false
+      glideTo(next)
+    },
+    [glideTo]
   )
 
   /** Flashes a card, or one expanded term inside it. */
@@ -836,18 +1248,19 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
 
   /** Every keyboard and link jump lands here: the card gets focus and comes on screen. */
   const focusCard = useCallback(
-    (id: string, pulse = false): void => {
+    (id: string, pulse = false, extend = false): void => {
       const card = cardsRef.current.find((item) => item.id === id)
       if (!card) return
       unfollow()
       currentIdRef.current = id
+      select(extend ? [...selectedRef.current, id] : [id])
       revealOnScreen(card.rect)
       surfaceRef.current
         ?.querySelector<HTMLElement>(`[data-canvas-card="${id}"]`)
         ?.focus({ preventScroll: true })
       if (pulse) flash(id)
     },
-    [flash, revealOnScreen, unfollow]
+    [flash, revealOnScreen, select, unfollow]
   )
 
   /** From an expansion back to the term it explains, scrolled into its card and flashed. */
@@ -885,6 +1298,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     (id: string): void => {
       const card = cardsRef.current.find((item) => item.id === id)
       if (!card) return
+      rememberView()
       if (card.kind === 'expansion') {
         returnToTerm(id)
         return
@@ -892,7 +1306,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       const source = sourceCardId(card)
       if (source !== undefined) focusCard(source, true)
     },
-    [focusCard, returnToTerm]
+    [focusCard, rememberView, returnToTerm]
   )
 
   const handleOpenExpansion = useCallback(
@@ -900,9 +1314,11 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       const card = cardsRef.current.find(
         (item) => item.kind === 'expansion' && item.expansionId === expansionId
       )
-      if (card) focusCard(card.id, true)
+      if (!card) return
+      rememberView()
+      focusCard(card.id, true)
     },
-    [focusCard]
+    [focusCard, rememberView]
   )
 
   /** A link click travels to whichever end is farther from where it was clicked. */
@@ -914,10 +1330,89 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       const onCard = clampPointInside(at, card.rect)
       const toCard = Math.hypot(at.x - onCard.x, at.y - onCard.y)
       const toStart = Math.hypot(at.x - start.x, at.y - start.y)
-      if (toStart < toCard) focusCard(id, true)
-      else goToSource(id)
+      if (toStart < toCard) {
+        rememberView()
+        focusCard(id, true)
+      } else goToSource(id)
     },
-    [focusCard, goToSource, pointerInWorld]
+    [focusCard, goToSource, pointerInWorld, rememberView]
+  )
+
+  /** A click on a card asked about's faint line goes to whichever card is farther away. */
+  const handleFollowRelation = useCallback(
+    (e: React.MouseEvent, from: string, to: string): void => {
+      const all = cardsRef.current
+      const start = all.find((card) => card.id === from)
+      const end = all.find((card) => card.id === to)
+      if (!start || !end) return
+      const at = pointerInWorld(e)
+      const distance = (rect: CanvasRect): number => {
+        const edge = clampPointInside(at, rect)
+        return Math.hypot(at.x - edge.x, at.y - edge.y)
+      }
+      rememberView()
+      focusCard(distance(start.rect) > distance(end.rect) ? from : to, true)
+    },
+    [focusCard, pointerInWorld, rememberView]
+  )
+
+  const zoomToRects = useCallback(
+    (rects: CanvasRect[]): void => {
+      if (rects.length === 0) return
+      unfollow()
+      rememberView()
+      const { left, width, height } = openArea()
+      const fit = fitViewport(rects, { width, height })
+      glideTo({ ...fit, x: fit.x + left })
+    },
+    [glideTo, openArea, rememberView, unfollow]
+  )
+
+  const zoomToItem = useCallback(
+    (id: string): void => {
+      const item = [...cardsRef.current, ...framesRef.current].find((other) => other.id === id)
+      if (item) zoomToRects([item.rect])
+    },
+    [zoomToRects]
+  )
+
+  /** From the outline or search: the item is selected and brought somewhere it can be read. */
+  const goToItem = useCallback(
+    (id: string): void => {
+      const frame = framesRef.current.find((item) => item.id === id)
+      if (frame) {
+        select([id])
+        zoomToRects([frame.rect])
+        flash(id)
+        return
+      }
+      const all = cardsRef.current
+      const card = all.find((item) => item.id === id)
+      if (!card) return
+      if (hiddenInsetIds(all).has(id)) {
+        const host = card.kind === 'expansion' ? card.hostId : undefined
+        if (host !== undefined) setCollapsed(new Set([host]), false)
+      }
+      rememberView()
+      if (viewportRef.current.zoom < FAR_ZOOM) {
+        // Too far out to read it, so the jump also comes in close enough.
+        const { left, width, height } = openArea()
+        const fit = fitViewport([card.rect], { width, height })
+        const zoom = Math.max(Math.min(READING_ZOOM, fit.zoom), FAR_ZOOM)
+        const center = { x: card.rect.x + card.rect.w / 2, y: card.rect.y + card.rect.h / 2 }
+        const close = {
+          x: left + width / 2 - center.x * zoom,
+          y: height / 2 - center.y * zoom,
+          zoom
+        }
+        unfollow()
+        glideTo(close)
+        // React has not painted it yet, and focusCard below reveals from where this lands.
+        viewportRef.current = close
+      }
+      focusCard(id, true)
+    },
+    [flash, focusCard, glideTo, openArea, rememberView, select, setCollapsed, unfollow, zoomToRects]
   )
 
   /* ---- The composer: drafts, and the conversation they follow ---- */
@@ -925,7 +1420,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
   const openDraft = useCallback((next: Omit<Draft, 'key'>): void => {
     followRef.current = true
     setPlacing(null)
-    setTool('move')
+    setTool('select')
     setDraft({ ...next, key: ++draftKeyRef.current })
   }, [])
 
@@ -938,19 +1433,71 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
         showNotice(NO_CONTINUE_INSET)
         return
       }
+      if (card.kind === 'note') {
+        // A note holds no session to continue, so the next card is about it instead.
+        const size = DEFAULT_MESSAGE_SIZE
+        const side = sides.find((item) => adjacentSlot(card, item, cardsRef.current, size))
+        if (side === undefined) {
+          showNotice(NO_ROOM)
+          return
+        }
+        openDraft({ rect: rectAgainst(card.rect, side, size), sessions: [], sourceIds: [id] })
+        return
+      }
       if (cardContent(card, canvasRef.current).status === 'failed') {
         showNotice(NO_CONTINUE_FAILED)
         return
       }
-      const side = sides.find((item) => adjacentSlot(card, item, cardsRef.current) !== null)
+      const full = openCardSize(card)
+      const side = sides.find((item) => adjacentSlot(card, item, cardsRef.current, full) !== null)
       if (side === undefined) {
         showNotice(NO_ROOM)
         return
       }
       currentIdRef.current = id
-      openDraft({ rect: card.rect, parentId: id, side, sessions: [id] })
+      openDraft({
+        rect: { ...card.rect, ...openCardSize(card) },
+        parentId: id,
+        side,
+        sessions: [id]
+      })
     },
     [openDraft, showNotice]
+  )
+
+  /**
+   * A question about what is selected: a single answer simply continues, as its history
+   * is the better context, and anything else goes along as text beside a new card.
+   */
+  const askAboutSelection = useCallback((): void => {
+    const all = cardsRef.current
+    const chosen = selectedCards({ cards: all, frames: framesRef.current }, selectedRef.current)
+    const only = chosen.length === 1 ? chosen[0] : undefined
+    if (only && only.kind !== 'note' && isTopLevel(only)) {
+      continueCard(only.id, ['bottom', 'right'])
+      return
+    }
+    const bounds = boundsOf(chosen.map((card) => card.rect))
+    if (!bounds) return
+    const rect = rectClearOf(
+      { x: bounds.x + bounds.w + NEW_SESSION_GAP, y: bounds.y, ...DEFAULT_MESSAGE_SIZE },
+      topLevelRects(all),
+      NEW_SESSION_GAP / 2
+    )
+    openDraft({ rect, sessions: [], sourceIds: chosen.map((card) => card.id) })
+  }, [continueCard, openDraft])
+
+  /** A draft at a point on the plane, for a double-click or a menu. */
+  const askAt = useCallback(
+    (point: CanvasPoint): void => {
+      const rect = rectClearOf(
+        rectCenteredAt(point, DEFAULT_MESSAGE_SIZE),
+        topLevelRects(cardsRef.current),
+        NEW_SESSION_GAP / 2
+      )
+      openDraft({ rect, sessions: [] })
+    },
+    [openDraft]
   )
 
   const handleContinue = useCallback(
@@ -969,6 +1516,23 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     )
     openDraft({ rect, sessions: [] })
   }, [openDraft, surfaceSize])
+
+  const pasteAsNote = useCallback(
+    (text: string): void => {
+      const point = lastPointerRef.current
+      const size = surfaceSize()
+      const center = point
+        ? pointerInWorld(point)
+        : screenToWorld(viewportRef.current, { x: size.width / 2, y: size.height / 2 })
+      const rect = rectClearOf(
+        rectCenteredAt(center, DEFAULT_NOTE_SIZE),
+        topLevelRects(cardsRef.current),
+        NEW_SESSION_GAP / 2
+      )
+      select([addNote(rect, text)])
+    },
+    [addNote, pointerInWorld, select, surfaceSize]
+  )
 
   const followRectRef = useRef<CanvasRect | null>(null)
 
@@ -996,6 +1560,22 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     else newSession()
   }, [continueCard, newSession, refollow])
 
+  const navigateFromMinimap = useCallback(
+    (point: CanvasPoint, dragging: boolean): void => {
+      const { width, height } = surfaceSize()
+      const { zoom } = viewportRef.current
+      const next = { x: width / 2 - point.x * zoom, y: height / 2 - point.y * zoom, zoom }
+      unfollow()
+      if (dragging) {
+        motionRef.current?.steer(() => next, true)
+      } else {
+        rememberView()
+        glideTo(next)
+      }
+    },
+    [glideTo, rememberView, surfaceSize, unfollow]
+  )
+
   const zoomBy = useCallback(
     (factor: number): void => {
       const { width, height } = surfaceSize()
@@ -1007,14 +1587,62 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
   )
 
   const showEverything = useCallback((): void => {
-    unfollow()
-    glideTo(
-      fitViewport(
-        cardsRef.current.map((card) => card.rect),
-        surfaceSize()
-      )
+    zoomToRects([
+      ...cardsRef.current.map((card) => card.rect),
+      ...framesRef.current.map((frame) => frame.rect)
+    ])
+  }, [zoomToRects])
+
+  const zoomToSelection = useCallback((): void => {
+    const chosen = [...cardsRef.current, ...framesRef.current].filter((item) =>
+      selectedRef.current.has(item.id)
     )
-  }, [glideTo, surfaceSize, unfollow])
+    zoomToRects(chosen.map((item) => item.rect))
+  }, [zoomToRects])
+
+  const selectEverything = useCallback((): void => {
+    const hidden = hiddenInsetIds(cardsRef.current)
+    select([
+      ...cardsRef.current
+        .filter((card) => isTopLevel(card) && !hidden.has(card.id))
+        .map((card) => card.id),
+      ...framesRef.current.map((frame) => frame.id)
+    ])
+  }, [select])
+
+  const openOutline = useCallback((): void => {
+    setOutlineOpen(true)
+    setOutlineFocus((count) => count + 1)
+  }, [])
+
+  const nudgeSelection = useCallback(
+    (side: CanvasSide, far: boolean): void => {
+      const chosen = selectedRef.current
+      const all = cardsRef.current
+      const moving = movingForSelection({ cards: all, frames: framesRef.current }, chosen)
+      if (moving.cards.size === 0 && moving.frames.size === 0) return
+      const step = far ? NUDGE_LARGE : NUDGE
+      const dx = side === 'left' ? -step : side === 'right' ? step : 0
+      const dy = side === 'top' ? -step : side === 'bottom' ? step : 0
+      const first = [...chosen][0]
+      const result = resolveMove(all, first, moving.cards, dx, dy)
+      if (!result.ok) {
+        showNotice(REFUSE_MOVE)
+        return
+      }
+      moveItems(
+        'Nudge',
+        result.updates,
+        framesRef.current
+          .filter((frame) => moving.frames.has(frame.id))
+          .map((frame) => ({
+            id: frame.id,
+            rect: { ...frame.rect, x: frame.rect.x + dx, y: frame.rect.y + dy }
+          }))
+      )
+    },
+    [moveItems, showNotice]
+  )
 
   /* ---- Keyboard ---- */
 
@@ -1023,8 +1651,13 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       const side = ARROW_SIDES[e.key]
       if (side) {
         e.preventDefault()
-        const next = nearestCardInDirection(cardsRef.current, id, side)
-        if (next) focusCard(next.id)
+        const hidden = hiddenInsetIds(cardsRef.current)
+        const next = nearestCardInDirection(
+          cardsRef.current.filter((card) => !hidden.has(card.id)),
+          id,
+          side
+        )
+        if (next) focusCard(next.id, false, e.shiftKey)
       } else if (e.key === 'Enter') {
         e.preventDefault()
         continueCard(id, e.shiftKey ? ['right'] : ['bottom', 'right'])
@@ -1039,77 +1672,66 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     [continueCard, focusCard, goToSource, handleDelete]
   )
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent): void => {
-      if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return
-      if (e.key === 'Escape') {
-        if (gesture) setGesture(null)
-        else if (helpOpen) setHelpOpen(false)
-        else if (placing) setPlacing(null)
-        else if (draft) setDraft(null)
-        else if (tool === 'select') setTool('move')
-        return
-      }
-      if (isTyping(e.target)) return
-      const side = ARROW_SIDES[e.key]
-      if (e.key === ' ') {
-        // Space still presses whatever button has focus.
-        if ((e.target as Element).closest?.('button, [role="button"]')) return
-        e.preventDefault()
-        setSpaceHeld(true)
-      } else if (e.key === '?') {
-        e.preventDefault()
-        setHelpOpen((open) => !open)
-      } else if (e.key === 'r' || e.key === 'R') {
-        setTool('select')
-      } else if (e.key === 'v' || e.key === 'V') {
-        setTool('move')
-      } else if (e.key === 'n' || e.key === 'N') {
-        e.preventDefault()
-        newSession()
-      } else if (e.key === '+' || e.key === '=') {
-        zoomBy(ZOOM_STEP)
-      } else if (e.key === '-') {
-        zoomBy(1 / ZOOM_STEP)
-      } else if (e.key === '0') {
-        showEverything()
-      } else if (ownsKeys(e.target)) {
-        return
-      } else if (e.key === 'Enter') {
-        e.preventDefault()
-        compose()
-      } else if (side) {
-        e.preventDefault()
-        unfollow()
-        const step = e.shiftKey ? PAN_STEP_LARGE : PAN_STEP
-        const current = viewportRef.current
-        const dx = side === 'left' ? step : side === 'right' ? -step : 0
-        const dy = side === 'top' ? step : side === 'bottom' ? -step : 0
-        glideTo({ ...current, x: current.x + dx, y: current.y + dy })
-      }
-    }
-    const handleKeyUp = (e: KeyboardEvent): void => {
-      if (e.key === ' ') setSpaceHeld(false)
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    window.addEventListener('keyup', handleKeyUp)
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown)
-      window.removeEventListener('keyup', handleKeyUp)
-    }
-  }, [
-    compose,
-    draft,
-    gesture,
-    glideTo,
-    helpOpen,
+  const chooseTool = useCallback((next: CanvasTool): void => {
+    setPlacing(null)
+    setHoverCardId(null)
+    setTool(next)
+  }, [])
+
+  const toggleMinimap = useCallback((): void => {
+    setMinimapOpen((open) => {
+      saveMinimapPreference(!open)
+      return !open
+    })
+  }, [])
+
+  useCanvasKeyboard({
+    selectedRef,
+    linksRef,
+    framesRef,
+    viewportRef,
+    clearGesture: gesture ? () => setGesture(null) : null,
+    closeHelp: helpOpen ? () => setHelpOpen(false) : null,
+    cancelPlacing: placing ? () => setPlacing(null) : null,
+    cancelDraft: draft ? () => setDraft(null) : null,
+    clearSelection: () => select([]),
+    resetTool: tool !== 'select' ? () => chooseTool('select') : null,
+    toggleHelp: () => setHelpOpen((open) => !open),
+    holdSpace: setSpaceHeld,
+    chooseTool,
+    toggleOutline: () => setOutlineOpen((open) => !open),
+    openOutline,
+    toggleMinimap,
+    zoomToSelection,
     newSession,
-    placing,
+    askAboutSelection,
+    collapseSelection: () => handleCollapse(selectedRef.current),
+    zoomBy,
     showEverything,
-    tool,
-    unfollow,
-    zoomBy
-  ])
+    deleteSelection: () => deleteItems(selectedRef.current),
+    editLinkLabel: setEditingLinkId,
+    editFrameTitle: setEditingFrameId,
+    compose,
+    panBy: (dx, dy) => {
+      unfollow()
+      const current = viewportRef.current
+      glideTo({ ...current, x: current.x + dx, y: current.y + dy })
+    },
+    undo: () => handleUndo(undo),
+    redo: () => handleUndo(redo),
+    selectEverything,
+    nudgeSelection,
+    duplicateSelection: () => handleDuplicate(selectedRef.current),
+    frameSelection: () => frameSelection(selectedRef.current),
+    copySelection: () => handleCopy(selectedRef.current),
+    travelViewHistory,
+    pasteText: (text) => {
+      const copied = lastCopyRef.current
+      // Pasting what was just copied from here means the cards themselves.
+      if (copied?.text === text) handleDuplicate(copied.ids)
+      else pasteAsNote(text)
+    }
+  })
 
   /* ---- Focus never scrolls the plane ---- */
 
@@ -1131,6 +1753,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       currentIdRef.current = card.id
       if (!target.matches(':focus-visible')) return
       followRef.current = false
+      if (target === cardEl && !selectedRef.current.has(card.id)) select([card.id])
       revealOnScreen(card.rect)
     }
     surface.addEventListener('scroll', handleScroll)
@@ -1139,7 +1762,151 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       surface.removeEventListener('scroll', handleScroll)
       surface.removeEventListener('focusin', handleFocusIn)
     }
-  }, [revealOnScreen])
+  }, [revealOnScreen, select])
+
+  /* ---- Menus ---- */
+
+  const openListMenu = useCallback(
+    (e: React.MouseEvent, label: string, items: ContextMenuItem[]): void => {
+      e.preventDefault()
+      e.stopPropagation()
+      setListMenu({ x: e.clientX, y: e.clientY, label, items })
+    },
+    []
+  )
+
+  const openPlaneMenu = (e: React.MouseEvent): void => {
+    if ((e.target as Element).closest('.canvas-card, .canvas-frame-title, .canvas-link-hit')) return
+    const at = pointerInWorld(e)
+    openListMenu(
+      e,
+      'Canvas',
+      planeMenuItems({
+        askHere: () => askAt(at),
+        noteHere: () => {
+          const rect = rectClearOf(
+            rectCenteredAt(at, DEFAULT_NOTE_SIZE),
+            topLevelRects(cards),
+            NEW_SESSION_GAP / 2
+          )
+          setNoteDraft({ key: ++draftKeyRef.current, rect })
+        },
+        selectEverything,
+        tidyUp: () => applyArrangement('Tidy up', tidySelection({ cards, frames })),
+        showEverything
+      })
+    )
+  }
+
+  const handleCardMenu = useCallback(
+    (e: React.MouseEvent, id: string): void => {
+      const card = cardsRef.current.find((item) => item.id === id)
+      if (!card) return
+      const chosen = selectedRef.current.has(id) ? selectedRef.current : new Set([id])
+      if (chosen !== selectedRef.current) select(chosen)
+      openListMenu(
+        e,
+        'Card',
+        cardMenuItems(card, {
+          ask: askAboutSelection,
+          duplicate: () => handleDuplicate(chosen),
+          copy: () => handleCopy(chosen),
+          collapse: () => handleCollapse(chosen),
+          frame: () => frameSelection(chosen),
+          zoom: () => zoomToItem(id),
+          remove: () => deleteItems(chosen)
+        })
+      )
+    },
+    [
+      askAboutSelection,
+      deleteItems,
+      frameSelection,
+      handleCollapse,
+      handleCopy,
+      handleDuplicate,
+      openListMenu,
+      select,
+      zoomToItem
+    ]
+  )
+
+  const handleFrameMenu = useCallback(
+    (e: React.MouseEvent, id: string): void => {
+      const frame = framesRef.current.find((item) => item.id === id)
+      if (!frame) return
+      const only = new Set([id])
+      select(only)
+      openListMenu(
+        e,
+        'Frame',
+        frameMenuItems({
+          rename: () => setEditingFrameId(id),
+          zoom: () => zoomToItem(id),
+          selectInside: () =>
+            select(cardsInsideFrame(cardsRef.current, frame).map((card) => card.id)),
+          duplicate: () => handleDuplicate(only),
+          remove: () => deleteItems(only)
+        })
+      )
+    },
+    [deleteItems, handleDuplicate, openListMenu, select, zoomToItem]
+  )
+
+  const handleSelectLink = useCallback(
+    (e: React.MouseEvent, id: string): void => {
+      e.stopPropagation()
+      const double = isDoublePress(id, e.timeStamp)
+      // This is the click, so no mousedown follows for the double press to hold back.
+      doublePressedRef.current = false
+      if (double) setEditingLinkId(id)
+      else select([id])
+    },
+    [isDoublePress, select]
+  )
+
+  const handleLinkMenu = useCallback(
+    (e: React.MouseEvent, id: string): void => {
+      const link = linksRef.current.find((item) => item.id === id)
+      if (!link) return
+      const only = new Set([id])
+      select(only)
+      openListMenu(
+        e,
+        'Connection',
+        linkMenuItems({
+          label: () => setEditingLinkId(id),
+          reverse: () => reverseLink(id),
+          goToStart: () => goToItem(link.from),
+          goToEnd: () => goToItem(link.to),
+          remove: () => deleteItems(only)
+        })
+      )
+    },
+    [deleteItems, goToItem, openListMenu, reverseLink, select]
+  )
+
+  /** A click that reached a card's body: it selects, unless it was the end of selecting text. */
+  const handleCardClick = useCallback(
+    (e: React.MouseEvent, id: string): void => {
+      const target = e.target as Element
+      if (target.closest('button, a, input, select, textarea, [role="button"], header')) return
+      if (!(window.getSelection()?.isCollapsed ?? true)) return
+      if (e.shiftKey || e.ctrlKey || e.metaKey) {
+        const next = new Set(selectedRef.current)
+        if (!next.delete(id)) next.add(id)
+        select(next)
+      } else {
+        select([id])
+      }
+    },
+    [select]
+  )
+
+  /* The drag handler is created before `zoomToItem`, so it reaches it through here. */
+  useEffect(() => {
+    zoomToItemRef.current = zoomToItem
+  }, [zoomToItem])
 
   const openCanvasMenu = (e: React.MouseEvent): void => {
     const box = e.currentTarget.getBoundingClientRect()
@@ -1147,6 +1914,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     setListMenu({
       x: box.left,
       y: box.bottom + 6,
+      label: 'Canvases',
       items: [
         { label: 'New canvas', onSelect: canvas.newCanvas },
         ...canvas.canvases
@@ -1174,10 +1942,15 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
 
   /* ---- What is on screen ---- */
 
+  const shownCards = useMemo((): CanvasCard[] => {
+    const hidden = hiddenInsetIds(cards)
+    return hidden.size === 0 ? cards : cards.filter((card) => !hidden.has(card.id))
+  }, [cards])
+
   const displayed = useMemo((): CanvasCard[] => {
     if (gesture?.type === 'drag') {
       const { dx, dy } = dragDelta
-      const moved = cards.map((card) =>
+      const moved = shownCards.map((card) =>
         gesture.ids.has(card.id)
           ? { ...card, rect: { ...card.rect, x: card.rect.x + dx, y: card.rect.y + dy } }
           : card
@@ -1193,13 +1966,48 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       // Refused, the card still shows its size, and its neighbours stay where they are.
       const moved = new Map(resizeUpdates?.map((update) => [update.id, update.rect]))
       if (!resizeUpdates) moved.set(gesture.id, resizedRect)
-      return cards.map((card) => {
+      return shownCards.map((card) => {
         const rect = moved.get(card.id)
         return rect ? { ...card, rect } : card
       })
     }
-    return cards
-  }, [cards, dragDelta, gesture, resizedRect, resizeUpdates])
+    return shownCards
+  }, [dragDelta, gesture, resizedRect, resizeUpdates, shownCards])
+
+  const displayedFrames = useMemo(() => {
+    if (gesture?.type === 'drag' && gesture.frameIds.size > 0) {
+      const { dx, dy } = dragDelta
+      return frames.map((frame) =>
+        gesture.frameIds.has(frame.id)
+          ? { ...frame, rect: { ...frame.rect, x: frame.rect.x + dx, y: frame.rect.y + dy } }
+          : frame
+      )
+    }
+    if (gesture?.type === 'frameResize' && resizedFrameRect) {
+      return frames.map((frame) =>
+        frame.id === gesture.id ? { ...frame, rect: resizedFrameRect } : frame
+      )
+    }
+    return frames
+  }, [dragDelta, frames, gesture, resizedFrameRect])
+
+  // The cards whose history the one selected card would send.
+  const pathIds = useMemo((): ReadonlySet<string> => {
+    if (selectedIds.size !== 1) return new Set()
+    return sessionAncestorIds(cards, [...selectedIds][0])
+  }, [cards, selectedIds])
+
+  const outlineRows = useMemo(
+    () => (outlineOpen ? canvasOutline({ cards, frames }, turns) : []),
+    [cards, frames, outlineOpen, turns]
+  )
+  const streamingIds = useMemo((): ReadonlySet<string> => {
+    if (!outlineOpen) return new Set()
+    const live = { turns, streamingTurnIds: canvas.streamingTurnIds }
+    return new Set(
+      cards.filter((card) => cardContent(card, live).status === 'streaming').map((card) => card.id)
+    )
+  }, [canvas.streamingTurnIds, cards, outlineOpen, turns])
 
   const draftParent = useMemo(
     () =>
@@ -1240,8 +2048,9 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
 
   const submitDraft = (question: string): void => {
     if (!draftRect) return
-    const id = canvas.ask(draftRect, question, draftParent?.id)
+    const id = canvas.ask(draftRect, question, draftParent?.id, draft?.sourceIds)
     currentIdRef.current = id
+    select([])
     // Like a chat, the next question can be typed at once, under the answer being written.
     const obstacles = topLevelRects(cards)
     const side = (['bottom', 'right'] as const).find((item) => {
@@ -1279,11 +2088,31 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
   })
   const parentStatus = draftParent ? cardContent(draftParent, canvas).status : undefined
 
-  const drawing = gesture?.type === 'draw' ? drawnRect(gesture.start, gesture.end) : null
+  const drawing =
+    gesture?.type === 'draw' ? drawnRect(gesture.what, gesture.start, gesture.end) : null
+  const drawsAnswer = gesture?.type === 'draw' && gesture.what === 'answer'
   const drawCaption = placing?.label.length ?? 0
   const drawSessions =
-    drawing && !placing && !drawing.refusal ? continuationCandidates(drawing.rect, cards) : []
+    drawing && drawsAnswer && !placing && !drawing.refusal
+      ? continuationCandidates(drawing.rect, cards)
+      : []
   const drawParent = drawSessions.at(0)
+  const connectFromId = gesture?.type === 'connect' ? gesture.from : null
+  const connectToId = useMemo(() => {
+    if (gesture?.type !== 'connect') return null
+    const target = cardAtPoint(cards, gesture.pointer)
+    return target && target.id !== gesture.from ? target.id : null
+  }, [cards, gesture])
+  const pendingConnector = useMemo(() => {
+    if (gesture?.type !== 'connect') return null
+    const from = cards.find((card) => card.id === gesture.from)
+    if (!from) return null
+    const to = cards.find((card) => card.id === connectToId)
+    return {
+      from: from.rect,
+      to: to?.rect ?? { x: gesture.pointer.x, y: gesture.pointer.y, w: 1, h: 1 }
+    }
+  }, [cards, connectToId, gesture])
   const continuedId = drawing ? drawParent?.id : draftParent?.id
   const activeGuides =
     gesture?.type === 'drag'
@@ -1305,12 +2134,17 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       onContextMenu: selection.handleContextMenu,
       onOpenExpansion: handleOpenExpansion,
       onGoToSource: goToSource,
-      onCardKeyDown: handleCardKeyDown
+      onCardKeyDown: handleCardKeyDown,
+      onCardClick: handleCardClick,
+      onCardMenu: handleCardMenu,
+      onToggleCollapse: handleToggleCollapse
     }),
     [
       askAnotherExpansion,
       goToSource,
+      handleCardClick,
       handleCardKeyDown,
+      handleCardMenu,
       handleContinue,
       handleDelete,
       handleDragStart,
@@ -1318,21 +2152,38 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       handleOpenExpansion,
       handleRegenerate,
       handleResizeStart,
+      handleToggleCollapse,
       selection.handleContextMenu,
       stopCard
     ]
   )
 
-  const isDrawMode = tool === 'select' || placing !== null
   const surfaceClasses = [
     'canvas-surface',
-    isDrawMode ? 'is-drawing' : '',
-    spaceHeld || gesture?.type === 'pan' ? 'is-panning' : '',
+    isDrawMode || tool === 'connect' ? 'is-drawing' : '',
+    tool === 'hand' || spaceHeld || gesture?.type === 'pan' ? 'is-panning' : '',
+    gesture?.type === 'pan' ? 'is-grabbing' : '',
     placing ? 'is-placing' : ''
   ]
     .filter(Boolean)
     .join(' ')
-  const message = notice ?? selection.notice
+  const message: CanvasNotice | null =
+    notice ?? (selection.notice ? { text: selection.notice } : null)
+  const toolHint = placing || gesture ? undefined : TOOL_HINTS[tool]
+
+  const barItems = { cards, frames }
+  const chosenCards = cards.filter((card) => selectedIds.has(card.id))
+  const collapsibleCards = chosenCards.flatMap((card) => (card.kind === 'note' ? [] : [card]))
+  const selectedFrameCount = frames.filter((frame) => selectedIds.has(frame.id)).length
+  // Off while a title or label is being typed: it could be sitting right over the field.
+  const showBar =
+    selectedIds.size > 0 &&
+    !gesture &&
+    !placing &&
+    !noteDraft &&
+    !editingFrameId &&
+    !editingLinkId &&
+    !editingNoteId
 
   return (
     <div className="canvas-view">
@@ -1343,9 +2194,31 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
         onMouseDown={handleSurfaceMouseDown}
         onPointerMove={handleSurfaceMove}
         onPointerUp={handleSurfaceUp}
-        onPointerCancel={() => setGesture(null)}
+        onPointerCancel={() => {
+          rightDrag.onCancel()
+          setGesture(null)
+        }}
+        onContextMenuCapture={rightDrag.onContextMenuCapture}
+        onContextMenu={openPlaneMenu}
       >
         <div ref={worldRef} className={`canvas-world${animating ? ' is-animating' : ''}`}>
+          {displayedFrames.map((frame) => (
+            <CanvasFrameView
+              key={frame.id}
+              frame={frame}
+              editing={editingFrameId === frame.id}
+              selected={liveSelection.has(frame.id)}
+              dragging={gesture?.type === 'drag' && gesture.frameIds.has(frame.id)}
+              pulsing={pulseId === frame.id}
+              dimmed={searchMatches !== null && !searchMatches.has(frame.id)}
+              onDragStart={handleDragStart}
+              onResizeStart={handleFrameResizeStart}
+              onMenu={handleFrameMenu}
+              onEdit={setEditingFrameId}
+              onRename={renameFrame}
+              onZoomTo={zoomToItem}
+            />
+          ))}
           {displayed.map((card) => {
             const dragging =
               (gesture?.type === 'drag' && gesture.ids.has(card.id)) ||
@@ -1353,6 +2226,35 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
                 (gesture.id === card.id ||
                   (resizeUpdates?.some((update) => update.id === card.id) ?? false)))
             const invalid = refusedIds.has(card.id)
+            const dimmed = placing
+              ? placing.hostId !== card.id
+              : searchMatches !== null && !searchMatches.has(card.id)
+            if (card.kind === 'note') {
+              return (
+                <CanvasNoteView
+                  key={card.id}
+                  card={card}
+                  editing={editingNoteId === card.id}
+                  selected={liveSelection.has(card.id)}
+                  dragging={dragging}
+                  invalid={invalid}
+                  pulsing={pulseId === card.id}
+                  dimmed={dimmed}
+                  continued={
+                    connectFromId === card.id ||
+                    connectToId === card.id ||
+                    (tool === 'connect' && !gesture && hoverCardId === card.id)
+                  }
+                  onDragStart={handleDragStart}
+                  onResizeStart={handleResizeStart}
+                  onClick={handleCardClick}
+                  onKeyDown={handleCardKeyDown}
+                  onMenu={handleCardMenu}
+                  onEdit={setEditingNoteId}
+                  onCommit={updateNote}
+                />
+              )
+            }
             return (
               <CanvasCardView
                 key={card.id}
@@ -1365,17 +2267,33 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
                 roomBottom={adjacentSlot(card, 'bottom', displayed) !== null}
                 invalid={invalid}
                 pulsing={pulseId === card.id}
-                dimmed={placing !== null && placing.hostId !== card.id}
-                continued={continuedId === card.id}
+                dimmed={dimmed}
+                selected={liveSelection.has(card.id)}
+                onPath={pathIds.has(card.id)}
+                continued={
+                  continuedId === card.id ||
+                  connectFromId === card.id ||
+                  connectToId === card.id ||
+                  (tool === 'connect' && !gesture && hoverCardId === card.id)
+                }
                 pulseTermId={pulseTerm?.cardId === card.id ? pulseTerm.expansionId : null}
               />
             )
           })}
           <CanvasLinks
             cards={displayed}
+            links={links}
             surfaceRef={surfaceRef}
             dragging={gesture?.type === 'drag' || gesture?.type === 'resize'}
+            selectedIds={liveSelection}
+            editingLinkId={editingLinkId}
+            pending={pendingConnector}
             onFollow={handleFollowLink}
+            onFollowRelation={handleFollowRelation}
+            onSelectLink={handleSelectLink}
+            onLinkMenu={handleLinkMenu}
+            onEditLink={setEditingLinkId}
+            onLabelLink={labelLink}
           />
           {draft && draftRect ? (
             <CanvasDraft
@@ -1383,6 +2301,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
               rect={draftRect}
               sessions={draftSessions}
               parentId={draftParent?.id}
+              sourceCount={draft.sourceIds?.length ?? 0}
               waiting={
                 parentStatus === 'streaming'
                   ? WAITING_PARENT
@@ -1394,6 +2313,17 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
               onActivity={refollow}
               onCancel={cancelDraft}
               onSubmit={submitDraft}
+            />
+          ) : null}
+          {noteDraft ? (
+            <CanvasNoteDraft
+              key={noteDraft.key}
+              rect={noteDraft.rect}
+              onCancel={() => setNoteDraft(null)}
+              onCommit={(text) => {
+                setNoteDraft(null)
+                if (text.trim() !== '') select([addNote(noteDraft.rect, text)])
+              }}
             />
           ) : null}
           {activeGuides.x.map((x) => (
@@ -1412,7 +2342,9 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
               }}
             >
               <span className="canvas-draw-badge">
-                ≈ {estimateWords(drawing.rect, drawCaption)} words
+                {drawsAnswer ? `≈ ${estimateWords(drawing.rect, drawCaption)} words` : ''}
+                {!drawsAnswer && gesture.what === 'note' ? 'Note' : ''}
+                {!drawsAnswer && gesture.what === 'frame' ? 'Frame' : ''}
                 {drawParent
                   ? drawSessions.length > 1
                     ? ` · continues the newest of ${drawSessions.length} sessions`
@@ -1421,41 +2353,64 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
               </span>
             </div>
           ) : null}
+          {gesture?.type === 'marquee' ? (
+            <div
+              className="canvas-marquee"
+              style={(() => {
+                const box = rectFromPoints(gesture.start, gesture.end)
+                return {
+                  transform: `translate(${box.x}px, ${box.y}px)`,
+                  width: box.w,
+                  height: box.h
+                }
+              })()}
+            />
+          ) : null}
         </div>
-        {cards.length === 0 && !draft && !drawing ? (
+        {cards.length === 0 && frames.length === 0 && !draft && !noteDraft && !drawing ? (
           <div className="canvas-empty">
             <h2>Draw a rectangle</h2>
             <p>
-              Delta writes an answer sized to fit it. Draw against a side to continue, or press N to
-              type a question right away.
+              Delta writes an answer sized to fit it. Draw against a side to continue the same
+              conversation, or anywhere else to start a new one.
             </p>
+            <ul className="canvas-empty-keys">
+              <li>
+                <kbd>N</kbd> type a question
+              </li>
+              <li>
+                <kbd>T</kbd> write a note
+              </li>
+              <li>
+                <kbd>?</kbd> every shortcut
+              </li>
+            </ul>
           </div>
         ) : null}
       </div>
 
-      <div className="canvas-toolbar canvas-toolbar--tools" role="toolbar" aria-label="Tools">
-        <button
-          type="button"
-          className={`canvas-tool${tool === 'move' && !placing ? ' is-active' : ''}`}
-          aria-pressed={tool === 'move' && !placing}
-          title="Move and read (V). Drag empty space to pan."
-          onClick={() => {
-            setPlacing(null)
-            setTool('move')
-          }}
-        >
-          Move
-        </button>
-        <button
-          type="button"
-          className={`canvas-tool${isDrawMode ? ' is-active' : ''}`}
-          aria-pressed={isDrawMode}
-          title="Select an area for a new answer (R)"
-          onClick={() => setTool('select')}
-        >
-          Select area
-        </button>
-      </div>
+      <CanvasToolRail
+        tool={placing ? 'answer' : tool}
+        onTool={chooseTool}
+        undoLabel={canvas.undoLabel}
+        redoLabel={canvas.redoLabel}
+        onUndo={() => handleUndo(undo)}
+        onRedo={() => handleUndo(redo)}
+        outlineOpen={outlineOpen}
+        onToggleOutline={() => (outlineOpen ? setOutlineOpen(false) : openOutline())}
+      />
+
+      {outlineOpen ? (
+        <CanvasOutline
+          rows={outlineRows}
+          selectedIds={selectedIds}
+          streamingIds={streamingIds}
+          focusRequest={outlineFocus}
+          onSearchMatches={setSearchMatches}
+          onGoTo={goToItem}
+          onClose={() => setOutlineOpen(false)}
+        />
+      ) : null}
 
       <div className="canvas-toolbar canvas-toolbar--title">
         <input
@@ -1491,6 +2446,18 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
               : 'Export'}
         </button>
       </div>
+
+      {minimapOpen && cards.length + frames.length > 0 ? (
+        <CanvasMinimap
+          ref={minimapRef}
+          cards={displayed}
+          frames={displayedFrames}
+          selectedIds={liveSelection}
+          size={surfaceBox}
+          viewportRef={viewportRef}
+          onNavigate={navigateFromMinimap}
+        />
+      ) : null}
 
       <div className="canvas-toolbar canvas-toolbar--zoom" role="toolbar" aria-label="Zoom">
         <button
@@ -1529,6 +2496,16 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
         </button>
         <button
           type="button"
+          className={`canvas-tool canvas-tool--icon${minimapOpen ? ' is-toggled' : ''}`}
+          aria-label="Map (M)"
+          aria-pressed={minimapOpen}
+          title="Show or hide the map (M)"
+          onClick={toggleMinimap}
+        >
+          <CanvasIcon name="map" />
+        </button>
+        <button
+          type="button"
           className={`canvas-tool${helpOpen ? ' is-active' : ''}`}
           aria-label="Keyboard shortcuts (?)"
           aria-expanded={helpOpen}
@@ -1542,13 +2519,31 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       {helpOpen ? <CanvasShortcuts onClose={() => setHelpOpen(false)} /> : null}
 
       <div className="canvas-bottom">
-        {placing || message ? (
+        {placing || message || toolHint ? (
           <div className="canvas-hint" role="status">
-            {message ?? (
+            {message ? (
               <>
-                Draw inside the message to size the answer to “{placing?.label}”, or click for the
+                {message.text}
+                {message.undoable ? (
+                  <button
+                    type="button"
+                    className="canvas-hint-action"
+                    onClick={() => {
+                      setNotice(null)
+                      handleUndo(undo)
+                    }}
+                  >
+                    Undo
+                  </button>
+                ) : null}
+              </>
+            ) : placing ? (
+              <>
+                Draw inside the message to size the answer to “{placing.label}”, or click for the
                 default size. Esc cancels.
               </>
+            ) : (
+              toolHint
             )}
           </div>
         ) : null}
@@ -1566,6 +2561,46 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
           >
             Back to your question
           </button>
+        ) : null}
+        {showBar ? (
+          <CanvasSelectionBar
+            count={selectedIds.size}
+            colorable={chosenCards.length + selectedFrameCount > 0}
+            color={sharedColor(barItems, selectedIds)}
+            askable={chosenCards.length + selectedFrameCount > 0}
+            connectable={chosenCards.length === 2 && selectedIds.size === 2}
+            collapsible={collapsibleCards.length > 0}
+            collapsed={collapsibleCards.every((card) => card.collapsedFrom !== undefined)}
+            blocks={selectionBlockCount(barItems, selectedIds)}
+            linkOnly={
+              selectedIds.size === 1 && chosenCards.length === 0 && selectedFrameCount === 0
+            }
+            onAsk={askAboutSelection}
+            onColor={(color) => setColor(selectedIds, color)}
+            onAlign={(edge) =>
+              applyArrangement('Align', alignSelection(barItems, selectedIds, edge))
+            }
+            onDistribute={(axis) =>
+              applyArrangement('Space evenly', distributeSelection(barItems, selectedIds, axis))
+            }
+            onTidy={() => applyArrangement('Tidy up', tidySelection(barItems, selectedIds))}
+            onConnect={() => {
+              const [from, to] = chosenCards
+              const id = addLink(from.id, to.id)
+              if (id !== null) {
+                select([id])
+                setEditingLinkId(id)
+              }
+            }}
+            onCollapse={() => handleCollapse(selectedIds)}
+            onFrame={() => frameSelection(selectedIds)}
+            onDuplicate={() => handleDuplicate(selectedIds)}
+            onCopy={() => handleCopy(selectedIds)}
+            onZoom={zoomToSelection}
+            onDelete={() => deleteItems(selectedIds)}
+            onLabelLink={() => setEditingLinkId([...selectedIds][0])}
+            onReverseLink={() => reverseLink([...selectedIds][0])}
+          />
         ) : null}
       </div>
 

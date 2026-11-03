@@ -3,6 +3,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 interface ContextMenuItem {
   label: string
   detail?: string
+  /** A key that does the same thing, shown at the end of the row. */
+  shortcut?: string
   onSelect: () => void
 }
 
@@ -24,6 +26,8 @@ interface ItemListMenu {
   x: number
   y: number
   items: ContextMenuItem[]
+  /** Names the menu for assistive tech; defaults to the list of answers on one range. */
+  label?: string
 }
 
 type ContextMenuState = TextActionsMenu | ItemListMenu
@@ -121,7 +125,7 @@ function ContextMenu({ state, onClose }: ContextMenuProps): React.JSX.Element | 
         ref={menuRef}
         id="ctxMenu"
         role="menu"
-        aria-label="Choose an answer"
+        aria-label={state.label ?? 'Choose an answer'}
         className="visible"
         style={{ left: (position ?? state).x, top: (position ?? state).y }}
       >
@@ -133,7 +137,7 @@ function ContextMenu({ state, onClose }: ContextMenuProps): React.JSX.Element | 
             }}
             type="button"
             role="menuitem"
-            className="item item--stacked"
+            className={item.shortcut ? 'item item--keyed' : 'item item--stacked'}
             onClick={() => {
               item.onSelect()
               onClose()
@@ -141,6 +145,7 @@ function ContextMenu({ state, onClose }: ContextMenuProps): React.JSX.Element | 
           >
             <span>{item.label}</span>
             {item.detail ? <span className="item-detail">{item.detail}</span> : null}
+            {item.shortcut ? <kbd className="item-key">{item.shortcut}</kbd> : null}
           </button>
         ))}
       </div>

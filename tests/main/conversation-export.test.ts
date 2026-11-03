@@ -168,6 +168,58 @@ describe('renderConversationMarkdown', () => {
   })
 })
 
+describe('canvas exports', () => {
+  it('adds notes and labelled connections, which hold no turn', () => {
+    const rect = { x: 0, y: 0, w: 100, h: 100 }
+    const markdown = renderConversationMarkdown(
+      record({
+        source: 'canvas',
+        state: {
+          turns: [
+            { id: 1, role: 'user', content: 'What is ATP?', expansions: [] },
+            { id: 2, role: 'assistant', content: 'An energy carrier.', expansions: [] }
+          ],
+          canvas: {
+            cards: [
+              { kind: 'message', id: 'm', rect, userTurnId: 1, turnId: 2 },
+              { kind: 'note', id: 'n', rect, text: 'Remember this' }
+            ],
+            frames: [],
+            links: [
+              { id: 'a', from: 'm', to: 'n', label: 'explained by' },
+              { id: 'b', from: 'n', to: 'm' }
+            ],
+            viewport: { x: 0, y: 0, zoom: 1 }
+          }
+        }
+      })
+    )
+    expect(markdown).toContain('## Notes\n\nRemember this')
+    expect(markdown).toContain('- What is ATP? — explained by → Remember this')
+    expect(markdown).toContain('- Remember this → What is ATP?')
+  })
+
+  it('adds nothing to a canvas without notes or connections', () => {
+    const rect = { x: 0, y: 0, w: 100, h: 100 }
+    const markdown = renderConversationMarkdown(
+      record({
+        source: 'canvas',
+        state: {
+          turns: [{ id: 1, role: 'user', content: 'Hello', expansions: [] }],
+          canvas: {
+            cards: [{ kind: 'message', id: 'm', rect, userTurnId: 1, turnId: 1 }],
+            frames: [],
+            links: [],
+            viewport: { x: 0, y: 0, zoom: 1 }
+          }
+        }
+      })
+    )
+    expect(markdown).not.toContain('## Notes')
+    expect(markdown).not.toContain('## Connections')
+  })
+})
+
 describe('image attachments in exports', () => {
   it('names the image and never embeds its data', () => {
     const output = renderConversationMarkdown({
