@@ -25,6 +25,7 @@ import {
   containsPoint,
   containsRect,
   continuationCandidates,
+  continueHandleBlocked,
   draftGrowth,
   estimateWords,
   fitViewport,
@@ -129,7 +130,16 @@ type DrawKind = 'answer' | 'note' | 'frame'
 
 type Gesture =
   | { type: 'pan'; pointer: CanvasPoint; origin: CanvasViewport }
-  | { type: 'draw'; what: DrawKind; start: CanvasPoint; end: CanvasPoint }
+  | {
+      type: 'draw'
+      what: DrawKind
+      start: CanvasPoint
+      end: CanvasPoint
+      /** The card this rectangle follows, wherever it ends up. */
+      continues?: string
+      /** Sizing after a `+` was dropped: it tracks the pointer until the next click. */
+      unheld?: boolean
+    }
   | {
       type: 'marquee'
       start: CanvasPoint
@@ -154,6 +164,8 @@ type Gesture =
   | { type: 'resize'; id: string; start: CanvasPoint; pointer: CanvasPoint }
   | { type: 'frameResize'; id: string; start: CanvasPoint; pointer: CanvasPoint }
   | { type: 'connect'; from: string; pointer: CanvasPoint }
+  /** A card's `+` on its way somewhere: a click continues on its side. */
+  | { type: 'extend'; from: string; side: CanvasSide; start: CanvasPoint; pointer: CanvasPoint }
   | {
       type: 'draftResize'
       side: CanvasSide | undefined
@@ -218,15 +230,15 @@ const REFUSE_MOVE = 'There is something in the way, so the card went back.'
 const REFUSE_ARRANGE = 'Other cards are in the way of that arrangement.'
 const NO_CARD_TO_CONNECT = 'Start a connection on a card.'
 const CONNECT_ANOTHER = 'Drag to a different card to connect them.'
-const NO_ROOM = 'There is no room on that side. Draw the next rectangle by hand.'
+const NO_ROOM = 'There is no room on that side. Drag the + to place the next message.'
 const NO_CONTINUE_INSET = 'Drag this expansion clear of its message to continue it.'
 const NO_CONTINUE_FAILED = 'Retry this answer before continuing it.'
 const WAITING_PARENT = 'Waiting for the answer it continues…'
 const FAILED_PARENT = 'The answer it continues failed. Retry it first.'
 const WAITING_CONTEXT = 'Waiting for a linked answer…'
 const LINK_IN_HISTORY = 'That card is already in this conversation.'
-const PICK_HINT =
-  'Click cards to send them as context, from any branch. Esc or a click on empty space finishes.'
+const EXTEND_HINT = 'Let go in open space to place the next message, or on a new message to link.'
+const SIZE_HINT = 'Move to size the next message, then click. A click right away uses the default.'
 
 const TOOL_HINTS: Readonly<Partial<Record<CanvasTool, string>>> = {
   answer: 'Draw a rectangle for the answer, or click for the default size.',
@@ -274,14 +286,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
   const [placing, setPlacing] = useState<Placing | null>(null)
   const [notice, setNotice] = useState<CanvasNotice | null>(null)
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set())
-  const [noteDraft, setNoteDraft] = useState<{
-    key: number
-    rect: CanvasRect
-    /** The composer this text box goes with, when it was opened from one. */
-    forDraft?: number
-  } | null>(null)
-  /** The composer choosing cards to link; held by key so it ends with that composer. */
-  const [pickingKey, setPickingKey] = useState<number | null>(null)
+  const [noteDraft, setNoteDraft] = useState<{ key: number; rect: CanvasRect } | null>(null)
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null)
   const [editingFrameId, setEditingFrameId] = useState<string | null>(null)
   const [editingLinkId, setEditingLinkId] = useState<string | null>(null)
@@ -553,7 +558,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
   )
 
   const finishDraw = useCallback(
-    (what: DrawKind, start: CanvasPoint, end: CanvasPoint): void => {
+    (what: DrawKind, start: CanvasPoint, end: CanvasPoint, continues?: string): void => {
       const outcome = drawnRect(what, start, end)
       if (outcome.refusal) {
         showNotice(outcome.refusal)
@@ -582,7 +587,10 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
         setTool('select')
         return
       }
-      const sessions = continuationCandidates(outcome.rect, cards).map((card) => card.id)
+      const touching = continuationCandidates(outcome.rect, cards).map((card) => card.id)
+      const sessions = continues
+        ? [continues, ...touching.filter((id) => id !== continues)]
+        : touching
       followRef.current = true
       setDraft({
         key: ++draftKeyRef.current,
@@ -650,48 +658,42 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       ?.focus({ preventScroll: true })
   }
 
-  const picking = draft !== null && pickingKey === draft.key
-
-  /** Adds a card to what the composer sends, or takes it back off. */
-  const toggleDraftContext = (id: string): void => {
+  /** Adds cards to what the composer sends; one already in its history has nothing to add. */
+  const linkToDraft = (ids: string[]): void => {
     if (!draft) return
     const context = draft.context ?? []
-    if (context.some((link) => link.from === id)) {
-      setDraft({ ...draft, context: context.filter((link) => link.from !== id) })
-      return
-    }
-    if (sessionCardIds(cards, draft.parentId).includes(id)) {
-      showNotice(LINK_IN_HISTORY)
-      return
-    }
-    const isNote = cards.some((card) => card.id === id && card.kind === 'note')
-    setDraft({ ...draft, context: [...context, { from: id, context: isNote ? 'card' : 'branch' }] })
+    const history = sessionCardIds(cards, draft.parentId)
+    if (ids.some((id) => history.includes(id))) showNotice(LINK_IN_HISTORY)
+    const added = ids
+      .filter((id) => !history.includes(id) && context.every((link) => link.from !== id))
+      .map((from): CanvasContextLink => {
+        const isNote = cards.some((card) => card.id === from && card.kind === 'note')
+        return { from, context: isNote ? 'card' : 'branch' }
+      })
+    if (added.length > 0) setDraft({ ...draft, context: [...context, ...added] })
+    focusDraftInput()
   }
 
   /*
-   * While picking, a press belongs to the composer whatever it lands on, so it is taken
-   * before the card's own handlers. Panning still works, and focus stays on the question.
+   * While a dropped `+` is being sized, a press belongs to it whatever it lands on, so it is
+   * taken before a card's own handlers. Any other button gives up.
    */
-  const pickPressRef = useRef(false)
-  const handlePickPress = (e: React.PointerEvent): void => {
-    pickPressRef.current = false
-    if (!picking || e.button !== 0 || spaceHeld || tool === 'hand') return
-    const target = e.target as Element
-    if (target.closest('[data-canvas-draft]')) return
+  const handleSizingPress = (e: React.PointerEvent): void => {
+    if (gesture?.type !== 'draw' || !gesture.unheld) return
+    if (e.button !== 0) {
+      setGesture(null)
+      return
+    }
     e.stopPropagation()
-    claimedPressRef.current = true
-    pickPressRef.current = true
-    const id = target.closest('[data-canvas-card]')?.getAttribute('data-canvas-card')
-    if (id) toggleDraftContext(id)
-    else setPickingKey(null)
-  }
-
-  const handlePickClick = (e: React.MouseEvent): void => {
-    if (!pickPressRef.current) return
-    pickPressRef.current = false
-    e.stopPropagation()
-    e.preventDefault()
-    focusDraftInput()
+    const { what, start, continues } = gesture
+    claimPress(e)
+    setGesture({
+      type: 'draw',
+      what,
+      start,
+      end: pointerInWorld(e),
+      ...(continues ? { continues } : {})
+    })
   }
 
   const handleSurfaceDown = (e: React.PointerEvent): void => {
@@ -785,7 +787,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     }
     if (gesture) {
       moveGesture(e)
-    } else if (tool === 'connect' || picking) {
+    } else if (tool === 'connect') {
       setHoverCardId(cardAtPoint(cardsRef.current, pointerInWorld(e))?.id ?? null)
     }
   }
@@ -922,15 +924,6 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
   )
   const resizeBlocked = gesture?.type === 'resize' && resizedRect !== null && !resizeUpdates
 
-  // A refused drop or resize sends back everything that would have moved, so all of it warns.
-  const refusedIds = useMemo((): ReadonlySet<string> => {
-    if (gesture?.type === 'drag') return dragResult?.ok === false ? gesture.ids : new Set()
-    if (gesture?.type === 'resize' && resizeBlocked) {
-      return new Set([gesture.id, ...resizeFollowerIds(cards, gesture.id)])
-    }
-    return new Set()
-  }, [cards, dragResult, gesture, resizeBlocked])
-
   const focusCardElement = (id: string): void => {
     surfaceRef.current
       ?.querySelector<HTMLElement>(`[data-canvas-card="${id}"]`)
@@ -948,53 +941,6 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     select([id])
     setEditingLinkId(id)
     setTool('select')
-  }
-
-  const handleSurfaceUp = (e: React.PointerEvent): void => {
-    rightDrag.onRelease(e)
-    claimedPressRef.current = false
-    if (!gesture) return
-    setGesture(null)
-    if (gesture.type === 'draw') {
-      finishDraw(gesture.what, gesture.start, gesture.end)
-    } else if (gesture.type === 'marquee') {
-      select(marqueeSelection ?? [])
-    } else if (gesture.type === 'connect') {
-      finishConnect(gesture.from, gesture.pointer)
-    } else if (gesture.type === 'draftResize') {
-      if (resizedDraft) setDraft((prev) => prev && { ...prev, rect: resizedDraft.rect })
-      focusDraftInput()
-    } else if (gesture.type === 'frameResize') {
-      if (resizedFrameRect) {
-        moveItems('Resize frame', [], [{ id: gesture.id, rect: resizedFrameRect }])
-      }
-    } else if (gesture.type === 'drag') {
-      if (dragDelta.dx === 0 && dragDelta.dy === 0) {
-        if (gesture.plainPress) {
-          select([gesture.id])
-          focusCardElement(gesture.id)
-        }
-        return
-      }
-      if (!dragResult?.ok) {
-        showNotice(REFUSE_MOVE)
-        return
-      }
-      const frameUpdates = frames
-        .filter((frame) => gesture.frameIds.has(frame.id))
-        .map((frame) => ({
-          id: frame.id,
-          rect: { ...frame.rect, x: frame.rect.x + dragDelta.dx, y: frame.rect.y + dragDelta.dy }
-        }))
-      moveItems('Move', dragResult.updates, frameUpdates)
-      // Inside its host the answer may have been cut short; out here it has room.
-      const wasInset = cards.some((card) => card.id === gesture.id && !isTopLevel(card))
-      const isOut = dragResult.updates.some((item) => item.id === gesture.id && !item.inset)
-      if (wasInset && isOut) canvas.requestFit(gesture.id)
-    } else if (gesture.type === 'resize' && resizedRect) {
-      if (resizeUpdates) moveItems('Resize', resizeUpdates)
-      else showNotice(REFUSE_MOVE)
-    }
   }
 
   const handleDragStart = useCallback<CanvasCardActions['onDragStart']>(
@@ -1599,6 +1545,95 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     [continueCard]
   )
 
+  const handleContinueStart = useCallback<CanvasCardActions['onContinueStart']>(
+    (e, id, side) => {
+      // Other tools and panning treat a press here like one anywhere else.
+      if (e.button !== 0 || tool !== 'select' || placing || spaceHeld) return
+      const start = pointerInWorld(e)
+      claimPress(e)
+      currentIdRef.current = id
+      setGesture({ type: 'extend', from: id, side, start, pointer: start })
+    },
+    [claimPress, placing, pointerInWorld, spaceHeld, tool]
+  )
+
+  /** A `+` let go: a click continues on its side, a drag places the next message there. */
+  const finishExtend = (extend: Extract<Gesture, { type: 'extend' }>): void => {
+    const travel = Math.hypot(extend.pointer.x - extend.start.x, extend.pointer.y - extend.start.y)
+    if (travel * viewport.zoom < DRAG_START_PX) {
+      continueCard(extend.from, [extend.side])
+    } else if (overDraft) {
+      linkToDraft([extend.from])
+    } else if (cardAtPoint(cards, extend.pointer)) {
+      showNotice(REFUSE_OVERLAP)
+    } else {
+      setGesture({
+        type: 'draw',
+        what: 'answer',
+        start: extend.pointer,
+        end: extend.pointer,
+        continues: extend.from,
+        unheld: true
+      })
+    }
+  }
+
+  const handleSurfaceUp = (e: React.PointerEvent): void => {
+    rightDrag.onRelease(e)
+    claimedPressRef.current = false
+    if (!gesture || (gesture.type === 'draw' && gesture.unheld)) return
+    setGesture(null)
+    if (gesture.type === 'draw') {
+      finishDraw(gesture.what, gesture.start, gesture.end, gesture.continues)
+    } else if (gesture.type === 'extend') {
+      finishExtend(gesture)
+    } else if (gesture.type === 'marquee') {
+      select(marqueeSelection ?? [])
+    } else if (gesture.type === 'connect') {
+      finishConnect(gesture.from, gesture.pointer)
+    } else if (gesture.type === 'draftResize') {
+      if (resizedDraft) setDraft((prev) => prev && { ...prev, rect: resizedDraft.rect })
+      focusDraftInput()
+    } else if (gesture.type === 'frameResize') {
+      if (resizedFrameRect) {
+        moveItems('Resize frame', [], [{ id: gesture.id, rect: resizedFrameRect }])
+      }
+    } else if (gesture.type === 'drag') {
+      if (dragDelta.dx === 0 && dragDelta.dy === 0) {
+        if (gesture.plainPress) {
+          select([gesture.id])
+          focusCardElement(gesture.id)
+        }
+        return
+      }
+      if (overDraft) {
+        // Everything chosen goes along, and the cards return to where they stood.
+        linkToDraft(
+          cards.map((card) => card.id).filter((id) => id === gesture.id || selectedIds.has(id))
+        )
+        return
+      }
+      if (!dragResult?.ok) {
+        showNotice(REFUSE_MOVE)
+        return
+      }
+      const frameUpdates = frames
+        .filter((frame) => gesture.frameIds.has(frame.id))
+        .map((frame) => ({
+          id: frame.id,
+          rect: { ...frame.rect, x: frame.rect.x + dragDelta.dx, y: frame.rect.y + dragDelta.dy }
+        }))
+      moveItems('Move', dragResult.updates, frameUpdates)
+      // Inside its host the answer may have been cut short; out here it has room.
+      const wasInset = cards.some((card) => card.id === gesture.id && !isTopLevel(card))
+      const isOut = dragResult.updates.some((item) => item.id === gesture.id && !item.inset)
+      if (wasInset && isOut) canvas.requestFit(gesture.id)
+    } else if (gesture.type === 'resize' && resizedRect) {
+      if (resizeUpdates) moveItems('Resize', resizeUpdates)
+      else showNotice(REFUSE_MOVE)
+    }
+  }
+
   /** A new session in open space near the middle of the screen. */
   const newSession = useCallback((): void => {
     const size = surfaceSize()
@@ -1787,7 +1822,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     clearGesture: gesture ? () => setGesture(null) : null,
     closeHelp: helpOpen ? () => setHelpOpen(false) : null,
     cancelPlacing: placing ? () => setPlacing(null) : null,
-    cancelDraft: picking ? () => setPickingKey(null) : draft ? () => setDraft(null) : null,
+    cancelDraft: draft ? () => setDraft(null) : null,
     clearSelection: () => select([]),
     resetTool: tool !== 'select' ? () => chooseTool('select') : null,
     toggleHelp: () => setHelpOpen((open) => !open),
@@ -2118,14 +2153,34 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
   )
 
   // A draft kept against its parent follows it as it grows or moves; one that a card
-  // grew or was dropped over moves out of the way.
+  // grew or was dropped over moves out of the way, but not from a card still held, which
+  // may be coming to link.
   const draftRect = useMemo(() => {
     if (!draft) return null
     if (resizedDraft) return resizedDraft.rect
     const base =
       draft.side && draftParent ? rectAgainst(draftParent.rect, draft.side, draft.rect) : draft.rect
-    return rectClearBelow(base, topLevelRects(displayed))
-  }, [displayed, draft, draftParent, resizedDraft])
+    const held = gesture?.type === 'drag' ? gesture.ids : undefined
+    return rectClearBelow(base, topLevelRects(displayed, held))
+  }, [displayed, draft, draftParent, gesture, resizedDraft])
+
+  // Held over the composer, a card or a `+` links rather than moves.
+  const overDraft =
+    draftRect !== null &&
+    (gesture?.type === 'extend' ||
+      (gesture?.type === 'drag' && cards.some((card) => card.id === gesture.id))) &&
+    containsPoint(draftRect, gesture.pointer)
+
+  // A refused drop or resize sends back everything that would have moved, so all of it warns.
+  const refusedIds = useMemo((): ReadonlySet<string> => {
+    if (gesture?.type === 'drag') {
+      return dragResult?.ok === false && !overDraft ? gesture.ids : new Set()
+    }
+    if (gesture?.type === 'resize' && resizeBlocked) {
+      return new Set([gesture.id, ...resizeFollowerIds(cards, gesture.id)])
+    }
+    return new Set()
+  }, [cards, dragResult, gesture, overDraft, resizeBlocked])
 
   // The answer being continued and its composer, both when they fit; else the composer,
   // with the newest lines of the answer just above it, as in a chat.
@@ -2219,37 +2274,10 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     refollow()
   }
 
-  /** A text box beside the composer, whose text goes with this branch once it is written. */
-  const addDraftText = (): void => {
-    if (!draft || !draftRect) return
-    setPickingKey(null)
-    const rect = rectClearOf(
-      { x: draftRect.x + draftRect.w + NEW_SESSION_GAP / 2, y: draftRect.y, ...DEFAULT_NOTE_SIZE },
-      [...topLevelRects(cards), draftRect],
-      NEW_SESSION_GAP / 2
-    )
-    setNoteDraft({ key: ++draftKeyRef.current, rect, forDraft: draft.key })
-    revealOnScreen(unionRect(draftRect, rect))
-  }
-
   const commitNoteDraft = (text: string): void => {
     if (!noteDraft) return
     setNoteDraft(null)
-    if (text.trim() === '') {
-      if (noteDraft.forDraft !== undefined) focusDraftInput()
-      return
-    }
-    const id = addNote(noteDraft.rect, text)
-    if (noteDraft.forDraft === undefined) {
-      select([id])
-      return
-    }
-    setDraft((prev) => {
-      if (prev?.key !== noteDraft.forDraft) return prev
-      const context: CanvasContextLink[] = [...(prev?.context ?? []), { from: id, context: 'card' }]
-      return prev && { ...prev, context }
-    })
-    focusDraftInput()
+    if (text.trim() !== '') select([addNote(noteDraft.rect, text)])
   }
 
   const draftSessions = (draft?.sessions ?? []).flatMap((id) => {
@@ -2310,10 +2338,17 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
   const draftLinks =
     draftRect === null
       ? []
-      : draftOwnContext.flatMap((link) => {
-          const from = displayed.find((card) => card.id === link.from)
-          return from ? [{ id: link.from, from: from.rect, to: draftRect }] : []
-        })
+      : [
+          ...draftOwnContext.flatMap((link) => {
+            const from = displayed.find((card) => card.id === link.from)
+            return from ? [{ id: link.from, from: from.rect, to: draftRect }] : []
+          }),
+          // Placed away from what it continues, nothing else shows that it does.
+          ...(draftParent &&
+          !continuationCandidates(draftRect, displayed).some((card) => card.id === draftParent.id)
+            ? [{ id: `parent-${draftParent.id}`, from: draftParent.rect, to: draftRect }]
+            : [])
+        ]
 
   const drawing =
     gesture?.type === 'draw' ? drawnRect(gesture.what, gesture.start, gesture.end) : null
@@ -2323,14 +2358,31 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     drawing && drawsAnswer && !placing && !drawing.refusal
       ? continuationCandidates(drawing.rect, cards)
       : []
-  const drawParent = drawSessions.at(0)
-  const connectFromId = gesture?.type === 'connect' ? gesture.from : null
+  const drawContinues =
+    gesture?.type === 'draw' && gesture.continues
+      ? cards.find((card) => card.id === gesture.continues)
+      : undefined
+  const drawParent = drawContinues ?? drawSessions.at(0)
+  const connectFromId =
+    gesture?.type === 'connect' || gesture?.type === 'extend' ? gesture.from : null
   const connectToId = useMemo(() => {
     if (gesture?.type !== 'connect') return null
     const target = cardAtPoint(cards, gesture.pointer)
     return target && target.id !== gesture.from ? target.id : null
   }, [cards, gesture])
   const pendingConnector = useMemo(() => {
+    if (drawContinues && drawing) return { from: drawContinues.rect, to: drawing.rect }
+    if (gesture?.type === 'extend') {
+      const from = cards.find((card) => card.id === gesture.from)
+      if (!from) return null
+      return {
+        from: from.rect,
+        to:
+          overDraft && draftRect
+            ? draftRect
+            : { x: gesture.pointer.x, y: gesture.pointer.y, w: 1, h: 1 }
+      }
+    }
     if (gesture?.type !== 'connect') return null
     const from = cards.find((card) => card.id === gesture.from)
     if (!from) return null
@@ -2339,7 +2391,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       from: from.rect,
       to: to?.rect ?? { x: gesture.pointer.x, y: gesture.pointer.y, w: 1, h: 1 }
     }
-  }, [cards, connectToId, gesture])
+  }, [cards, connectToId, draftRect, drawContinues, drawing, gesture, overDraft])
   const continuedId = drawing ? drawParent?.id : draftParent?.id
   const activeGuides =
     gesture?.type === 'drag'
@@ -2360,6 +2412,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       onAskAnother: askAnotherExpansion,
       onDelete: handleDelete,
       onContinue: handleContinue,
+      onContinueStart: handleContinueStart,
       onContextMenu: selection.handleContextMenu,
       onOpenExpansion: handleOpenExpansion,
       onGoToSource: goToSource,
@@ -2375,6 +2428,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       handleCardKeyDown,
       handleCardMenu,
       handleContinue,
+      handleContinueStart,
       handleDelete,
       handleDragStart,
       handleEdit,
@@ -2393,13 +2447,20 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     tool === 'hand' || spaceHeld || gesture?.type === 'pan' ? 'is-panning' : '',
     gesture?.type === 'pan' ? 'is-grabbing' : '',
     placing ? 'is-placing' : '',
-    picking ? 'is-picking' : ''
+    overDraft && gesture?.type === 'drag' ? 'is-linking' : ''
   ]
     .filter(Boolean)
     .join(' ')
   const message: CanvasNotice | null =
     notice ?? (selection.notice ? { text: selection.notice } : null)
-  const toolHint = placing || gesture ? undefined : picking ? PICK_HINT : TOOL_HINTS[tool]
+  const toolHint =
+    gesture?.type === 'extend'
+      ? EXTEND_HINT
+      : gesture?.type === 'draw' && gesture.unheld
+        ? SIZE_HINT
+        : placing || gesture
+          ? undefined
+          : TOOL_HINTS[tool]
 
   const barItems = { cards, frames }
   const chosenCards = cards.filter((card) => selectedIds.has(card.id))
@@ -2420,8 +2481,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       <div
         ref={surfaceRef}
         className={surfaceClasses}
-        onPointerDownCapture={handlePickPress}
-        onClickCapture={handlePickClick}
+        onPointerDownCapture={handleSizingPress}
         onPointerDown={handleSurfaceDown}
         onMouseDown={handleSurfaceMouseDown}
         onPointerMove={handleSurfaceMove}
@@ -2476,7 +2536,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
                     connectFromId === card.id ||
                     connectToId === card.id ||
                     pickedIds.has(card.id) ||
-                    ((tool === 'connect' || picking) && !gesture && hoverCardId === card.id)
+                    (tool === 'connect' && !gesture && hoverCardId === card.id)
                   }
                   onDragStart={handleDragStart}
                   onResizeStart={handleResizeStart}
@@ -2496,8 +2556,8 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
                 {...cardContent(card, canvas)}
                 {...actions}
                 dragging={dragging}
-                roomRight={adjacentSlot(card, 'right', displayed) !== null}
-                roomBottom={adjacentSlot(card, 'bottom', displayed) !== null}
+                handleRight={!continueHandleBlocked(card, 'right', displayed)}
+                handleBottom={!continueHandleBlocked(card, 'bottom', displayed)}
                 invalid={invalid}
                 pulsing={pulseId === card.id}
                 dimmed={dimmed}
@@ -2508,7 +2568,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
                   connectFromId === card.id ||
                   connectToId === card.id ||
                   pickedIds.has(card.id) ||
-                  ((tool === 'connect' || picking) && !gesture && hoverCardId === card.id)
+                  (tool === 'connect' && !gesture && hoverCardId === card.id)
                 }
                 pulseTermId={pulseTerm?.cardId === card.id ? pulseTerm.expansionId : null}
               />
@@ -2542,7 +2602,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
               context={draftChips}
               contextTokens={draftContextSize.tokens}
               contextClipped={draftContextSize.clipped}
-              picking={picking}
+              linkTarget={overDraft}
               waiting={
                 parentStatus === 'streaming'
                   ? WAITING_PARENT
@@ -2554,11 +2614,6 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
               }
               onParentChange={changeDraftParent}
               onActivity={refollow}
-              onTogglePicking={() => {
-                setPickingKey(picking ? null : draft.key)
-                focusDraftInput()
-              }}
-              onAddText={addDraftText}
               onContextMode={setDraftContextMode}
               onContextRemove={removeDraftContext}
               onResizeStart={startDraftResize}
@@ -2571,10 +2626,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
             <CanvasNoteDraft
               key={noteDraft.key}
               rect={noteDraft.rect}
-              onCancel={() => {
-                setNoteDraft(null)
-                if (noteDraft.forDraft !== undefined) focusDraftInput()
-              }}
+              onCancel={() => setNoteDraft(null)}
               onCommit={commitNoteDraft}
             />
           ) : null}

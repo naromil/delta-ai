@@ -437,6 +437,26 @@ export function rectAgainst(
   return slots[side]
 }
 
+/** The size of a card's `+`, which sits centred on its side; mirrors `.canvas-continue`. */
+const CONTINUE_HANDLE_SIZE = 26
+
+/** Whether a card's `+` on this side would sit on something rather than in open space. */
+export function continueHandleBlocked(
+  card: CanvasCard,
+  side: CanvasSide,
+  cards: CanvasCard[]
+): boolean {
+  const half = CONTINUE_HANDLE_SIZE / 2
+  const { x, y, w, h } = card.rect
+  const handle = {
+    x: (side === 'right' ? x + w : x + w / 2) - half,
+    y: (side === 'right' ? y + h / 2 : y + h) - half,
+    w: CONTINUE_HANDLE_SIZE,
+    h: CONTINUE_HANDLE_SIZE
+  }
+  return topLevelRects(cards, new Set([card.id])).some((rect) => rectsOverlap(handle, rect))
+}
+
 /** A spot against one side of a card (its own size by default), or null when something is in the way. */
 export function adjacentSlot(
   card: CanvasCard,

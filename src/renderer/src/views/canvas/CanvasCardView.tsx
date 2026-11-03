@@ -23,7 +23,9 @@ export interface CanvasCardActions {
   onEdit: (id: string, question: string) => boolean
   onAskAnother: (expansionId: number, at: { x: number; y: number }) => void
   onDelete: (id: string) => void
+  /** The keyboard's way to the `+`; a pointer goes through `onContinueStart`. */
   onContinue: (id: string, side: CanvasSide) => void
+  onContinueStart: (e: React.PointerEvent, id: string, side: CanvasSide) => void
   onContextMenu: (e: React.MouseEvent) => void
   onOpenExpansion: (expansionId: number) => void
   /** Back along the session: an expansion's term, or the card a message continues. */
@@ -48,9 +50,9 @@ interface CanvasCardViewProps extends CanvasCardActions {
   /** Why the card has no answer, when `status` is `failed`. */
   failure?: string
   dragging: boolean
-  /** Whether a same-sized continuation fits against each side with a handle. */
-  roomRight: boolean
-  roomBottom: boolean
+  /** Whether each side's `+` has open space to sit in. */
+  handleRight: boolean
+  handleBottom: boolean
   invalid: boolean
   pulsing: boolean
   dimmed: boolean
@@ -150,9 +152,10 @@ function CardQuestionEditor({
 
 function CanvasCardView(props: CanvasCardViewProps): React.JSX.Element {
   const { card, rect, caption, question, answer, expansions, status, failure } = props
-  const { dragging, roomRight, roomBottom, invalid, pulsing, dimmed, selected, onPath } = props
+  const { dragging, handleRight, handleBottom, invalid, pulsing, dimmed, selected, onPath } = props
   const { continued, pulseTermId, onCardClick, onCardMenu, onToggleCollapse } = props
-  const { onDragStart, onResizeStart, onStop, onRegenerate, onEdit, onDelete, onContinue } = props
+  const { onDragStart, onResizeStart, onStop, onRegenerate, onEdit, onDelete } = props
+  const { onContinue, onContinueStart } = props
   const { onAskAnother, onContextMenu, onOpenExpansion, onGoToSource, onCardKeyDown } = props
   const [editing, setEditing] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -465,24 +468,30 @@ function CanvasCardView(props: CanvasCardViewProps): React.JSX.Element {
           {label}
         </div>
       </div>
-      {canContinue && roomRight ? (
+      {canContinue && handleRight ? (
         <button
           type="button"
           className="canvas-continue canvas-continue--right"
           aria-label="Continue on the right (Shift+Enter)"
-          title="Continue this session here (Shift+Enter)"
-          onClick={() => onContinue(card.id, 'right')}
+          title="Click to continue here (Shift+Enter). Drag to place it, or onto a new message to link."
+          onPointerDown={(e) => onContinueStart(e, card.id, 'right')}
+          onClick={(e) => {
+            if (e.detail === 0) onContinue(card.id, 'right')
+          }}
         >
           +
         </button>
       ) : null}
-      {canContinue && roomBottom ? (
+      {canContinue && handleBottom ? (
         <button
           type="button"
           className="canvas-continue canvas-continue--bottom"
           aria-label="Reply below (Enter)"
-          title="Continue this session here (Enter)"
-          onClick={() => onContinue(card.id, 'bottom')}
+          title="Click to continue here (Enter). Drag to place it, or onto a new message to link."
+          onPointerDown={(e) => onContinueStart(e, card.id, 'bottom')}
+          onClick={(e) => {
+            if (e.detail === 0) onContinue(card.id, 'bottom')
+          }}
         >
           +
         </button>

@@ -7,6 +7,7 @@ import type {
 } from '../../src/shared/canvas'
 import {
   adjacentSlot,
+  continueHandleBlocked,
   canvasContinuations,
   cascadeCardIds,
   clampRectInside,
@@ -218,6 +219,24 @@ describe('sessions', () => {
   it('finds a free spot against a side, or none', () => {
     expect(adjacentSlot(root, 'bottom', cards)).toEqual(rect(0, 100))
     expect(adjacentSlot(root, 'right', cards)).toBeNull()
+  })
+})
+
+describe("a card's + handle", () => {
+  const at = (x: number, y: number): CanvasRect => ({ x, y, w: 400, h: 100 })
+
+  it('shows when a neighbour leaves too little room for a continuation', () => {
+    const root = message('a', 1, at(0, 0))
+    const near = message('b', 2, at(420, 0))
+    expect(adjacentSlot(root, 'right', [root, near])).toBeNull()
+    expect(continueHandleBlocked(root, 'right', [root, near])).toBe(false)
+  })
+
+  it('hides where a card touching that side would sit under it', () => {
+    const root = message('a', 1, at(0, 0))
+    const below = message('b', 2, at(0, 100))
+    expect(continueHandleBlocked(root, 'bottom', [root, below])).toBe(true)
+    expect(continueHandleBlocked(root, 'right', [root, below])).toBe(false)
   })
 })
 

@@ -420,11 +420,14 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   context budget never trims the newest message. Expansions on the branch receive it too. Links
   added after an answer do not change that answer until it is regenerated.
 - **The composer attaches context before anything exists.** `Draft.context` holds pending links;
-  `ask` turns them into real ones. "Link" sets `pickingKey`, and while it matches the draft
-  `handlePickPress` takes presses in the capture phase, before a card's own handlers, so any click
-  on a card toggles it. "Text" opens a `CanvasNoteDraft` with `forDraft`, so a written text box is an
-  ordinary note, undoable and reusable, linked on commit. Links further up the branch show as
+  `ask` turns them into real ones. Dragging a card, a note or a card's `+` onto the draft links it
+  (`overDraft`, `linkToDraft`), and everything selected goes along; a dragged card then returns to
+  where it stood. A text box is an ordinary note dragged there. Links further up the branch show as
   inherited chips. A draft cannot send while a linked answer is streaming.
+- **A `+` is a click or a drag.** It claims the press (`extend` gesture), so its `onClick` is only the
+  keyboard's. A click continues on that side. Let go in open space and an `unheld` draw follows the
+  pointer from there until the next click (`handleSizingPress` takes that press before a card's own
+  handlers), and the draft continues that card wherever it stands; no travel gives the default size.
 - **A draft resizes from the corner away from its parent** (`draftGrowth`, `resizeDraftRect`), by
   drag or Alt+arrows. Growth stops at what stands in the way, since a draft has nothing to push and
   no card has moved yet. `estimateWords` follows, so this is how the answer's length is chosen.
@@ -481,7 +484,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   mark pointing from the earlier card to the later one: on the boundary they share (`seam`) when they
   touch, otherwise a link. Touching alone joins cards but says nothing about history, so a boundary
   with no mark is two cards merely placed together, and a card joined to its parent only through a
-  third card still gets a link. A side with no room for a same-sized continuation shows no `+` handle.
+  third card still gets a link. A `+` shows wherever it has open space to sit (`continueHandleBlocked`), since a drag can place the next message even when a click has no room beside the card.
 - **Canvas is keyboard-drivable.** Cards are focusable: arrows move to `nearestCardInDirection`,
   Enter/Shift+Enter continue below/right, B goes back (`sourceCardId`; an expansion returns to its
   term, flashed and scrolled into its card), E edits, Delete deletes, PgUp/PgDn scroll. With no card

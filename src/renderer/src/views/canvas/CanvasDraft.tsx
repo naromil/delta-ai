@@ -31,15 +31,13 @@ interface CanvasDraftProps {
   /** Roughly how much the links send, and whether some of it had to be cut. */
   contextTokens: number
   contextClipped: boolean
-  /** A click on a card links it instead of selecting it. */
-  picking: boolean
+  /** Something held over it would link if let go. */
+  linkTarget: boolean
   /** Why it cannot be sent yet (the answer it continues is still being written), or null. */
   waiting: string | null
   onParentChange: (parentId: string | undefined) => void
   /** Typing in a draft that is off screen brings it back. */
   onActivity: () => void
-  onTogglePicking: () => void
-  onAddText: () => void
   onContextMode: (id: string, context: CanvasLinkContext) => void
   onContextRemove: (id: string) => void
   onResizeStart: (e: React.PointerEvent) => void
@@ -114,12 +112,10 @@ function CanvasDraft({
   context,
   contextTokens,
   contextClipped,
-  picking,
+  linkTarget,
   waiting,
   onParentChange,
   onActivity,
-  onTogglePicking,
-  onAddText,
   onContextMode,
   onContextRemove,
   onResizeStart,
@@ -145,8 +141,7 @@ function CanvasDraft({
     if (e.key === 'Escape') {
       e.preventDefault()
       e.stopPropagation()
-      if (picking) onTogglePicking()
-      else onCancel()
+      onCancel()
     } else if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault()
       submit()
@@ -162,7 +157,9 @@ function CanvasDraft({
 
   return (
     <article
-      className={`canvas-card canvas-card--draft${resizing ? ' is-resizing' : ''}`}
+      className={`canvas-card canvas-card--draft${resizing ? ' is-resizing' : ''}${
+        linkTarget ? ' is-link-target' : ''
+      }`}
       data-canvas-draft=""
       style={{ transform: `translate(${rect.x}px, ${rect.y}px)`, width: rect.w, height: rect.h }}
     >
@@ -240,24 +237,9 @@ function CanvasDraft({
           </div>
         ) : null}
         <div className="canvas-draft-actions">
-          <button
-            type="button"
-            className={`btn btn--sm canvas-draft-tool${picking ? ' is-active' : ''}`}
-            aria-pressed={picking}
-            title="Choose cards on the canvas to send as context, from any branch"
-            onClick={onTogglePicking}
-          >
-            {picking ? 'Done' : 'Link'}
-          </button>
-          <button
-            type="button"
-            className="btn btn--sm canvas-draft-tool"
-            title="Write a text box and send it with this branch"
-            onClick={onAddText}
-          >
-            Text
-          </button>
-          <span className="canvas-draft-actions-spacer" />
+          <span className="canvas-draft-hint">
+            {linkTarget ? 'Drop to link' : 'Drag a card or note here to link it'}
+          </span>
           {waiting ? (
             <span className="canvas-draft-waiting" role="status">
               {waiting}
