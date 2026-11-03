@@ -485,7 +485,7 @@ user's own text, holding no turn). The layout also holds frames and connections.
   follow and anything else in the way is pushed down.
 - **Regenerate** uses the card's current rectangle and removes what depended on the old answer.
 - **Tools** are Select (the default), Hand, Answer, Note, Connect and Frame. Select picks with a click,
-  Shift+click or a marquee from empty space; dragging moves the whole selection, joined cards included.
+  Shift+click or a marquee from empty space; dragging moves just the selection, and Shift+drag brings everything touching it.
   A right drag pans under any tool, and a plain right click opens the menu for what is under it.
 - **Frames** group by geometry: what stands inside when a frame moves goes with it. Nothing is stored
   about membership, and removing a frame keeps its cards.

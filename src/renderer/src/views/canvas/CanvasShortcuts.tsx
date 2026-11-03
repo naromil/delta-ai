@@ -40,6 +40,7 @@ const SHORTCUTS: readonly ShortcutGroup[] = [
       { keys: ['.'], what: 'Collapse to the title, or expand' },
       { keys: ['Delete'], what: 'Delete' },
       { keys: ['Ctrl', 'Z'], what: 'Undo; add Shift to redo' },
+      { keys: ['Shift', 'Drag'], what: 'Move a card with everything touching it' },
       { keys: ['Alt', 'Drag'], what: 'Pull a card and its attached children away from the rest' }
     ]
   },

@@ -138,6 +138,17 @@ describe('what a selection carries when dragged', () => {
     expect([...moving.cards].sort()).toEqual(['a', 'b'])
   })
 
+  it('moves only the chosen card by default, with what is drawn over its text', () => {
+    const cards = [
+      message('a', 1, rect(0, 0)),
+      message('b', 3, rect(100, 0), 'a'),
+      inset('over', 'a', rect(10, 10, 40, 40), 5),
+      { ...inset('touching', 'a', rect(0, 100)), inset: false }
+    ]
+    const moving = movingForSelection({ cards, frames: [] }, new Set(['a']), 'detached')
+    expect([...moving.cards].sort()).toEqual(['a', 'over'])
+  })
+
   it('pulls a card off its parent with its attached descendants only', () => {
     const cards = [
       message('parent', 1, rect(0, 0)),
@@ -151,7 +162,7 @@ describe('what a selection carries when dragged', () => {
       message('beyondLink', 17, rect(1000, 0), 'linkedChild'),
       message('neighbour', 19, rect(100, -100))
     ]
-    const moving = movingForSelection({ cards, frames: [] }, new Set(['pulled']), true)
+    const moving = movingForSelection({ cards, frames: [] }, new Set(['pulled']), 'pulled')
     expect([...moving.cards].sort()).toEqual(
       ['child', 'grandchild', 'over', 'pulled', 'touching'].sort()
     )
@@ -163,7 +174,7 @@ describe('what a selection carries when dragged', () => {
       message('between', 3, rect(100, 0)),
       message('child', 5, rect(200, 0), 'pulled')
     ]
-    const moving = movingForSelection({ cards, frames: [] }, new Set(['pulled']), true)
+    const moving = movingForSelection({ cards, frames: [] }, new Set(['pulled']), 'pulled')
     expect([...moving.cards]).toEqual(['pulled'])
   })
 

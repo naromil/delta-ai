@@ -15,6 +15,7 @@ import {
   containsRect,
   hiddenInsetIds,
   isTopLevel,
+  detachedCardIds,
   movingCardIds,
   pulledOutCardIds,
   rectsOverlap,
@@ -65,10 +66,19 @@ function framesInside(frames: CanvasFrame[], outer: CanvasFrame): CanvasFrame[] 
  * descendants, leaving its parent, its neighbours and any child reached by a link. An inset card selected without its host stays out of a group,
  * as it could not be carried off its host's text.
  */
+export type CanvasCarrying = 'detached' | 'joined' | 'pulled'
+
+const CARRYING: Readonly<Record<CanvasCarrying, (cards: CanvasCard[], id: string) => Set<string>>> =
+  {
+    detached: detachedCardIds,
+    joined: movingCardIds,
+    pulled: pulledOutCardIds
+  }
+
 export function movingForSelection(
   items: CanvasItems,
   selected: ReadonlySet<string>,
-  pulledOut = false
+  carrying: CanvasCarrying = 'joined'
 ): CanvasMoving {
   const frames = new Set<string>()
   const seeds = new Set(
@@ -90,7 +100,7 @@ export function movingForSelection(
     if (card?.kind === 'expansion' && card.inset && seeds.size > 1 && !seeds.has(card.hostId)) {
       continue
     }
-    const moving = pulledOut ? pulledOutCardIds(items.cards, id) : movingCardIds(items.cards, id)
+    const moving = CARRYING[carrying](items.cards, id)
     for (const movingId of moving) cards.add(movingId)
   }
   return { cards, frames }

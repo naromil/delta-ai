@@ -195,7 +195,11 @@ function CanvasLinks({
   }, [cards, surfaceRef])
 
   const rectOf = new Map(cards.map((card) => [card.id, card.rect]))
+  const continuations = canvasContinuations(cards)
+  const sessionLinks = continuations.filter((item) => item.kind === 'link')
+  const seams = continuations.filter((item) => item.kind === 'seam')
   const termLinks = cards.filter(isLinked).flatMap((card) => {
+    if (seams.some((seam) => seam.id === card.id)) return []
     const host = cards.find((other) => other.id === card.hostId)
     if (!host) return []
     const raw = offsets[card.id] ?? { x: host.rect.w / 2, y: host.rect.h / 2 }
@@ -203,9 +207,6 @@ function CanvasLinks({
     const from = clampPointInside({ x: host.rect.x + raw.x, y: host.rect.y + raw.y }, host.rect)
     return [{ id: card.id, from, d: linkPath(from, card.rect) }]
   })
-  const continuations = canvasContinuations(cards)
-  const sessionLinks = continuations.filter((item) => item.kind === 'link')
-  const seams = continuations.filter((item) => item.kind === 'seam')
   const connectors = links.flatMap((link) => {
     const from = rectOf.get(link.from)
     const to = rectOf.get(link.to)

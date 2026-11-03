@@ -593,11 +593,25 @@ export function pulledOutCardIds(cards: CanvasCard[], id: string): Set<string> {
   return pulled
 }
 
+/** What a plain drag moves: the card and whatever is drawn over its text. */
+export function detachedCardIds(cards: CanvasCard[], id: string): Set<string> {
+  const moving = new Set<string>()
+  const visit = (cardId: string): void => {
+    if (moving.has(cardId) || !cardById(cards, cardId)) return
+    moving.add(cardId)
+    for (const other of cards) {
+      if (other.kind === 'expansion' && other.inset && other.hostId === cardId) visit(other.id)
+    }
+  }
+  visit(id)
+  return moving
+}
+
 /**
- * The cards that travel with `id` when it is dragged: everything touching it, so
- * adjacent rectangles move as one, and whatever is drawn over their text. Only touching
- * counts, so a card pulled out of its session stays out while its history still follows
- * `parentId`. A distant expansion stays and its link follows.
+ * What a Shift+drag moves: everything touching the card, so adjacent rectangles move as
+ * one, and whatever is drawn over their text. Only touching counts, so a card pulled out
+ * of its session stays out while its history still follows `parentId`. A distant
+ * expansion stays and its link follows.
  */
 export function movingCardIds(cards: CanvasCard[], id: string): Set<string> {
   const moving = new Set<string>()
@@ -1098,6 +1112,12 @@ function linkBetween(id: string, a: CanvasRect, b: CanvasRect): CanvasContinuati
 /** One entry per message that continues another card. */
 export function canvasContinuations(cards: CanvasCard[]): CanvasContinuation[] {
   return cards.flatMap((card) => {
+    if (card.kind === 'expansion') {
+      // Apart from its host, an expansion's line runs to its term instead.
+      const host = card.inset ? undefined : cardById(cards, card.hostId)
+      const side = host && isTopLevel(host) ? sharedSide(host.rect, card.rect) : undefined
+      return host && side ? [seamBetween(card.id, host.rect, card.rect, side)] : []
+    }
     if (card.kind !== 'message') return []
     const parent = cardById(cards, card.parentId)
     if (!parent) return []

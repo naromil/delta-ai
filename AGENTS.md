@@ -450,8 +450,11 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   typography in `canvas.css`; change them together. `withCanvasFit` appends the size to the newest
   user message at request time only, so turns never store it, and the note overrides the system
   prompt's concision and expand's four-sentence limit.
-- **Touching cards stay joined, whatever session they belong to.** Dragging moves everything joined by
-  a shared side (`movingCardIds`). Resizing (`resizeCard`) carries the cards beyond the moved edge both
+- **A drag moves what was chosen; touching cards are joined when resizing or with Shift.** A plain drag
+  or nudge moves the selection and anything inset on it (`detachedCardIds`). Shift+drag moves everything
+  joined by a shared side (`movingCardIds`), and align, tidy and duplicate still treat joined cards as one
+  block. Since Shift also adds to a selection, a Shift press only toggles once it is let go without
+  travelling (`shiftPress`). Resizing (`resizeCard`) carries the cards beyond the moved edge both
   ways, plus anything joined only through them (`edgeFollowers`); a card also joined by another route
   keeps its place. Growing pushes whatever else is in the way; shrinking stops where a follower can come
   back no further (`roomBehind`), so a gesture is limited rather than refused.
@@ -468,8 +471,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   `snapEdges`) continues it; anywhere else starts a new session. A rectangle touching several cards
   continues one only (`continuationCandidates`, newest first) and sends only that history; the
   drawing highlights it (`is-continued`) and the draft's "Continues" picker can switch to another
-  candidate or to a new session. Dragging moves everything touching the card
-  (`movingCardIds`), and Alt+drag pulls a card off its parent and neighbours, bringing the descendants attached
+  candidate or to a new session. Alt+drag pulls a card off its parent and neighbours, bringing the descendants attached
   to it (`pulledOutCardIds`; one reached by a link stays) and leaving its session history (`parentId`) intact; anything standing on the plane may not overlap, and a
   refused drop turns everything that would have moved red (`refusedIds`) and springs back through the
   cards' own transform transition.
@@ -480,7 +482,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   `followRef` keeps the draft and its parent on screen (or just the draft, under the answer's newest
   lines, when both do not fit); any manual pan, wheel or zoom lets go, typing in the draft or "Back
   to your question" re-pins. A streaming card body sticks to its newest line (`nextPinned`).
-- **A session always shows between its cards.** `canvasContinuations` gives each continuation one
+- **A session always shows between its cards.** `canvasContinuations` gives each continuation, and each expansion touching its host, one
   mark pointing from the earlier card to the later one: on the boundary they share (`seam`) when they
   touch, otherwise a link. Touching alone joins cards but says nothing about history, so a boundary
   with no mark is two cards merely placed together, and a card joined to its parent only through a

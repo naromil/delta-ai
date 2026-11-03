@@ -155,9 +155,10 @@ type Gesture =
       frameIds: Set<string>
       /** Snaps the moving bounds rather than one card, since several things were chosen. */
       group: boolean
-      /** Alt+drag: only this card moves, and it snaps to nothing. */
-      /** Without Shift, a press that never moves selects just this item. */
+      /** A press that never moves selects just this item. */
       plainPress: boolean
+      /** Shift+drag carries what is joined, so Shift+click only decides once it is let go. */
+      shiftPress: boolean
       start: CanvasPoint
       pointer: CanvasPoint
     }
@@ -958,7 +959,9 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       }
       const start = pointerInWorld(e)
       const items = { cards: cardsRef.current, frames: framesRef.current }
-      const additive = e.shiftKey || e.ctrlKey || e.metaKey
+      const additive = e.ctrlKey || e.metaKey
+      const shiftPress = e.shiftKey && !additive
+      const carrying = e.altKey ? 'pulled' : e.shiftKey ? 'joined' : 'detached'
       let chosen = selectedRef.current
       if (additive) {
         const next = new Set(chosen)
@@ -968,14 +971,14 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
         if (!next.has(id)) return
       } else if (!chosen.has(id)) {
         chosen = new Set([id])
-        select(chosen)
+        if (!shiftPress) select(chosen)
       }
-      let moving = movingForSelection(items, chosen, e.altKey)
+      let moving = movingForSelection(items, chosen, carrying)
       // An inset card chosen among others stays put, but one being dragged means itself.
       if (framesRef.current.every((frame) => frame.id !== id) && !moving.cards.has(id)) {
         chosen = new Set([id])
-        select(chosen)
-        moving = movingForSelection(items, chosen, e.altKey)
+        if (!shiftPress) select(chosen)
+        moving = movingForSelection(items, chosen, carrying)
       }
       claimPress(e)
       currentIdRef.current = id
@@ -985,7 +988,8 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
         ids: moving.cards,
         frameIds: moving.frames,
         group: chosen.size > 1 || moving.frames.size > 0,
-        plainPress: !additive,
+        plainPress: !additive && !shiftPress,
+        shiftPress,
         start,
         pointer: start
       })
@@ -1603,16 +1607,23 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
         if (gesture.plainPress) {
           select([gesture.id])
           focusCardElement(gesture.id)
+        } else if (gesture.shiftPress) {
+          const next = new Set(selectedIds)
+          if (!next.delete(gesture.id)) next.add(gesture.id)
+          select(next)
         }
         return
       }
       if (overDraft) {
         // Everything chosen goes along, and the cards return to where they stood.
         linkToDraft(
-          cards.map((card) => card.id).filter((id) => id === gesture.id || selectedIds.has(id))
+          selectedIds.has(gesture.id)
+            ? cards.map((card) => card.id).filter((id) => selectedIds.has(id))
+            : [gesture.id]
         )
         return
       }
+      if (gesture.shiftPress && !selectedIds.has(gesture.id)) select([gesture.id])
       if (!dragResult?.ok) {
         showNotice(REFUSE_MOVE)
         return
@@ -1748,7 +1759,11 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     (side: CanvasSide, far: boolean): void => {
       const chosen = selectedRef.current
       const all = cardsRef.current
-      const moving = movingForSelection({ cards: all, frames: framesRef.current }, chosen)
+      const moving = movingForSelection(
+        { cards: all, frames: framesRef.current },
+        chosen,
+        'detached'
+      )
       if (moving.cards.size === 0 && moving.frames.size === 0) return
       const step = far ? NUDGE_LARGE : NUDGE
       const dx = side === 'left' ? -step : side === 'right' ? step : 0

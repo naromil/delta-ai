@@ -797,6 +797,28 @@ describe('navigation', () => {
 })
 
 describe('canvasContinuations', () => {
+  it('marks an expansion touching its host as a branch, and leaves a distant one its term link', () => {
+    const host = message('a', 1, rect(0, 0))
+    const expansion = (id: string, at: CanvasRect, isInset = false): CanvasCard => ({
+      id,
+      kind: 'expansion',
+      hostId: 'a',
+      turnId: 1,
+      expansionId: 1,
+      inset: isInset,
+      rect: at
+    })
+    const marks = canvasContinuations([
+      host,
+      expansion('touching', { ...rect(0, 0), x: host.rect.x + host.rect.w }),
+      expansion('far', { ...rect(0, 0), x: 5000 }),
+      expansion('over', { ...host.rect, x: 10, y: 10, w: 20, h: 20 }, true)
+    ])
+    expect(marks.map((mark) => [mark.id, mark.kind, mark.side])).toEqual([
+      ['touching', 'seam', 'right']
+    ])
+  })
+
   it('marks the boundary when a card touches the one it continues', () => {
     const [mark] = canvasContinuations([
       message('a', 1, rect(0, 0)),
@@ -863,13 +885,16 @@ describe('canvasContinuations', () => {
     ).toEqual([])
   })
 
-  it('counts a continuation of a standing expansion, and not the expansion itself', () => {
+  it('counts a touching expansion and its continuation as one mark each', () => {
     const marks = canvasContinuations([
       message('a', 1, rect(0, 0)),
       expansion('e', 1, 2, 'a', false, rect(0, 100)),
       message('b', 3, rect(100, 100), 'e')
     ])
-    expect(marks.map((mark) => [mark.kind, mark.id])).toEqual([['seam', 'b']])
+    expect(marks.map((mark) => [mark.kind, mark.id])).toEqual([
+      ['seam', 'e'],
+      ['seam', 'b']
+    ])
   })
 
   it('links from an inset parent, which has no boundary of its own on the plane', () => {
