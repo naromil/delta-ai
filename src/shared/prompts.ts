@@ -67,6 +67,7 @@ export const KB_MEMORY_SYSTEM_PROMPT = [
   'You receive a summary of one conversation. Your goal is for the base to hold everything worth knowing about this person, so mine the conversation aggressively. When in doubt, save it.',
   'Capture background and identity, goals and plans, projects and work, people they mention, tools and technologies, opinions and tastes, recurring problems, what they already know, what they are learning, what confused them, and how they like things explained.',
   'Infer as well as transcribe: the questions someone asks and the terms they had to look up reveal their level of knowledge. Mark inferences as inferred, so they can be told apart from what the user stated.',
+  'Under "Questions", each "Assistant" line is the answer to the "User" line above it, cut short if long. When the questions are split into threads, each thread is a separate line of conversation that saw only its own history and, if it says "continues Thread N", the history of that thread. Do not read a thread as a reaction to any thread it does not continue, though the same interest showing up in several threads is worth noticing.',
   'Each entry under "Expanded terms" is a passage of an answer that the user selected and asked to have expanded, which is one of the strongest signals you get: it shows what they did not know or wanted to go deeper on. "User asked" is the question they typed about that passage, in their own words, and shows what they were trying to understand. Record what these reveal, and notice when several point at the same gap or interest. The Term and Answer were written by the assistant, so they are not statements by the user.',
   'A conversation comes back to you when it has grown since an earlier pass, so check what the base already holds and add only what is new.',
   'Keep specifics such as names, versions, numbers and dates, and date facts that may change, using the date in the summary.',
@@ -125,6 +126,58 @@ export function buildExpandMemoryPrompt(autoLoaded: AutoLoadedMemory[]): string 
 
 export function buildScreenContextMessage(context: string): string {
   return `The following context was extracted from my screen:\n\n"${context}"`
+}
+
+/* ---- Canvas ---- */
+
+/** A canvas answer fills a rectangle the user drew, so its size replaces every other length rule. */
+export function buildCanvasFitNote(words: number): string {
+  return [
+    `Your answer appears inside a fixed rectangle that holds about ${words} words (about ${words * 3} characters in Chinese, Japanese or Korean).`,
+    'Write close to that length: use the space, and do not run past it.',
+    'This replaces any other instruction about length. Do not mention the rectangle.'
+  ].join(' ')
+}
+
+export interface CanvasSourceExcerpt {
+  title: string
+  text: string
+}
+
+/** Cards the user selected and asked about. They are material, not conversation history. */
+export function buildCanvasSourcesNote(sources: CanvasSourceExcerpt[]): string {
+  const blocks = sources.map(({ title, text }, index) => {
+    const heading = title.trim() === '' ? `Card ${index + 1}` : `Card ${index + 1}: ${title.trim()}`
+    return `<card>\n${heading}\n\n${text.trim()}\n</card>`
+  })
+  return [
+    'The question below is about these cards, which the user selected on their canvas:',
+    ...blocks
+  ].join('\n\n')
+}
+
+export interface CanvasContextExcerpt {
+  /** A note is the user's own text, a card one question and answer, a branch a whole thread. */
+  kind: 'note' | 'card' | 'branch'
+  title: string
+  text: string
+  /** What the user wrote on the link: how this material relates. */
+  label?: string
+}
+
+/** Material the user linked into a branch. It stays available for the rest of that branch. */
+export function buildCanvasContextNote(items: CanvasContextExcerpt[]): string {
+  const blocks = items.map(({ kind, title, text, label }) => {
+    const lines = [
+      ...(title.trim() === '' ? [] : [`Title: ${title.trim()}`]),
+      ...(label ? [`How the user relates it: ${label}`] : [])
+    ]
+    return `<${kind}>\n${[...lines, text.trim()].join('\n\n')}\n</${kind}>`
+  })
+  return [
+    'The user linked this material from elsewhere on their canvas into this conversation: a <note> is their own text, a <card> one question and answer, and a <branch> a separate conversation. It is not part of this conversation, so do not assume it was said here. Use it where it is relevant.',
+    ...blocks
+  ].join('\n\n')
 }
 
 /* ---- Expand Instructions ---- */

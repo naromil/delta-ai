@@ -4,6 +4,7 @@
 @import 'settings.css';
 @import 'markdown.css';
 @import 'expand.css';
+@import 'canvas.css';
 
 :root {
   color-scheme: dark;
@@ -42,6 +43,14 @@
   --tag-blue: #8fc2ff;
   --tag-green: #86d9a0;
   --tag-purple: #d3aefb;
+
+  /* Canvas colour labels */
+  --canvas-red: #d98a80;
+  --canvas-amber: #d9b36c;
+  --canvas-green: #8fbf8c;
+  --canvas-teal: #7fc0bb;
+  --canvas-blue: #88aedb;
+  --canvas-violet: #b49ae0;
 
   /* Syntax highlighting */
   --code-comment: rgba(228, 230, 240, 0.5);
@@ -159,6 +168,13 @@
     --tag-blue: #25558f;
     --tag-green: #256339;
     --tag-purple: #633a9a;
+
+    --canvas-red: #b5564a;
+    --canvas-amber: #a67c23;
+    --canvas-green: #4d8350;
+    --canvas-teal: #3a817c;
+    --canvas-blue: #40709f;
+    --canvas-violet: #7557a8;
 
     --code-comment: rgba(38, 39, 52, 0.7);
     --code-keyword: #633a9a;

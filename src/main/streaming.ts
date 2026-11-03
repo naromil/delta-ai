@@ -64,7 +64,7 @@ export function isConversationRecord(value: unknown): value is ConversationRecor
     typeof value.title === 'string' &&
     typeof value.createdAt === 'string' &&
     typeof value.updatedAt === 'string' &&
-    (value.source === 'chat' || value.source === 'lookup') &&
+    (value.source === 'chat' || value.source === 'lookup' || value.source === 'canvas') &&
     isConversationState(value.state)
   )
 }

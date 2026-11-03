@@ -5,6 +5,7 @@ import { app } from 'electron'
 import type {
   ConversationRecord,
   ConversationMeta,
+  ConversationSource,
   ConversationSearchResult
 } from '../shared/conversation'
 import { migrateConversationRecord, toConversationMeta } from '../shared/conversation'
@@ -235,7 +236,7 @@ async function loadConversationMeta(id: string): Promise<ConversationMeta | null
   return toConversationMeta(record)
 }
 
-export async function listConversations(source?: 'chat' | 'lookup'): Promise<ConversationMeta[]> {
+export async function listConversations(source?: ConversationSource): Promise<ConversationMeta[]> {
   const ids = await listConversationIds()
   const metas = await Promise.all(ids.map((id) => loadConversationMeta(id)))
   const results: ConversationMeta[] = []

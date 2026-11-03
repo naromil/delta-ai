@@ -1,0 +1,2110 @@
+/* ---- Canvas: an infinite plane of answer rectangles ---- */
+
+.canvas-view {
+  --canvas-ease: cubic-bezier(0.2, 0, 0, 1);
+  --canvas-ease-out: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --canvas-settle: 320ms;
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.canvas-surface {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  cursor: default;
+  touch-action: none;
+  background-image: radial-gradient(circle, var(--border-strong) 1px, transparent 1.2px);
+}
+
+.canvas-surface.is-drawing {
+  cursor: crosshair;
+}
+
+.canvas-surface.is-panning {
+  cursor: grab;
+}
+
+.canvas-surface.is-grabbing {
+  cursor: grabbing;
+}
+
+/* In these modes the plane takes the pointer, so nothing inside can be clicked. */
+.canvas-surface.is-drawing .canvas-world,
+.canvas-surface.is-panning .canvas-world {
+  pointer-events: none;
+}
+
+.canvas-world {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  transform-origin: 0 0;
+}
+
+.canvas-world.is-animating {
+  will-change: transform;
+  transition: transform var(--canvas-settle) var(--canvas-ease);
+}
+
+/* Scales the layer already drawn instead of redrawing all text each frame; it sharpens at rest. */
+.canvas-surface[data-moving] .canvas-world {
+  will-change: transform;
+}
+
+/* ---- Colour labels ---- */
+
+[data-color='red'] {
+  --tint: var(--canvas-red);
+}
+
+[data-color='amber'] {
+  --tint: var(--canvas-amber);
+}
+
+[data-color='green'] {
+  --tint: var(--canvas-green);
+}
+
+[data-color='teal'] {
+  --tint: var(--canvas-teal);
+}
+
+[data-color='blue'] {
+  --tint: var(--canvas-blue);
+}
+
+[data-color='violet'] {
+  --tint: var(--canvas-violet);
+}
+
+/* ---- Cards ---- */
+
+.canvas-card {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  cursor: default;
+  transition:
+    transform var(--canvas-settle) var(--canvas-ease),
+    width var(--canvas-settle) var(--canvas-ease),
+    height var(--canvas-settle) var(--canvas-ease),
+    opacity var(--dur-2) var(--ease-out);
+}
+
+.canvas-card.is-inset {
+  z-index: 3;
+}
+
+.canvas-card.is-dragging {
+  z-index: 5;
+  transition: opacity var(--dur-2) var(--ease-out);
+}
+
+.canvas-card.is-dimmed {
+  opacity: 0.4;
+}
+
+.canvas-card-surface {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--surface-1);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-shadow: var(--shadow-1);
+  animation: canvas-card-in 380ms var(--canvas-ease-out) both;
+  transition:
+    box-shadow var(--canvas-settle) var(--canvas-ease),
+    border-color var(--dur-2) var(--ease-out),
+    transform var(--canvas-settle) var(--canvas-ease);
+}
+
+/* The ink of a card landing on the plane. */
+.canvas-card-surface::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at center, var(--accent-soft), transparent 70%);
+  opacity: 0;
+  pointer-events: none;
+  animation: canvas-ink 620ms var(--canvas-ease) both;
+}
+
+.canvas-card:hover .canvas-card-surface {
+  box-shadow: var(--shadow-2);
+}
+
+.canvas-card[data-color] {
+  --card-header: color-mix(in srgb, var(--tint) 26%, var(--surface-2));
+}
+
+.canvas-card[data-color] .canvas-card-surface {
+  border-color: color-mix(in srgb, var(--tint) 55%, var(--border-strong));
+}
+
+.canvas-card.is-inset .canvas-card-surface {
+  background: var(--surface-2);
+  border-color: var(--accent);
+  box-shadow: var(--shadow-2);
+}
+
+.canvas-card.is-dragging .canvas-card-surface {
+  box-shadow: var(--shadow-3);
+}
+
+.canvas-card.is-invalid .canvas-card-surface {
+  border-color: var(--error);
+}
+
+.canvas-card.is-pulsing .canvas-card-surface {
+  animation: canvas-pulse 860ms var(--canvas-ease);
+}
+
+.canvas-card:focus {
+  outline: none;
+}
+
+.canvas-card:focus-visible .canvas-card-surface {
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring-inset), var(--shadow-2);
+}
+
+/* Measured against the zoom, so a selected card stands out as much zoomed far out. */
+.canvas-card.is-selected .canvas-card-surface {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 calc(2px / var(--canvas-zoom)) var(--accent),
+    var(--shadow-2);
+}
+
+/* Whose history the selected card sends. */
+.canvas-card.is-on-path .canvas-card-surface {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 calc(2px / var(--canvas-zoom)) var(--accent-ring),
+    var(--shadow-1);
+}
+
+/* What a rectangle being drawn, or a waiting draft, continues. */
+.canvas-card.is-continued .canvas-card-surface {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 3px var(--accent-ring),
+    var(--shadow-2);
+}
+
+.canvas-card-header {
+  flex: none;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  /* The padding and line height are in estimateWords (shared/canvas.ts). */
+  padding: 10px 12px 10px 16px;
+  font-size: 12.5px;
+  line-height: 18px;
+  color: var(--text-2);
+  background: var(--card-header, var(--surface-2));
+  border-bottom: 1px solid var(--border);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.canvas-card.is-dragging .canvas-card-header {
+  cursor: grabbing;
+}
+
+.canvas-card-caption {
+  flex: 1;
+  min-width: 0;
+  display: -webkit-box;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.canvas-card-kind {
+  margin-right: 6px;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Floats over the caption instead of taking its width, which estimateWords assumes. */
+.canvas-card-actions {
+  position: absolute;
+  top: 7px;
+  right: 8px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--card-header, var(--surface-2));
+  border-radius: var(--radius-sm);
+  opacity: 0;
+  transition: opacity var(--dur-1) var(--ease-out);
+}
+
+/* The caption fades into the buttons instead of being cut off mid-word. */
+.canvas-card-actions::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 100%;
+  bottom: 0;
+  width: 20px;
+  background: linear-gradient(to right, transparent, var(--card-header, var(--surface-2)));
+  pointer-events: none;
+}
+
+.canvas-card:hover .canvas-card-actions,
+.canvas-card:focus-visible .canvas-card-actions,
+.canvas-card.is-streaming .canvas-card-actions,
+.canvas-card.is-failed .canvas-card-actions,
+.canvas-card-actions:has(:focus-visible) {
+  opacity: 1;
+}
+
+.canvas-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  min-width: 24px;
+  padding: 0 6px;
+  font-size: 12px;
+  color: var(--text-2);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition:
+    background var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
+}
+
+.canvas-icon-btn:hover {
+  color: var(--text-1);
+  background: var(--surface-3);
+}
+
+.canvas-icon-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+.canvas-icon-btn--close {
+  font-size: 16px;
+}
+
+.canvas-card-progress {
+  flex: none;
+  position: relative;
+  height: 2px;
+  margin-top: -2px;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.canvas-card.is-streaming .canvas-card-progress::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 40%;
+  background: var(--accent);
+  animation: canvas-progress 1300ms var(--canvas-ease) infinite;
+}
+
+.canvas-card-body {
+  flex: 1;
+  min-height: 0;
+  /* The padding is in estimateWords (shared/canvas.ts). */
+  padding: 12px 8px 12px 16px;
+  overflow: auto;
+  /*
+   * Reserved, so a scrollbar never changes how the text wraps. Otherwise an answer fitted
+   * to its height can wrap one line longer under the scrollbar it had, and so keep it.
+   */
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+  cursor: text;
+  user-select: text;
+}
+
+.canvas-card-body .message-content {
+  padding: 0;
+  font-size: 14px;
+  line-height: 22px;
+  animation: canvas-text-in 260ms var(--ease-out) both;
+}
+
+.canvas-card-body .markdown-body {
+  font-size: 14px;
+  line-height: 22px;
+}
+
+.canvas-card-body .markdown-body > :first-child {
+  margin-top: 0;
+}
+
+.canvas-card-body .markdown-body > :last-child {
+  margin-bottom: 0;
+}
+
+.canvas-card-body .markdown-body p {
+  margin: 0 0 8px;
+}
+
+.canvas-card-body .markdown-body h1,
+.canvas-card-body .markdown-body h2,
+.canvas-card-body .markdown-body h3 {
+  margin: 10px 0 6px;
+  font-size: 15px;
+  line-height: 22px;
+}
+
+.canvas-term {
+  transition: background var(--dur-2) var(--ease-out);
+}
+
+.canvas-term.is-pulsing {
+  animation: canvas-term-pulse 900ms var(--canvas-ease);
+}
+
+.canvas-card-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  height: 100%;
+}
+
+.canvas-card-failure {
+  margin: 0;
+  color: var(--error);
+}
+
+.canvas-card-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  touch-action: none;
+  opacity: 0;
+  background: linear-gradient(
+    135deg,
+    transparent 55%,
+    var(--text-3) 55% 62%,
+    transparent 62% 74%,
+    var(--text-3) 74% 81%,
+    transparent 81%
+  );
+  transition: opacity var(--dur-1) var(--ease-out);
+}
+
+.canvas-card:hover .canvas-card-resize {
+  opacity: 1;
+}
+
+/* ---- Collapsed to its title ---- */
+
+.canvas-card.is-collapsed .canvas-card-header {
+  flex: 1;
+  align-items: center;
+  border-bottom: 0;
+}
+
+.canvas-card.is-collapsed .canvas-card-caption {
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
+}
+
+.canvas-card.is-collapsed .canvas-card-body,
+.canvas-card.is-collapsed .canvas-card-progress {
+  display: none;
+}
+
+/* ---- Far out, a card is its title, at a size that can still be read ---- */
+
+.canvas-card-lod {
+  display: none;
+}
+
+.canvas-surface[data-far] .canvas-card-lod {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: -webkit-box;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
+  line-clamp: 6;
+  padding: calc(8px / var(--canvas-zoom));
+  font-size: calc(12px / var(--canvas-zoom));
+  line-height: 1.3;
+  color: var(--text-1);
+  background: var(--card-header, var(--surface-2));
+  cursor: grab;
+  user-select: none;
+}
+
+.canvas-surface[data-far] .canvas-card--note .canvas-card-lod {
+  background: var(--note-paper);
+}
+
+/* Kept in layout, as a card finishing out here still measures its answer's height. */
+.canvas-surface[data-far] .canvas-card-header,
+.canvas-surface[data-far] .canvas-card-body,
+.canvas-surface[data-far] .canvas-note-body,
+.canvas-surface[data-far] .canvas-card-resize,
+.canvas-surface[data-far] .canvas-continue {
+  visibility: hidden;
+}
+
+.canvas-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.canvas-skeleton span {
+  height: 10px;
+  border-radius: 5px;
+  background: var(--surface-3);
+  animation: canvas-shimmer 1400ms ease-in-out infinite;
+}
+
+.canvas-skeleton span:nth-child(2) {
+  width: 88%;
+}
+
+.canvas-skeleton span:nth-child(3) {
+  width: 94%;
+}
+
+.canvas-skeleton span:nth-child(4) {
+  width: 60%;
+}
+
+/* ---- Continue handles, sitting on the shared side ---- */
+
+.canvas-continue {
+  position: absolute;
+  z-index: 2;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--accent-contrast);
+  background: var(--accent);
+  border: 0;
+  border-radius: 50%;
+  box-shadow: var(--shadow-2);
+  cursor: pointer;
+  opacity: 0;
+  transform: scale(0.6);
+  transition:
+    opacity var(--dur-2) var(--ease-out),
+    transform var(--dur-2) var(--canvas-ease);
+}
+
+.canvas-continue--right {
+  top: calc(50% - 13px);
+  right: -13px;
+}
+
+.canvas-continue--bottom {
+  left: calc(50% - 13px);
+  bottom: -13px;
+}
+
+.canvas-card:hover .canvas-continue,
+.canvas-card:focus-visible .canvas-continue,
+.canvas-continue:focus-visible {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.canvas-continue:hover {
+  transform: scale(1.12);
+}
+
+.canvas-card.is-dragging .canvas-continue {
+  opacity: 0;
+}
+
+/* ---- Notes: the user's own text ---- */
+
+.canvas-card--note {
+  --tint: var(--canvas-amber);
+  --note-paper: color-mix(in srgb, var(--tint) 16%, var(--surface-1));
+  --card-header: var(--note-paper);
+}
+
+.canvas-card--note .canvas-card-surface {
+  background: var(--note-paper);
+  border-color: color-mix(in srgb, var(--tint) 40%, var(--border-strong));
+}
+
+.canvas-note-body {
+  flex: 1;
+  min-height: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.canvas-card.is-dragging .canvas-note-body {
+  cursor: grabbing;
+}
+
+.canvas-note-body .message-content {
+  padding: 0;
+  font-size: 14px;
+  line-height: 21px;
+}
+
+.canvas-note-body .markdown-body {
+  font-size: 14px;
+  line-height: 21px;
+}
+
+.canvas-note-body .markdown-body p {
+  margin: 0 0 6px;
+}
+
+.canvas-note-body .markdown-body > :last-child {
+  margin-bottom: 0;
+}
+
+.canvas-note-empty {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-3);
+}
+
+.canvas-note-input {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 14px;
+  line-height: 21px;
+  color: var(--text-1);
+  background: transparent;
+  border: 0;
+  outline: none;
+  resize: none;
+}
+
+/* ---- Frames: titled regions under the cards ---- */
+
+.canvas-frame {
+  --tint: var(--text-3);
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 0;
+  background: color-mix(in srgb, var(--tint) 7%, transparent);
+  border: calc(1.5px / var(--canvas-zoom)) solid color-mix(in srgb, var(--tint) 45%, transparent);
+  border-radius: 10px;
+  pointer-events: none;
+  transition:
+    transform var(--canvas-settle) var(--canvas-ease),
+    width var(--canvas-settle) var(--canvas-ease),
+    height var(--canvas-settle) var(--canvas-ease),
+    opacity var(--dur-2) var(--ease-out),
+    border-color var(--dur-2) var(--ease-out);
+}
+
+.canvas-frame.is-dragging {
+  transition: opacity var(--dur-2) var(--ease-out);
+}
+
+.canvas-frame.is-dimmed {
+  opacity: 0.35;
+}
+
+.canvas-frame.is-selected {
+  border-color: var(--accent);
+}
+
+.canvas-frame.is-pulsing {
+  animation: canvas-frame-pulse 860ms var(--canvas-ease);
+}
+
+/* Stays one size on screen, so a frame can be found and grabbed from far out. */
+.canvas-frame-title {
+  position: absolute;
+  top: 0;
+  left: 0;
+  max-width: 480px;
+  padding-bottom: 4px;
+  pointer-events: auto;
+  transform: translateY(-100%) scale(calc(1 / var(--canvas-zoom)));
+  transform-origin: 0 100%;
+}
+
+.canvas-frame-handle {
+  display: block;
+  max-width: 100%;
+  padding: 2px 8px;
+  overflow: hidden;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 20px;
+  color: color-mix(in srgb, var(--tint) 65%, var(--text-1));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: grab;
+  touch-action: none;
+  transition: background var(--dur-1) var(--ease-out);
+}
+
+.canvas-frame-handle:hover,
+.canvas-frame.is-selected .canvas-frame-handle {
+  background: color-mix(in srgb, var(--tint) 20%, var(--surface-2));
+}
+
+.canvas-frame-handle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-inset);
+}
+
+.canvas-frame-input {
+  width: 220px;
+  height: 24px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+  background: var(--surface-2);
+  border: 0;
+  border-radius: 6px;
+  outline: none;
+  box-shadow: var(--focus-ring-inset);
+}
+
+.canvas-frame-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: calc(16px / var(--canvas-zoom));
+  height: calc(16px / var(--canvas-zoom));
+  cursor: nwse-resize;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.canvas-surface.is-drawing .canvas-frame-title,
+.canvas-surface.is-drawing .canvas-frame-resize,
+.canvas-surface.is-panning .canvas-frame-title,
+.canvas-surface.is-panning .canvas-frame-resize {
+  pointer-events: none;
+}
+
+/* ---- A rectangle waiting for its question ---- */
+
+.canvas-card--draft {
+  z-index: 4;
+}
+
+/*
+ * The rectangle decides the answer, not the room to compose it: on a small one the panel
+ * runs past the rectangle rather than squeezing the question away.
+ */
+.canvas-draft {
+  height: auto;
+  min-height: 100%;
+  padding: 10px 12px;
+  gap: 6px;
+  border-color: var(--accent);
+  box-shadow: var(--shadow-3);
+}
+
+.canvas-draft-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding-right: 8px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.canvas-draft-input {
+  flex: 1 0 52px;
+  min-height: 0;
+  width: 100%;
+  padding: 4px;
+  font: inherit;
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--text-1);
+  background: transparent;
+  border: 0;
+  outline: none;
+  resize: none;
+}
+
+.canvas-draft-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 0 8px;
+}
+
+.canvas-draft-hint {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.canvas-card--draft.is-link-target .canvas-draft {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.canvas-card--draft.is-link-target .canvas-draft-hint {
+  color: var(--accent);
+}
+
+/* A card held over a composer goes back when let go, so it should not hide the composer. */
+.canvas-surface.is-linking .canvas-card.is-dragging {
+  opacity: 0.5;
+}
+
+/* What the composer sends besides the question. */
+.canvas-draft-context {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 84px;
+  overflow-y: auto;
+}
+
+.canvas-draft-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  height: 22px;
+  padding: 0 2px 0 6px;
+  font-size: 12px;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+
+.canvas-draft-chip.is-inherited {
+  padding-right: 6px;
+  color: var(--text-3);
+  border-style: dashed;
+}
+
+.canvas-draft-chip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvas-draft-chip button {
+  flex: none;
+  padding: 0 4px;
+  font: inherit;
+  color: var(--text-3);
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+}
+
+.canvas-draft-chip button:hover,
+.canvas-draft-chip button:focus-visible {
+  color: var(--text-1);
+  background: var(--surface-3);
+  outline: none;
+}
+
+.canvas-draft-context-size {
+  align-self: center;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+/* The corner away from the parent the draft is kept against. */
+.canvas-card--draft .canvas-card-resize {
+  z-index: 1;
+  opacity: 0.7;
+}
+
+.canvas-card--draft .canvas-card-resize[data-side='left'] {
+  right: auto;
+  left: 0;
+  cursor: nesw-resize;
+  transform: scaleX(-1);
+}
+
+.canvas-card--draft .canvas-card-resize[data-side='top'] {
+  top: 0;
+  bottom: auto;
+  cursor: nesw-resize;
+  transform: scaleY(-1);
+}
+
+.canvas-card--draft.is-resizing {
+  transition: none;
+}
+
+.canvas-draft-session {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.canvas-draft-session select {
+  min-width: 0;
+  max-width: 220px;
+  height: 22px;
+  padding: 0 4px;
+  font: inherit;
+  color: var(--text-1);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  outline: none;
+}
+
+.canvas-draft-session select:focus-visible {
+  box-shadow: var(--focus-ring-inset);
+}
+
+.canvas-draft-waiting {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--text-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- Links, from a term to its expansion and from a card to its continuation ---- */
+
+.canvas-links {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.canvas-links--under {
+  z-index: 0;
+}
+
+.canvas-links--over {
+  z-index: 2;
+}
+
+.canvas-links--over .canvas-link-line {
+  stroke-opacity: 0.28;
+}
+
+.canvas-links--over .canvas-link-arrow {
+  fill-opacity: 0.28;
+}
+
+/* Above a dragged block, whose own boundaries travel with it. */
+.canvas-links--seams {
+  z-index: 6;
+}
+
+.canvas-link-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: calc(1.5px / var(--canvas-zoom));
+  stroke-linecap: round;
+  stroke-dasharray: 1;
+  animation: canvas-link-draw 520ms var(--canvas-ease) both;
+  transition: d var(--canvas-settle) var(--canvas-ease);
+}
+
+.canvas-link-dot {
+  fill: var(--accent);
+  animation: canvas-dot-in 300ms var(--canvas-ease-out) both;
+  transition:
+    cx var(--canvas-settle) var(--canvas-ease),
+    cy var(--canvas-settle) var(--canvas-ease);
+}
+
+/* The way a session travels, arriving at the card that continues it. */
+.canvas-link-arrow {
+  fill: var(--accent);
+  animation: canvas-mark-in 300ms var(--canvas-ease-out) 220ms both;
+  transition: transform var(--canvas-settle) var(--canvas-ease);
+}
+
+/* A boundary between two cards of one session; any other boundary stays plain. */
+.canvas-seam {
+  animation: canvas-mark-in 300ms var(--canvas-ease-out) both;
+}
+
+.canvas-seam-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: calc(2px / var(--canvas-zoom));
+  stroke-linecap: round;
+  transition: d var(--canvas-settle) var(--canvas-ease);
+}
+
+.canvas-seam-mark {
+  transition: transform var(--canvas-settle) var(--canvas-ease);
+}
+
+.canvas-seam-mark circle {
+  fill: var(--surface-2);
+  stroke: var(--accent);
+  stroke-width: 1.25px;
+}
+
+.canvas-seam-mark path {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.75px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* A connection the user drew: quieter than a term's link, until it is selected. */
+.canvas-connector .canvas-link-line {
+  stroke: var(--text-2);
+}
+
+.canvas-connector.is-selected .canvas-link-line {
+  stroke: var(--accent);
+  stroke-width: calc(2.5px / var(--canvas-zoom));
+}
+
+/* An arrow that sends its start to the branch it points at. */
+.canvas-connector--context .canvas-link-line,
+.canvas-link-line--context {
+  stroke: var(--accent);
+}
+
+.canvas-link-line--pending {
+  stroke-dasharray: calc(6px / var(--canvas-zoom)) calc(4px / var(--canvas-zoom));
+  animation: none;
+  transition: none;
+}
+
+/* A card that was asked about. */
+.canvas-relation-line {
+  fill: none;
+  stroke: var(--text-3);
+  stroke-opacity: 0.6;
+  stroke-width: calc(1.25px / var(--canvas-zoom));
+  stroke-dasharray: calc(5px / var(--canvas-zoom)) calc(5px / var(--canvas-zoom));
+}
+
+.canvas-links--under .canvas-relation:hover .canvas-relation-line {
+  stroke-opacity: 1;
+}
+
+.canvas-connector-label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2;
+  max-width: 240px;
+  padding: 2px 8px;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--text-1);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-1);
+  cursor: pointer;
+  user-select: none;
+  transition: transform var(--canvas-settle) var(--canvas-ease);
+}
+
+.canvas-connector-label.is-selected {
+  border-color: var(--accent);
+}
+
+.canvas-surface[data-far] .canvas-connector-label {
+  max-width: calc(240px / var(--canvas-zoom));
+  padding: calc(2px / var(--canvas-zoom)) calc(8px / var(--canvas-zoom));
+  font-size: calc(12px / var(--canvas-zoom));
+  line-height: calc(18px / var(--canvas-zoom));
+}
+
+.canvas-connector-input {
+  width: 140px;
+  font: inherit;
+  color: var(--text-1);
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+
+.canvas-links.is-dragging .canvas-link-line,
+.canvas-links.is-dragging .canvas-link-dot,
+.canvas-links.is-dragging .canvas-link-arrow,
+.canvas-links.is-dragging .canvas-seam-line,
+.canvas-links.is-dragging .canvas-seam-mark {
+  transition: none;
+}
+
+/* A wide invisible stroke, so a thin link is easy to click. */
+.canvas-link-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: calc(14px / var(--canvas-zoom));
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+.canvas-links--under g:hover .canvas-link-line {
+  stroke-width: calc(3px / var(--canvas-zoom));
+}
+
+.canvas-surface.is-drawing .canvas-link-hit,
+.canvas-surface.is-panning .canvas-link-hit,
+.canvas-links.is-dragging .canvas-link-hit {
+  pointer-events: none;
+}
+
+/* ---- Drawing ---- */
+
+.canvas-draw-rect {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 6;
+  background: var(--accent-soft);
+  outline: calc(1.5px / var(--canvas-zoom)) dashed var(--accent);
+  border-radius: 6px;
+  pointer-events: none;
+}
+
+.canvas-marquee {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 6;
+  background: var(--accent-soft);
+  border: calc(1px / var(--canvas-zoom)) solid var(--accent);
+  pointer-events: none;
+}
+
+.canvas-draw-rect.is-invalid {
+  background: var(--danger-soft);
+  outline-color: var(--error);
+}
+
+.canvas-draw-badge {
+  position: absolute;
+  top: 0;
+  left: 0;
+  padding: 2px 8px;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+  color: var(--accent-contrast);
+  background: var(--accent);
+  border-radius: var(--radius-pill);
+  transform: translateY(calc(-100% - 6px)) scale(calc(1 / var(--canvas-zoom)));
+  transform-origin: 0 100%;
+}
+
+.canvas-draw-rect.is-invalid .canvas-draw-badge {
+  color: var(--text-1);
+  background: var(--error);
+}
+
+.canvas-guide {
+  position: absolute;
+  z-index: 6;
+  background: var(--accent);
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.canvas-guide--x {
+  top: -100000px;
+  width: calc(1px / var(--canvas-zoom));
+  height: 200000px;
+}
+
+.canvas-guide--y {
+  left: -100000px;
+  width: 200000px;
+  height: calc(1px / var(--canvas-zoom));
+}
+
+/* ---- Floating chrome ---- */
+
+.canvas-toolbar {
+  position: absolute;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
+}
+
+.canvas-toolbar--title {
+  top: 12px;
+  left: 50%;
+  max-width: 36%;
+  transform: translateX(-50%);
+}
+
+.canvas-toolbar--zoom {
+  right: 12px;
+  bottom: 12px;
+}
+
+.canvas-tool {
+  height: 28px;
+  min-width: 28px;
+  padding: 0 10px;
+  font-size: 13px;
+  color: var(--text-2);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition:
+    background var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
+}
+
+.canvas-tool:hover {
+  color: var(--text-1);
+  background: var(--surface-3);
+}
+
+.canvas-tool.is-active {
+  color: var(--accent-contrast);
+  background: var(--accent);
+}
+
+.canvas-tool--icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+}
+
+.canvas-tool.is-toggled {
+  color: var(--text-1);
+  background: var(--surface-3);
+}
+
+.canvas-tool:focus-visible,
+.canvas-continue:focus-visible,
+.canvas-icon-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.canvas-title {
+  width: 240px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-1);
+  text-overflow: ellipsis;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  outline: none;
+}
+
+.canvas-title:focus {
+  box-shadow: var(--focus-ring-inset);
+}
+
+.canvas-zoom-value {
+  min-width: 44px;
+  font-size: 12px;
+  text-align: center;
+  color: var(--text-2);
+}
+
+/* Hints and the way back to the composer, stacked at the bottom. */
+.canvas-bottom {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: max-content;
+  max-width: calc(100% - 140px);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.canvas-bottom > * {
+  pointer-events: auto;
+}
+
+.canvas-hint-action {
+  margin-left: 10px;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--accent);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.canvas-hint-action:hover {
+  text-decoration: underline;
+}
+
+.canvas-hint-action:focus-visible {
+  outline: none;
+  border-radius: 4px;
+  box-shadow: var(--focus-ring);
+}
+
+.canvas-hint {
+  padding: 8px 14px;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-1);
+  background: var(--surface-3);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
+  animation: canvas-hint-in 240ms var(--canvas-ease-out) both;
+}
+
+.canvas-jump {
+  height: 30px;
+  padding: 0 14px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--accent-contrast);
+  background: var(--accent);
+  border: 0;
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-2);
+  cursor: pointer;
+  animation: canvas-hint-in 240ms var(--canvas-ease-out) both;
+}
+
+.canvas-jump:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* ---- Tool rail ---- */
+
+.canvas-glyph {
+  display: block;
+  width: 16px;
+  height: 16px;
+}
+
+.canvas-rail {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
+}
+
+.canvas-rail-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  color: var(--text-2);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition:
+    background var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
+}
+
+.canvas-rail-btn:hover:not(:disabled) {
+  color: var(--text-1);
+  background: var(--surface-3);
+}
+
+.canvas-rail-btn.is-active,
+.canvas-rail-btn.is-active:hover {
+  color: var(--accent-contrast);
+  background: var(--accent);
+}
+
+.canvas-rail-btn:disabled {
+  color: var(--text-3);
+  opacity: 0.45;
+  cursor: default;
+}
+
+.canvas-rail-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.canvas-rail-sep {
+  width: 20px;
+  height: 1px;
+  margin: 3px 0;
+  background: var(--border-strong);
+}
+
+/* A tooltip that names the key, shown without a browser's delay. */
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  z-index: 20;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+  white-space: pre;
+  color: var(--text-1);
+  background: var(--surface-3);
+  border-radius: 6px;
+  box-shadow: var(--shadow-2);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-1) var(--ease-out);
+}
+
+[data-tip]:hover::after,
+[data-tip]:focus-visible::after {
+  opacity: 1;
+  transition-delay: 300ms;
+}
+
+.canvas-rail-btn[data-tip]::after {
+  top: 50%;
+  left: calc(100% + 10px);
+  transform: translateY(-50%);
+}
+
+.canvas-bar [data-tip]::after {
+  bottom: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+/* ---- Selection bar ---- */
+
+.canvas-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 4px 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
+  animation: canvas-hint-in 180ms var(--canvas-ease-out) both;
+}
+
+.canvas-bar-count {
+  flex: none;
+  padding: 0 8px 0 4px;
+  font-size: 12.5px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.canvas-bar-sep {
+  flex: none;
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--border-strong);
+}
+
+.canvas-bar-anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+.canvas-bar-btn {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--text-2);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition:
+    background var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
+}
+
+.canvas-bar-btn:hover:not(:disabled) {
+  color: var(--text-1);
+  background: var(--surface-3);
+}
+
+.canvas-bar-btn:focus-visible,
+.canvas-bar-ask:focus-visible,
+.canvas-swatch:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.canvas-bar-ask {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 10px 0 8px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--accent-contrast);
+  background: var(--accent);
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.canvas-bar-ask:hover {
+  background: var(--accent-strong);
+}
+
+.canvas-swatches {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 2px;
+}
+
+.canvas-swatch {
+  position: relative;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  background: var(--tint);
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: transform var(--dur-1) var(--ease-out);
+}
+
+.canvas-swatch:hover {
+  transform: scale(1.18);
+}
+
+.canvas-swatch.is-active {
+  box-shadow:
+    0 0 0 2px var(--surface-2),
+    0 0 0 3.5px var(--text-1);
+}
+
+.canvas-swatch--none {
+  background: linear-gradient(135deg, transparent 44%, var(--text-3) 44% 56%, transparent 56%);
+  box-shadow: inset 0 0 0 1.5px var(--text-3);
+}
+
+.canvas-arrange {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 184px;
+  padding: 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-3);
+  transform: translateX(-50%);
+}
+
+.canvas-arrange-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  padding-bottom: 4px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--border);
+}
+
+.canvas-arrange-item {
+  height: 28px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-2);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.canvas-arrange-item:hover:not(:disabled),
+.canvas-arrange-item:focus-visible {
+  color: var(--text-1);
+  background: var(--surface-3);
+  outline: none;
+}
+
+.canvas-arrange-item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ---- Outline and search ---- */
+
+.canvas-outline {
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 64px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  width: 280px;
+  max-width: calc(100% - 76px);
+  overflow: hidden;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-3);
+  animation: canvas-outline-in 200ms var(--canvas-ease-out) both;
+}
+
+.canvas-outline-search {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 10px;
+  color: var(--text-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.canvas-outline-search input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-1);
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+
+.canvas-outline-count {
+  flex: none;
+  font-size: 12px;
+}
+
+.canvas-outline-list {
+  flex: 1;
+  min-height: 0;
+  padding: 4px;
+  overflow: auto;
+}
+
+.canvas-outline-empty {
+  margin: 12px 10px;
+  font-size: 13px;
+  color: var(--text-3);
+}
+
+.canvas-outline-row {
+  --tint: transparent;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px 5px 10px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-2);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.canvas-outline-row:hover,
+.canvas-outline-row.is-active {
+  color: var(--text-1);
+  background: var(--surface-3);
+}
+
+.canvas-outline-row:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-inset);
+}
+
+.canvas-outline-row.is-selected {
+  color: var(--text-1);
+  background: var(--accent-soft);
+}
+
+.canvas-outline-row--frame {
+  margin-top: 4px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.canvas-outline-mark {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 18px;
+  color: var(--text-3);
+}
+
+.canvas-outline-mark .canvas-glyph {
+  width: 13px;
+  height: 13px;
+}
+
+/* A message has no icon of its own, so its mark is a dot in its colour. */
+.canvas-outline-mark:empty::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  background: var(--text-3);
+  border-radius: 50%;
+}
+
+.canvas-outline-row[data-color] .canvas-outline-mark {
+  color: var(--tint);
+}
+
+.canvas-outline-row[data-color] .canvas-outline-mark:empty::before {
+  background: var(--tint);
+}
+
+.canvas-outline-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.canvas-outline-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvas-outline-snippet {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.canvas-outline-writing {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  background: var(--accent);
+  border-radius: 50%;
+  animation: canvas-shimmer 1400ms ease-in-out infinite;
+}
+
+/* ---- Map ---- */
+
+.canvas-minimap {
+  position: absolute;
+  right: 12px;
+  bottom: 56px;
+  z-index: 10;
+  width: 208px;
+  height: 140px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
+  cursor: pointer;
+  touch-action: none;
+}
+
+.canvas-minimap-card {
+  --tint: var(--text-3);
+  fill: var(--tint);
+  fill-opacity: 0.55;
+}
+
+.canvas-minimap-card.is-selected {
+  fill: var(--accent);
+  fill-opacity: 1;
+}
+
+.canvas-minimap-frame {
+  --tint: var(--text-3);
+  fill: var(--tint);
+  fill-opacity: 0.08;
+  stroke: var(--tint);
+  stroke-opacity: 0.5;
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke;
+}
+
+.canvas-minimap-frame.is-selected {
+  stroke: var(--accent);
+  stroke-opacity: 1;
+}
+
+.canvas-minimap-view {
+  fill: var(--accent-soft);
+  stroke: var(--accent);
+  stroke-width: 1.5px;
+  vector-effect: non-scaling-stroke;
+}
+
+/* ---- Keyboard map ---- */
+
+.canvas-shortcuts {
+  position: absolute;
+  right: 12px;
+  bottom: 60px;
+  z-index: 11;
+  width: 340px;
+  max-width: calc(100% - 24px);
+  max-height: calc(100% - 132px);
+  overflow: auto;
+  padding: 10px 14px 12px;
+  font-size: 12.5px;
+  line-height: 18px;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-3);
+  animation: canvas-hint-in 200ms var(--canvas-ease-out) both;
+}
+
+.canvas-shortcuts-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.canvas-shortcuts-header h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.canvas-shortcut-group h3 {
+  margin: 12px 0 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.canvas-shortcuts dl {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+}
+
+.canvas-shortcut {
+  display: grid;
+  grid-template-columns: 112px 1fr;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.canvas-shortcut dt {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.canvas-shortcut dd {
+  margin: 0;
+}
+
+.canvas-shortcut kbd {
+  min-width: 18px;
+  padding: 0 5px;
+  font-family: inherit;
+  font-size: 11.5px;
+  line-height: 18px;
+  text-align: center;
+  color: var(--text-1);
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+}
+
+.canvas-shortcuts-note {
+  margin: 10px 0 0;
+  color: var(--text-3);
+}
+
+.canvas-empty {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: min(420px, 80%);
+  text-align: center;
+  color: var(--text-2);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  animation: canvas-text-in 420ms var(--canvas-ease) both;
+}
+
+.canvas-empty h2 {
+  margin: 0 0 6px;
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 500;
+  color: var(--text-1);
+}
+
+.canvas-empty p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 21px;
+}
+
+.canvas-empty-keys {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  margin: 14px 0 0;
+  padding: 0;
+  font-size: 13px;
+  color: var(--text-3);
+  list-style: none;
+}
+
+.canvas-empty-keys kbd {
+  display: inline-block;
+  min-width: 20px;
+  margin-right: 4px;
+  padding: 0 5px;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--text-1);
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+}
+
+/* ---- Motion ---- */
+
+@keyframes canvas-card-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes canvas-outline-in {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes canvas-frame-pulse {
+  35% {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 calc(3px / var(--canvas-zoom)) var(--accent-ring);
+  }
+}
+
+@keyframes canvas-ink {
+  0% {
+    opacity: 0.9;
+    transform: scale(0.2);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.5);
+  }
+}
+
+@keyframes canvas-pulse {
+  0%,
+  100% {
+    box-shadow: var(--shadow-1);
+    transform: scale(1);
+  }
+  35% {
+    box-shadow:
+      0 0 0 3px var(--accent-ring),
+      var(--shadow-3);
+    transform: scale(1.02);
+  }
+}
+
+@keyframes canvas-progress {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(260%);
+  }
+}
+
+@keyframes canvas-text-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes canvas-shimmer {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes canvas-link-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes canvas-mark-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes canvas-dot-in {
+  from {
+    r: 0;
+  }
+}
+
+@keyframes canvas-hint-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes canvas-term-pulse {
+  0%,
+  100% {
+    background: transparent;
+  }
+  30% {
+    background: var(--accent-ring);
+  }
+}

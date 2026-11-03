@@ -464,3 +464,45 @@ These are load-bearing; breaking one causes a bug that is hard to trace:
 - `kb-reanalyze` has no progress reporting and an automatic pass reports only its start/finish
   through `kb-status`; a long run shows no per-conversation progress.
 - No auto-update path; releases are manual downloads.
+
+## Canvas
+
+A canvas is a conversation record (`source: 'canvas'`) with a `state.canvas` layout. Each card is
+a message (one question and its answer), an expansion (an `ExpansionNode` in a turn) or a note (the
+user's own text, holding no turn). The layout also holds frames and connections.
+
+- **Drawing** a rectangle opens a draft inside it; its area sets the word count sent to the model.
+- **Sessions** are `parentId` chains. A rectangle sharing a side with a card continues it, so a canvas
+  can branch, and each branch sends only its own history. A rectangle touching several cards
+  continues the newest by default; the draft's "Continues" picker names it and can choose another
+  or a new session. Histories are never merged.
+- **Chatting** needs no mouse: after sending, Enter opens the next draft under the new card, the
+  viewport follows it like a pinned chat until the user moves the view, and the keyboard reaches every card
+  (arrows, Enter, B for back, `?` for the full list). Links can be clicked to travel along them.
+- **Expanding** selects a term as usual, then asks for a rectangle. Drawn inside the message it is
+  `inset`; dragged clear of the message it becomes a separate card, linked from the term.
+- **Finished answers** set the card's height, never its width (`fitCardHeight`): continuations below
+  follow and anything else in the way is pushed down.
+- **Regenerate** uses the card's current rectangle and removes what depended on the old answer.
+- **Tools** are Select (the default), Hand, Answer, Note, Connect and Frame. Select picks with a click,
+  Shift+click or a marquee from empty space; dragging moves just the selection, and Shift+drag brings everything touching it.
+  A right drag pans under any tool, and a plain right click opens the menu for what is under it.
+- **Frames** group by geometry: what stands inside when a frame moves goes with it. Nothing is stored
+  about membership, and removing a frame keeps its cards.
+- **Connections** are the user's own labelled arrows, separate from sessions, and send nothing to the
+  model. Faint dashed lines show a card that was asked about; a session shows as its own seam or link.
+- **Asking about a selection** sends the selected cards' text with the question, at request time only,
+  beside a new session. It is material, not history; a single answer simply continues instead.
+- **Context links** send material from elsewhere on the plane with a branch's requests: one card, a whole
+  branch, or a note (`canvas-context.ts`). They are read at request time and reach every later card on that
+  branch. Dragging a card, note or `+` onto the composer adds one while the question is written, and its corner sets the answer's length. Dragging a `+` to open space places the next message there and sizes it.
+- **Undo** is a stack of patches, not snapshots (`canvas-history.ts`), so taking back a move cannot
+  rewind an answer that is still streaming. Asking is not an undoable action. A patch whose turn has
+  moved on (it was regenerated) is refused and dropped, and one that would land on another card waits.
+- **Getting around**: a map, an outline with search, jumping back and forward (Alt+Left/Right), and
+  far out (below 50%) each card shows just its title at a readable size.
+
+Geometry and session rules are pure and live in `src/shared/canvas.ts`, selection in `canvas-selection.ts`,
+alignment, tidying and duplication in `canvas-arrange.ts`, undo in `canvas-history.ts` and the outline in
+`canvas-outline.ts`. State and streams are in `hooks/useCanvas.ts`, pointer gestures in
+`views/canvas/CanvasView.tsx` and keys in `views/canvas/useCanvasKeyboard.ts`.

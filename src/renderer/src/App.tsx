@@ -5,15 +5,18 @@ import ConversationSearch from './components/conversation/ConversationSearch'
 import HomeView from './views/home/HomeView'
 import KnowledgeView from './views/knowledge/KnowledgeView'
 import LookupGuideView from './views/lookup-guide/LookupGuideView'
+import CanvasView from './views/canvas/CanvasView'
 import { useChatStreaming } from './hooks/useChatStreaming'
+import { useCanvas } from './hooks/useCanvas'
 import MemoryIndicator from './components/MemoryIndicator'
 import type { ImageAttachment } from '../../shared/attachments'
 
-type View = 'home' | 'chat' | 'knowledge' | 'lookup-guide' | 'settings'
+type View = 'home' | 'chat' | 'canvas' | 'knowledge' | 'lookup-guide' | 'settings'
 
 const mainNavEntries: Array<{ view: View; label: string; icon: string }> = [
   { view: 'home', label: 'Home', icon: 'home' },
   { view: 'chat', label: 'Chat', icon: 'chat' },
+  { view: 'canvas', label: 'Canvas', icon: 'canvas' },
   { view: 'knowledge', label: 'Knowledge Base', icon: 'knowledge' },
   { view: 'lookup-guide', label: 'Look-Up Guide', icon: 'lookup' }
 ]
@@ -48,6 +51,19 @@ const ICONS: Record<string, React.JSX.Element> = {
       strokeLinejoin="round"
     >
       <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+    </svg>
+  ),
+  canvas: (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="3" y="3" width="11" height="11" rx="1" />
+      <path d="M14 8h6a1 1 0 011 1v11a1 1 0 01-1 1H9a1 1 0 01-1-1v-6" />
     </svg>
   ),
   knowledge: (
@@ -126,6 +142,8 @@ function App(): React.JSX.Element {
       setTransferKey((k) => k + 1)
     }
   })
+
+  const canvas = useCanvas()
 
   const startNewChat = useCallback(() => {
     newChat()
@@ -236,6 +254,7 @@ function App(): React.JSX.Element {
             transferKey={transferKey}
           />
         )}
+        {view === 'canvas' && <CanvasView canvas={canvas} />}
         {view === 'knowledge' && <KnowledgeView />}
         {view === 'lookup-guide' && <LookupGuideView />}
         {view === 'settings' && <Settings />}

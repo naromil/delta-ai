@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type {
   ConversationState,
   ConversationRecord,
+  ConversationMeta,
   ConversationSearchResult
 } from '../shared/conversation'
 import type { Connection } from '../shared/models'
@@ -156,6 +157,7 @@ const api = {
     ipcRenderer.invoke('conversation-load', id),
   deleteConversation: (id: string): Promise<void> => ipcRenderer.invoke('conversation-delete', id),
   listConversations: () => ipcRenderer.invoke('conversation-list'),
+  listCanvases: (): Promise<ConversationMeta[]> => ipcRenderer.invoke('canvas-list'),
   searchConversations: (query: string): Promise<ConversationSearchResult[]> =>
     ipcRenderer.invoke('conversation-search', query),
   listUnfedConversations: () => ipcRenderer.invoke('conversation-list-unfed'),

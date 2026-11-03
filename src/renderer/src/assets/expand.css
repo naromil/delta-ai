@@ -311,6 +311,18 @@
   max-width: 320px;
 }
 
+#ctxMenu .item--keyed {
+  justify-content: space-between;
+  gap: 24px;
+}
+
+#ctxMenu .item-key {
+  flex: none;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
 #ctxMenu .item-detail {
   max-width: 100%;
   color: var(--text-3);
@@ -329,7 +341,6 @@
   outline: none;
   background: var(--surface-3);
   color: var(--text-1);
-  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 #ctxMenu .item:disabled {
