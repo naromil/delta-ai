@@ -19,7 +19,6 @@ import {
   fitsOnScreen,
   linkPath,
   movingCardIds,
-  pulledOutCardIds,
   nearestCardInDirection,
   normalizeCanvasLayout,
   rectAgainst,
@@ -541,16 +540,6 @@ describe('keeping adjacent cards joined', () => {
     ]
     expect(movingCardIds(cards, 'a')).toEqual(new Set(['a', 'b', 'c']))
     expect(movingCardIds(cards, 'apart')).toEqual(new Set(['apart']))
-  })
-
-  it('pulls out one card with what sits on it, leaving the rest', () => {
-    const cards = [
-      message('a', 1, rect(0, 0)),
-      message('b', 3, rect(100, 0), 'a'),
-      expansion('over', 7, 4, 'b', true, rect(110, 10, 40, 40)),
-      expansion('out', 9, 4, 'b', false, rect(500, 0))
-    ]
-    expect(pulledOutCardIds(cards, 'b')).toEqual(new Set(['b', 'over']))
   })
 
   it('leaves a continuation behind once it no longer touches, keeping its history', () => {

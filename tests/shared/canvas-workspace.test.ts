@@ -138,10 +138,33 @@ describe('what a selection carries when dragged', () => {
     expect([...moving.cards].sort()).toEqual(['a', 'b'])
   })
 
-  it('moves only the chosen card when pulled out', () => {
-    const cards = [message('a', 1, rect(0, 0)), message('b', 3, rect(100, 0), 'a')]
-    const moving = movingForSelection({ cards, frames: [] }, new Set(['a']), true)
-    expect([...moving.cards]).toEqual(['a'])
+  it('pulls a card off its parent with its attached descendants only', () => {
+    const cards = [
+      message('parent', 1, rect(0, 0)),
+      message('pulled', 3, rect(100, 0), 'parent'),
+      message('child', 5, rect(200, 0), 'pulled'),
+      message('grandchild', 7, rect(300, 0), 'child'),
+      inset('over', 'pulled', rect(110, 10, 40, 40), 9),
+      { ...inset('touching', 'pulled', rect(100, 100), 11), inset: false },
+      { ...inset('linked', 'pulled', rect(500, 500), 13), inset: false },
+      message('linkedChild', 15, rect(900, 0), 'pulled'),
+      message('beyondLink', 17, rect(1000, 0), 'linkedChild'),
+      message('neighbour', 19, rect(100, -100))
+    ]
+    const moving = movingForSelection({ cards, frames: [] }, new Set(['pulled']), true)
+    expect([...moving.cards].sort()).toEqual(
+      ['child', 'grandchild', 'over', 'pulled', 'touching'].sort()
+    )
+  })
+
+  it('leaves a child joined to its parent only through a third card', () => {
+    const cards = [
+      message('pulled', 1, rect(0, 0)),
+      message('between', 3, rect(100, 0)),
+      message('child', 5, rect(200, 0), 'pulled')
+    ]
+    const moving = movingForSelection({ cards, frames: [] }, new Set(['pulled']), true)
+    expect([...moving.cards]).toEqual(['pulled'])
   })
 
   it('takes what stands inside a frame, nested frames included', () => {

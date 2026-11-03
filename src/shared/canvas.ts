@@ -468,14 +468,28 @@ export function nearestCardInDirection(
   return best
 }
 
-/** A card and what is drawn over its text: what an Alt+drag pulls out of its group. */
+/**
+ * What an Alt+drag pulls out of its group: a card and its attached descendants. A child is
+ * attached when it is drawn over its parent's text or shares a side with its parent; one
+ * reached by a link stays, and so does everything beyond it.
+ */
 export function pulledOutCardIds(cards: CanvasCard[], id: string): Set<string> {
-  const pulled = new Set([id])
-  for (const cardId of pulled) {
+  const pulled = new Set<string>()
+  const visit = (cardId: string): void => {
+    if (pulled.has(cardId)) return
+    const card = cardById(cards, cardId)
+    if (!card) return
+    pulled.add(cardId)
     for (const other of cards) {
-      if (other.kind === 'expansion' && other.inset && other.hostId === cardId) pulled.add(other.id)
+      const isChild =
+        (other.kind === 'message' && other.parentId === cardId) ||
+        (other.kind === 'expansion' && other.hostId === cardId)
+      if (!isChild) continue
+      const isInset = other.kind === 'expansion' && other.inset
+      if (isInset || (isTopLevel(card) && sharesSide(card.rect, other.rect))) visit(other.id)
     }
   }
+  visit(id)
   return pulled
 }
 

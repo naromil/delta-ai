@@ -137,7 +137,6 @@ type Gesture =
       /** Snaps the moving bounds rather than one card, since several things were chosen. */
       group: boolean
       /** Alt+drag: only this card moves, and it snaps to nothing. */
-      pulledOut: boolean
       /** Without Shift, a press that never moves selects just this item. */
       plainPress: boolean
       start: CanvasPoint
@@ -753,8 +752,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     const travelY = gesture.pointer.y - gesture.start.y
     if (Math.hypot(travelX, travelY) * viewport.zoom < DRAG_START_PX) return still
     const moved = { ...subject, x: subject.x + travelX, y: subject.y + travelY }
-    const snapDistance = gesture.pulledOut ? -1 : SNAP_SCREEN_PX / viewport.zoom
-    const snap = snapMove(moved, topLevelRects(cards, gesture.ids), snapDistance)
+    const snap = snapMove(moved, topLevelRects(cards, gesture.ids), SNAP_SCREEN_PX / viewport.zoom)
     return {
       dx: snap.rect.x - subject.x,
       dy: snap.rect.y - subject.y,
@@ -944,7 +942,6 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
         ids: moving.cards,
         frameIds: moving.frames,
         group: chosen.size > 1 || moving.frames.size > 0,
-        pulledOut: e.altKey,
         plainPress: !additive,
         start,
         pointer: start
@@ -2051,14 +2048,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     const id = canvas.ask(draftRect, question, draftParent?.id, draft?.sourceIds)
     currentIdRef.current = id
     select([])
-    // Like a chat, the next question can be typed at once, under the answer being written.
-    const obstacles = topLevelRects(cards)
-    const side = (['bottom', 'right'] as const).find((item) => {
-      const slot = rectAgainst(draftRect, item, draftRect)
-      return !obstacles.some((rect) => rectsOverlap(slot, rect))
-    })
-    if (side) openDraft({ rect: draftRect, parentId: id, side, sessions: [id] })
-    else setDraft(null)
+    setDraft(null)
   }
 
   const cancelDraft = (): void => {

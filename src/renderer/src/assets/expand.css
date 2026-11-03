@@ -341,7 +341,6 @@
   outline: none;
   background: var(--surface-3);
   color: var(--text-1);
-  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 #ctxMenu .item:disabled {

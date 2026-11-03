@@ -445,13 +445,14 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   continues one only (`continuationCandidates`, newest first) and sends only that history; the
   drawing highlights it (`is-continued`) and the draft's "Continues" picker can switch to another
   candidate or to a new session. Dragging moves everything touching the card
-  (`movingCardIds`), and Alt+drag pulls out just that card without snapping (`pulledOutCardIds`), which
-  leaves its session history (`parentId`) intact; anything standing on the plane may not overlap, and a
+  (`movingCardIds`), and Alt+drag pulls a card off its parent and neighbours, bringing the descendants attached
+  to it (`pulledOutCardIds`; one reached by a link stays) and leaving its session history (`parentId`) intact; anything standing on the plane may not overlap, and a
   refused drop turns everything that would have moved red (`refusedIds`) and springs back through the
   cards' own transform transition.
 - **The draft is the canvas's composer, and the viewport follows it like a pinned chat.** Sending
-  opens the next draft against the new card's bottom (else right), kept there through `Draft.side`
-  as the card grows or moves; it cannot send while the answer it continues is streaming or failed.
+  closes it; the next one opens on request (Enter continues the card just sent, or a card's `+`), kept
+  against its parent through `Draft.side` as the card grows or moves; it cannot send while the answer
+  it continues is streaming or failed.
   `followRef` keeps the draft and its parent on screen (or just the draft, under the answer's newest
   lines, when both do not fit); any manual pan, wheel or zoom lets go, typing in the draft or "Back
   to your question" re-pins. A streaming card body sticks to its newest line (`nextPinned`).

@@ -476,8 +476,8 @@ user's own text, holding no turn). The layout also holds frames and connections.
   can branch, and each branch sends only its own history. A rectangle touching several cards
   continues the newest by default; the draft's "Continues" picker names it and can choose another
   or a new session. Histories are never merged.
-- **Chatting** needs no mouse: sending opens the next draft under the new card, the viewport follows
-  it like a pinned chat until the user moves the view, and the keyboard reaches every card
+- **Chatting** needs no mouse: after sending, Enter opens the next draft under the new card, the
+  viewport follows it like a pinned chat until the user moves the view, and the keyboard reaches every card
   (arrows, Enter, B for back, `?` for the full list). Links can be clicked to travel along them.
 - **Expanding** selects a term as usual, then asks for a rectangle. Drawn inside the message it is
   `inset`; dragged clear of the message it becomes a separate card, linked from the term.

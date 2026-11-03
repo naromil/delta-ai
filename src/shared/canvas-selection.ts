@@ -61,8 +61,8 @@ function framesInside(frames: CanvasFrame[], outer: CanvasFrame): CanvasFrame[] 
 
 /**
  * What moves when a selection is dragged. A frame takes what stands inside it, frames
- * included. Each card brings what is joined to it, or with `pulledOut` only what is
- * drawn over its text. An inset card selected without its host stays out of a group,
+ * included. Each card brings what is joined to it, or with `pulledOut` only its attached
+ * descendants, leaving its parent, its neighbours and any child reached by a link. An inset card selected without its host stays out of a group,
  * as it could not be carried off its host's text.
  */
 export function movingForSelection(
