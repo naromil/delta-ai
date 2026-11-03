@@ -32,7 +32,7 @@ export interface CanvasMoving {
 }
 
 /** The most text of one card that goes with a question about it. */
-const SOURCE_TEXT_LIMIT = 6000
+export const SOURCE_TEXT_LIMIT = 6000
 
 export function boundsOf(rects: CanvasRect[]): CanvasRect | null {
   return rects.length === 0 ? null : rects.reduce(unionRect)

@@ -1,4 +1,4 @@
-import type { CanvasCard } from '../../../../shared/canvas'
+import type { CanvasCard, CanvasLinkContext } from '../../../../shared/canvas'
 import type { ContextMenuItem } from '../../components/conversation/ContextMenu'
 
 /** Right-click menus, one list per thing on the plane. Each names the key that does the same. */
@@ -66,8 +66,33 @@ export function frameMenuItems(actions: {
   ]
 }
 
+/** Only an answer's branch can receive context, and a note has no branch of its own to send. */
+function linkContextItems(link: {
+  context: CanvasLinkContext | undefined
+  from: CanvasCard['kind'] | undefined
+  to: CanvasCard['kind'] | undefined
+  setContext: (context: CanvasLinkContext | undefined) => void
+}): ContextMenuItem[] {
+  if (link.to === undefined || link.to === 'note') return []
+  const { context, setContext } = link
+  const asNote = link.from === 'note'
+  const items: ContextMenuItem[] = []
+  if (context !== 'card') {
+    items.push({
+      label: asNote ? 'Send this note to the branch' : 'Send this card to the branch',
+      onSelect: () => setContext('card')
+    })
+  }
+  if (context !== 'branch' && !asNote) {
+    items.push({ label: 'Send its whole branch', onSelect: () => setContext('branch') })
+  }
+  if (context) items.push({ label: 'Stop sending context', onSelect: () => setContext(undefined) })
+  return items
+}
+
 export function linkMenuItems(actions: {
   label: () => void
+  context: Parameters<typeof linkContextItems>[0]
   reverse: () => void
   goToStart: () => void
   goToEnd: () => void
@@ -75,6 +100,7 @@ export function linkMenuItems(actions: {
 }): ContextMenuItem[] {
   return [
     { label: 'Label', shortcut: 'Enter', onSelect: actions.label },
+    ...linkContextItems(actions.context),
     { label: 'Reverse direction', onSelect: actions.reverse },
     { label: 'Go to the start', onSelect: actions.goToStart },
     { label: 'Go to the end', onSelect: actions.goToEnd },

@@ -13,6 +13,7 @@ import type {
   CanvasFrame,
   CanvasLayout,
   CanvasLink,
+  CanvasLinkContext,
   CanvasMessageCard,
   CanvasRect,
   CanvasViewport
@@ -25,6 +26,7 @@ import {
   normalizeCanvasLayout,
   setCardCollapsed,
   turnsThroughCard,
+  withCanvasContext,
   withCanvasFit,
   withoutField,
   withCanvasSources
@@ -37,6 +39,8 @@ import type {
   CanvasSnapshot
 } from '../../../shared/canvas-history'
 import { applyCanvasPatch, diffCanvas } from '../../../shared/canvas-history'
+import type { CanvasContextLink } from '../../../shared/canvas-context'
+import { requestContext } from '../../../shared/canvas-context'
 import { sourceExcerpts } from '../../../shared/canvas-selection'
 import type { ConversationMeta, ProviderMessage, Turn } from '../../../shared/conversation'
 import {
@@ -167,6 +171,8 @@ export function useCanvas(): {
   addLink: (from: string, to: string) => string | null
   labelLink: (id: string, label: string) => void
   reverseLink: (id: string) => void
+  /** What this link sends to the branch it points at; undefined makes it a plain arrow again. */
+  setLinkContext: (id: string, context: CanvasLinkContext | undefined) => void
   setColor: (ids: ReadonlySet<string>, color: CanvasColor | undefined) => void
   setCollapsed: (ids: ReadonlySet<string>, collapsed: boolean) => void
   /** Returns the new items' ids; empty when nothing could be copied. */
@@ -180,7 +186,8 @@ export function useCanvas(): {
     rect: CanvasRect,
     question: string,
     parentId: string | undefined,
-    sources?: readonly string[]
+    sources?: readonly string[],
+    context?: readonly CanvasContextLink[]
   ) => string
   expand: (
     turnId: number,
@@ -367,7 +374,11 @@ export function useCanvas(): {
       // The answer being written is blank, which serialization leaves out.
       const path = turnsThroughCard(layout.cards, turns, card.id)
       const sources = sourceExcerpts(layout.cards, turns, card.sources ?? [])
-      const messages = withCanvasSources(serializeForChat({ turns: path }, 'chat'), sources)
+      const context = requestContext(layout.cards, layout.links, turns, card.id, card.sources ?? [])
+      const messages = withCanvasContext(
+        withCanvasSources(serializeForChat({ turns: path }, 'chat'), sources),
+        context
+      )
       const words = estimateWords(card.rect, captionLength(question?.content ?? ''))
       startSend(card, withCanvasFit(messages, words))
     },
@@ -395,7 +406,12 @@ export function useCanvas(): {
         'chat',
         prompt
       )
-      return messages && withCanvasFit(messages, estimateWords(rect, captionLength(caption)))
+      if (!messages) return null
+      const context = requestContext(layout.cards, layout.links, turns, message.id)
+      return withCanvasFit(
+        withCanvasContext(messages, context),
+        estimateWords(rect, captionLength(caption))
+      )
     },
     []
   )
@@ -458,7 +474,8 @@ export function useCanvas(): {
       rect: CanvasRect,
       question: string,
       parentId: string | undefined,
-      sources: readonly string[] = []
+      sources: readonly string[] = [],
+      context: readonly CanvasContextLink[] = []
     ): string => {
       const userTurnId = nextTurnId++
       const turnId = nextTurnId++
@@ -480,7 +497,18 @@ export function useCanvas(): {
           { id: userTurnId, role: 'user', content: question, expansions: [] },
           { id: turnId, role: 'assistant', content: '', expansions: [] }
         ],
-        layout: { ...prev.layout, cards: [...prev.layout.cards, card] }
+        layout: {
+          ...prev.layout,
+          cards: [...prev.layout.cards, card],
+          links: [
+            ...prev.layout.links,
+            ...context.map((link): CanvasLink => ({
+              ...link,
+              id: crypto.randomUUID(),
+              to: card.id
+            }))
+          ]
+        }
       }))
       sendCard(card)
       requestSave(true)
@@ -791,6 +819,16 @@ export function useCanvas(): {
     [editLink]
   )
 
+  const setLinkContext = useCallback(
+    (id: string, context: CanvasLinkContext | undefined): void => {
+      editLink(context ? 'Send context' : 'Stop sending context', id, (link) => {
+        if (link.context === context) return link
+        return context ? { ...link, context } : withoutField(link, 'context')
+      })
+    },
+    [editLink]
+  )
+
   const setColor = useCallback(
     (ids: ReadonlySet<string>, color: CanvasColor | undefined): void => {
       const paint = <T extends { id: string; color?: CanvasColor }>(item: T): T => {
@@ -1051,6 +1089,7 @@ export function useCanvas(): {
     addLink,
     labelLink,
     reverseLink,
+    setLinkContext,
     setColor,
     setCollapsed,
     duplicate,

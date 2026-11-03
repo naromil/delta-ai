@@ -493,6 +493,9 @@ user's own text, holding no turn). The layout also holds frames and connections.
   model. Faint dashed lines show a card that was asked about; a session shows as its own seam or link.
 - **Asking about a selection** sends the selected cards' text with the question, at request time only,
   beside a new session. It is material, not history; a single answer simply continues instead.
+- **Context links** send material from elsewhere on the plane with a branch's requests: one card, a whole
+  branch, or a note (`canvas-context.ts`). They are read at request time and reach every later card on that
+  branch. The composer can add them while the question is written, and its corner sets the answer's length.
 - **Undo** is a stack of patches, not snapshots (`canvas-history.ts`), so taking back a move cannot
   rewind an answer that is still streaming. Asking is not an undoable action. A patch whose turn has
   moved on (it was regenerated) is refused and dropped, and one that would land on another card waits.

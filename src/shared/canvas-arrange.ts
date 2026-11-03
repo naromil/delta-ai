@@ -325,8 +325,9 @@ export function duplicateSelection(
     rect: shift(frame.rect)
   }))
   const links = layout.links.flatMap((link): CanvasLink[] => {
-    const from = idMap.get(link.from)
     const to = idMap.get(link.to)
+    // A copy reads what the original read, even when the source itself was not copied.
+    const from = idMap.get(link.from) ?? (link.context ? link.from : undefined)
     return from && to ? [{ ...link, id: ids.newId(), from, to }] : []
   })
   return {

@@ -6,8 +6,13 @@
  * nothing new. This layout is the only addition. Everything here is pure.
  */
 import type { Turn } from './conversation'
-import type { CanvasSourceExcerpt } from './prompts'
-import { buildCanvasFitNote, buildCanvasSourcesNote, buildExpandAncestorQuestion } from './prompts'
+import type { CanvasContextExcerpt, CanvasSourceExcerpt } from './prompts'
+import {
+  buildCanvasContextNote,
+  buildCanvasFitNote,
+  buildCanvasSourcesNote,
+  buildExpandAncestorQuestion
+} from './prompts'
 import type { ProviderMessage } from './models'
 import { expansionPath, findExpansionInTurns } from './rich-text'
 
@@ -78,12 +83,17 @@ export interface CanvasFrame {
   color?: CanvasColor
 }
 
+/** What a link sends: the card at its start alone, or everything leading up to that card. */
+export type CanvasLinkContext = 'card' | 'branch'
+
 /** An arrow the user drew between two cards, labelled with how they relate. */
 export interface CanvasLink {
   id: string
   from: string
   to: string
   label?: string
+  /** Sends the start's text to the end's branch. Without it the arrow is only a drawing. */
+  context?: CanvasLinkContext
 }
 
 export interface CanvasLayout {
@@ -344,19 +354,30 @@ export function estimateWords(rect: CanvasRect, captionChars = 0): number {
   return Math.max(Math.round(words / 5) * 5, MIN_WORDS)
 }
 
+function withNoteBeforeQuestion(messages: ProviderMessage[], note: string): ProviderMessage[] {
+  const index = messages.findLastIndex((message) => message.role === 'user')
+  if (index < 0) return messages
+  return messages.map((message, i) =>
+    i === index ? { ...message, content: `${note}\n\n${message.content}` } : message
+  )
+}
+
 /** Adds the cards asked about to the newest user message, so stored turns never carry them. */
 export function withCanvasSources(
   messages: ProviderMessage[],
   sources: CanvasSourceExcerpt[]
 ): ProviderMessage[] {
   if (sources.length === 0) return messages
-  const index = messages.findLastIndex((message) => message.role === 'user')
-  if (index < 0) return messages
-  return messages.map((message, i) =>
-    i === index
-      ? { ...message, content: `${buildCanvasSourcesNote(sources)}\n\n${message.content}` }
-      : message
-  )
+  return withNoteBeforeQuestion(messages, buildCanvasSourcesNote(sources))
+}
+
+/** Adds what is linked into the branch to the newest user message, like the cards asked about. */
+export function withCanvasContext(
+  messages: ProviderMessage[],
+  items: CanvasContextExcerpt[]
+): ProviderMessage[] {
+  if (items.length === 0) return messages
+  return withNoteBeforeQuestion(messages, buildCanvasContextNote(items))
 }
 
 /** Adds the length to the newest user message, so stored turns never carry it. */
@@ -425,6 +446,65 @@ export function adjacentSlot(
 ): CanvasRect | null {
   const slot = rectAgainst(card.rect, side, size)
   return topLevelRects(cards).some((other) => rectsOverlap(slot, other)) ? null : slot
+}
+
+/** Which way each side of a draft can grow: away from the parent it is kept against. */
+export function draftGrowth(side: CanvasSide | undefined): { x: 1 | -1; y: 1 | -1 } {
+  return { x: side === 'left' ? -1 : 1, y: side === 'top' ? -1 : 1 }
+}
+
+/**
+ * A draft after growing by `change`, with its far corner moving and the rest staying put.
+ * Only the moving edges snap, and growth stops at what stands in the way, so a resize is
+ * limited rather than refused. `start` is assumed to be clear of `others`.
+ */
+export function resizeDraftRect(
+  start: CanvasRect,
+  side: CanvasSide | undefined,
+  change: { dw: number; dh: number },
+  others: CanvasRect[],
+  threshold: number
+): SnapResult {
+  const grow = draftGrowth(side)
+  const startEdgeX = grow.x > 0 ? start.x : start.x + start.w
+  const startEdgeY = grow.y > 0 ? start.y : start.y + start.h
+  const { xs, ys } = edgeCandidates(others)
+  const wanted = (edge: number, size: number, sign: number, candidates: number[]): number => {
+    const near = nearestCandidate(edge + sign * size, candidates, threshold)
+    return near === undefined ? size : sign * (near - edge)
+  }
+  let w = Math.max(
+    wanted(startEdgeX, start.w + change.dw, grow.x, xs),
+    Math.min(MIN_MESSAGE_SIZE.w, start.w)
+  )
+  let h = Math.max(
+    wanted(startEdgeY, start.h + change.dh, grow.y, ys),
+    Math.min(MIN_MESSAGE_SIZE.h, start.h)
+  )
+  const placed = (): CanvasRect => ({
+    x: grow.x > 0 ? startEdgeX : startEdgeX - w,
+    y: grow.y > 0 ? startEdgeY : startEdgeY - h,
+    w,
+    h
+  })
+  for (const other of others) {
+    if (!rectsOverlap(placed(), other)) continue
+    const roomW = grow.x > 0 ? other.x - startEdgeX : startEdgeX - (other.x + other.w)
+    const roomH = grow.y > 0 ? other.y - startEdgeY : startEdgeY - (other.y + other.h)
+    const fitsW = roomW >= Math.min(MIN_MESSAGE_SIZE.w, start.w)
+    const fitsH = roomH >= Math.min(MIN_MESSAGE_SIZE.h, start.h)
+    if (fitsW && (!fitsH || w - roomW <= h - roomH)) w = roomW
+    else if (fitsH) h = roomH
+    else return { rect: start, guidesX: [], guidesY: [] }
+  }
+  const rect = placed()
+  const movingX = grow.x > 0 ? rect.x + rect.w : rect.x
+  const movingY = grow.y > 0 ? rect.y + rect.h : rect.y
+  return {
+    rect,
+    guidesX: threshold > 0 && xs.includes(movingX) ? [movingX] : [],
+    guidesY: threshold > 0 && ys.includes(movingY) ? [movingY] : []
+  }
 }
 
 /** The card a card came from: an expansion's host, or the card a message continues. */
@@ -883,6 +963,25 @@ export function turnsThroughCard(cards: CanvasCard[], turns: Turn[], id: string)
   ]
 }
 
+/**
+ * The cards whose conversation a card follows, itself first: the same walk as
+ * `turnsThroughCard`, as cards. A note has no conversation but still receives nothing else.
+ */
+export function sessionCardIds(cards: CanvasCard[], id: string | undefined): string[] {
+  const path: string[] = []
+  let card = cardById(cards, id)
+  while (card && !path.includes(card.id)) {
+    path.push(card.id)
+    if (card.kind === 'note') break
+    const { turnId }: { turnId: number } = card
+    card =
+      card.kind === 'message'
+        ? cardById(cards, card.parentId)
+        : cards.find((other) => other.kind === 'message' && other.turnId === turnId)
+  }
+  return path
+}
+
 /* ---- Links ---- */
 
 /** A curve leaving and arriving squarely, heading `direction` (+1 or -1) along its axis. */
@@ -1267,7 +1366,8 @@ function soundLinks(raw: unknown, ids: ReadonlySet<string>): CanvasLink[] {
         id: link.id,
         from: link.from,
         to: link.to,
-        ...(typeof link.label === 'string' && link.label !== '' ? { label: link.label } : {})
+        ...(typeof link.label === 'string' && link.label !== '' ? { label: link.label } : {}),
+        ...(link.context === 'card' || link.context === 'branch' ? { context: link.context } : {})
       }
     ]
   })

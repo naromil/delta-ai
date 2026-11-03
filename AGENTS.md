@@ -108,6 +108,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | `canvas-arrange.ts`   | Rigid blocks: `alignSelection`, `distributeSelection`, `tidySelection`, `duplicateSelection`; never overlaps what stands on the plane                                                                                         |
 | `canvas-history.ts`   | Undo as patches: `diffCanvas`, `applyCanvasPatch` (leaves what the patch did not touch, refuses a turn that moved on or a landing that is taken)                                                                              |
 | `canvas-outline.ts`   | The canvas as a list: `canvasOutline`, `searchCanvasOutline`                                                                                                                                                                  |
+| `canvas-context.ts`   | What links send: `sessionContextLinks`, `contextExcerpts` (limits, shared history once), `requestContext`                                                                                                                     |
 | `prompts.ts`          | All LLM-facing prompt/instruction strings: system prompts, context template, lookup default, expand instructions                                                                                                              |
 
 ##### Main process (`src/main/`)
@@ -239,6 +240,8 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | Canvas notes, frames, connections      | `shared/canvas.ts` (types, `normalizeCanvasLayout`), `hooks/useCanvas.ts`, `CanvasNoteView`, `CanvasFrames`, `CanvasLinks` |
 | Asking about selected cards            | `shared/canvas-selection.ts` (`sourceExcerpts`), `shared/prompts.ts` (`buildCanvasSourcesNote`), `askAboutSelection`       |
 | Canvas map, outline and search         | `CanvasMinimap.tsx`, `CanvasOutline.tsx`, `shared/canvas-outline.ts`                                                       |
+| Context links, composer attachments    | `shared/canvas-context.ts`, `shared/prompts.ts` (`buildCanvasContextNote`), `CanvasDraft.tsx`, `linkMenuItems`             |
+| Resizing a draft                       | `shared/canvas.ts` (`resizeDraftRect`), `draftResize` gesture in `CanvasView.tsx`                                          |
 | Provider config form                   | `components/settings/models/ModelsTab.tsx` (+ `RoleRow.tsx`, `ConnectionCard.tsx`)                                         |
 | Model picker / catalog                 | `shared/model-catalog.ts` (pure), `services/model-catalog.ts` (fetch+cache)                                                |
 | Change the model-config schema         | `models/config-schema.ts` — add a vN→vN+1 step, bump `MODEL_CONFIG_VERSION`                                                |
@@ -407,6 +410,24 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   time only, like `withCanvasFit`, so stored turns never carry it. A single top-level answer continues
   instead, as its history is better context. `askedAboutRelations` draws the dashed lines for this, except
   from the card it continues, which already has its mark from `canvasContinuations`.
+- **A link can send context, and that context belongs to the branch.** `CanvasLink.context` is
+  `'card'` (the start's text) or `'branch'` (everything through the start); without it a link is only
+  a drawing. `requestContext` walks the sending card's session (`sessionCardIds`), so a link reaches
+  every later card on that branch and regenerating, but not sibling branches. It is read at request
+  time and put in the newest user message (`withCanvasContext`), so turns never carry it and editing a
+  note changes the next request. It stops at one hop, so links cannot cycle. Turns already in the
+  history or sent by another link appear once, and the text is capped (`TOTAL_TEXT_LIMIT`) because the
+  context budget never trims the newest message. Expansions on the branch receive it too. Links
+  added after an answer do not change that answer until it is regenerated.
+- **The composer attaches context before anything exists.** `Draft.context` holds pending links;
+  `ask` turns them into real ones. "Link" sets `pickingKey`, and while it matches the draft
+  `handlePickPress` takes presses in the capture phase, before a card's own handlers, so any click
+  on a card toggles it. "Text" opens a `CanvasNoteDraft` with `forDraft`, so a written text box is an
+  ordinary note, undoable and reusable, linked on commit. Links further up the branch show as
+  inherited chips. A draft cannot send while a linked answer is streaming.
+- **A draft resizes from the corner away from its parent** (`draftGrowth`, `resizeDraftRect`), by
+  drag or Alt+arrows. Growth stops at what stands in the way, since a draft has nothing to push and
+  no card has moved yet. `estimateWords` follows, so this is how the answer's length is chosen.
 - **Far out, a card is its title.** Below `FAR_ZOOM` the surface gets `data-far` at rest, and
   `.canvas-card-lod` covers the card with its title scaled against the zoom. The header and body are
   `visibility: hidden`, never `display: none`, because a card finishing out there still measures its

@@ -156,6 +156,30 @@ export function buildCanvasSourcesNote(sources: CanvasSourceExcerpt[]): string {
   ].join('\n\n')
 }
 
+export interface CanvasContextExcerpt {
+  /** A note is the user's own text, a card one question and answer, a branch a whole thread. */
+  kind: 'note' | 'card' | 'branch'
+  title: string
+  text: string
+  /** What the user wrote on the link: how this material relates. */
+  label?: string
+}
+
+/** Material the user linked into a branch. It stays available for the rest of that branch. */
+export function buildCanvasContextNote(items: CanvasContextExcerpt[]): string {
+  const blocks = items.map(({ kind, title, text, label }) => {
+    const lines = [
+      ...(title.trim() === '' ? [] : [`Title: ${title.trim()}`]),
+      ...(label ? [`How the user relates it: ${label}`] : [])
+    ]
+    return `<${kind}>\n${[...lines, text.trim()].join('\n\n')}\n</${kind}>`
+  })
+  return [
+    'The user linked this material from elsewhere on their canvas into this conversation: a <note> is their own text, a <card> one question and answer, and a <branch> a separate conversation. It is not part of this conversation, so do not assume it was said here. Use it where it is relevant.',
+    ...blocks
+  ].join('\n\n')
+}
+
 /* ---- Expand Instructions ---- */
 
 const EXPAND_SHARED_CONSTRAINTS = [

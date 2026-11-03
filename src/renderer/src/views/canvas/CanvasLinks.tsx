@@ -27,6 +27,8 @@ interface CanvasLinksProps {
   editingLinkId: string | null
   /** A connection being drawn: from a card to the pointer, or to the card under it. */
   pending: { from: CanvasRect; to: CanvasRect } | null
+  /** What the open composer will send: lines from each linked card to it. */
+  draftLinks: Array<{ id: string; from: CanvasRect; to: CanvasRect }>
   /** A click on a link, which travels to whichever end is farther from the click. */
   onFollow: (e: React.MouseEvent, id: string, start: CanvasPoint) => void
   /** A click on the faint line of a card asked about, which works the same way. */
@@ -158,6 +160,7 @@ function CanvasLinks({
   selectedIds,
   editingLinkId,
   pending,
+  draftLinks,
   onFollow,
   onFollowRelation,
   onSelectLink,
@@ -253,7 +256,9 @@ function CanvasLinks({
         {connectors.map(({ link, d }) => (
           <g
             key={link.id}
-            className={`canvas-connector${selectedIds.has(link.id) ? ' is-selected' : ''}`}
+            className={`canvas-connector${link.context ? ' canvas-connector--context' : ''}${
+              selectedIds.has(link.id) ? ' is-selected' : ''
+            }`}
             data-canvas-link={link.id}
           >
             <LinkLine d={d} arrow />
@@ -263,7 +268,13 @@ function CanvasLinks({
               onClick={(e) => onSelectLink(e, link.id)}
               onContextMenu={(e) => onLinkMenu(e, link.id)}
             >
-              <title>Double-click to label</title>
+              <title>
+                {link.context === 'branch'
+                  ? 'Sends the whole branch as context. Double-click to label'
+                  : link.context === 'card'
+                    ? 'Sends this card as context. Double-click to label'
+                    : 'Double-click to label'}
+              </title>
             </path>
           </g>
         ))}
@@ -275,6 +286,14 @@ function CanvasLinks({
               <title>Follow this link</title>
             </path>
           </g>
+        ))}
+        {draftLinks.map(({ id, from, to }) => (
+          <path
+            key={id}
+            className="canvas-link-line canvas-link-line--pending canvas-link-line--context"
+            d={connectorGeometry(from, to).d}
+            markerEnd="url(#canvas-arrow)"
+          />
         ))}
         {pending ? (
           <path

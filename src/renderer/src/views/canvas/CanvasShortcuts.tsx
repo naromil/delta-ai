@@ -23,7 +23,8 @@ const SHORTCUTS: readonly ShortcutGroup[] = [
       { keys: ['A'], what: 'Ask about the selected cards' },
       { keys: ['N'], what: 'Ask a question in a new session' },
       { keys: ['E'], what: 'Edit the focused question and resend, or a note' },
-      { keys: ['Double-click'], what: 'On empty space: ask here. On a title: zoom to it' }
+      { keys: ['Double-click'], what: 'On empty space: ask here. On a title: zoom to it' },
+      { keys: ['Alt', '↑↓←→'], what: 'While asking: resize the card, and so the answer' }
     ]
   },
   {

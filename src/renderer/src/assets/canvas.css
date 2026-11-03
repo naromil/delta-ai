@@ -733,7 +733,13 @@
   z-index: 4;
 }
 
+/*
+ * The rectangle decides the answer, not the room to compose it: on a small one the panel
+ * runs past the rectangle rather than squeezing the question away.
+ */
 .canvas-draft {
+  height: auto;
+  min-height: 100%;
   padding: 10px 12px;
   gap: 6px;
   border-color: var(--accent);
@@ -744,12 +750,13 @@
   display: flex;
   justify-content: space-between;
   gap: 8px;
+  padding-right: 8px;
   font-size: 12px;
   color: var(--text-3);
 }
 
 .canvas-draft-input {
-  flex: 1;
+  flex: 1 0 52px;
   min-height: 0;
   width: 100%;
   padding: 4px;
@@ -765,9 +772,112 @@
 
 .canvas-draft-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
+  padding: 0 8px;
+}
+
+.canvas-draft-actions-spacer {
+  flex: 1;
+}
+
+.canvas-draft-tool.is-active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* What the composer sends besides the question. */
+.canvas-draft-context {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 84px;
+  overflow-y: auto;
+}
+
+.canvas-draft-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  height: 22px;
+  padding: 0 2px 0 6px;
+  font-size: 12px;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+
+.canvas-draft-chip.is-inherited {
+  padding-right: 6px;
+  color: var(--text-3);
+  border-style: dashed;
+}
+
+.canvas-draft-chip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvas-draft-chip button {
+  flex: none;
+  padding: 0 4px;
+  font: inherit;
+  color: var(--text-3);
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+}
+
+.canvas-draft-chip button:hover,
+.canvas-draft-chip button:focus-visible {
+  color: var(--text-1);
+  background: var(--surface-3);
+  outline: none;
+}
+
+.canvas-draft-context-size {
+  align-self: center;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+/* The corner away from the parent the draft is kept against. */
+.canvas-card--draft .canvas-card-resize {
+  z-index: 1;
+  opacity: 0.7;
+}
+
+.canvas-card--draft .canvas-card-resize[data-side='left'] {
+  right: auto;
+  left: 0;
+  cursor: nesw-resize;
+  transform: scaleX(-1);
+}
+
+.canvas-card--draft .canvas-card-resize[data-side='top'] {
+  top: 0;
+  bottom: auto;
+  cursor: nesw-resize;
+  transform: scaleY(-1);
+}
+
+.canvas-card--draft.is-resizing {
+  transition: none;
+}
+
+/* Choosing what a composer should read: a click on any card adds it. */
+.canvas-surface.is-picking,
+.canvas-surface.is-picking .canvas-card:not(.canvas-card--draft),
+.canvas-surface.is-picking .canvas-card:not(.canvas-card--draft) * {
+  cursor: copy;
 }
 
 .canvas-draft-session {
@@ -901,6 +1011,12 @@
 .canvas-connector.is-selected .canvas-link-line {
   stroke: var(--accent);
   stroke-width: calc(2.5px / var(--canvas-zoom));
+}
+
+/* An arrow that sends its start to the branch it points at. */
+.canvas-connector--context .canvas-link-line,
+.canvas-link-line--context {
+  stroke: var(--accent);
 }
 
 .canvas-link-line--pending {
