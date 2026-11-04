@@ -1,3 +1,5 @@
+import { longestLine } from '../../../../shared/canvas'
+
 const MINIMAP_STORAGE_KEY = 'delta-canvas-minimap'
 
 /** DOM and wording helpers for the canvas board; nothing here holds state. */
@@ -55,24 +57,36 @@ export function releaseFocus(pressed: Element): void {
   if (active instanceof HTMLElement && !active.contains(pressed)) active.blur()
 }
 
-/** The height a card needs for its answer at its current width, in world pixels. */
+/**
+ * The height at which a card's body will not scroll, at its current width, in world pixels.
+ * Squeezed to nothing, a body's scroll height is what the browser itself will compare against
+ * its room: margins escaping the text and formulas taller than their line count, which no box
+ * around the text includes. It is rounded, so the extra pixel covers the fraction it loses.
+ */
 export function measureCardHeight(surface: HTMLElement, id: string): number | null {
   const card = surface.querySelector<HTMLElement>(`[data-canvas-card="${id}"] .canvas-card-surface`)
   const body = card?.querySelector<HTMLElement>('.canvas-card-body')
-  const content = body?.querySelector<HTMLElement>('.message-content')
-  if (!card || !body || !content) return null
-  // Without this, the scrollbar of an overflowing answer narrows the text being measured.
-  const overflowY = body.style.overflowY
+  if (!card || !body || !body.querySelector('.message-content')) return null
+  const chrome = card.offsetHeight - body.offsetHeight
+  const { flex, height, overflowY } = body.style
+  body.style.flex = 'none'
+  body.style.height = '0'
   body.style.overflowY = 'hidden'
-  const { paddingTop, paddingBottom } = getComputedStyle(body)
-  const height =
-    card.offsetHeight -
-    body.clientHeight +
-    parseFloat(paddingTop) +
-    parseFloat(paddingBottom) +
-    content.offsetHeight
+  const horizontalScrollbar = body.offsetHeight - body.clientHeight
+  const needed = chrome + horizontalScrollbar + body.scrollHeight + 1
+  body.style.flex = flex
+  body.style.height = height
   body.style.overflowY = overflowY
-  return height
+  return needed
+}
+
+/**
+ * The middle of a term on screen. A wrapped term's bounding box can be mostly empty space,
+ * so this is the middle of its longest line, which always has text under it.
+ */
+export function termPoint(term: Element): { x: number; y: number } {
+  const box = longestLine([...term.getClientRects()]) ?? term.getBoundingClientRect()
+  return { x: box.left + box.width / 2, y: box.top + box.height / 2 }
 }
 
 /** Scrolls a card body so `el` sits in its middle, without moving anything around it. */

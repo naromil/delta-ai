@@ -19,6 +19,7 @@ import {
   fitViewport,
   fitsOnScreen,
   linkPath,
+  longestLine,
   movingCardIds,
   nearestCardInDirection,
   normalizeCanvasLayout,
@@ -165,6 +166,29 @@ describe('words that fit', () => {
     expect(words).toBeGreaterThan(40)
     expect(words).toBeLessThan(120)
     expect(estimateWords(rect(0, 0, 40, 40))).toBeGreaterThan(0)
+  })
+
+  it('lands between what prose and prose with lists need in the real cards', () => {
+    // Words that fit, measured in the card styles with a 6.235px average character width.
+    const measured: Array<[number, number, number, number]> = [
+      [320, 240, 52, 54],
+      [360, 280, 73, 82],
+      [480, 360, 113, 130],
+      [600, 420, 177, 216],
+      [720, 560, 281, 327],
+      [1200, 500, 309, 440],
+      [300, 700, 155, 173]
+    ]
+    for (const [w, h, withLists, prose] of measured) {
+      const words = estimateWords(rect(0, 0, w, h), 10, 6.235)
+      expect(words).toBeGreaterThanOrEqual(withLists - 5)
+      expect(words).toBeLessThanOrEqual(prose + 5)
+    }
+  })
+
+  it('fits fewer words in a wider font', () => {
+    const area = rect(0, 0, 400, 300)
+    expect(estimateWords(area, 0, 8)).toBeLessThan(estimateWords(area, 0, 6))
   })
 
   it('states the length on the newest user message only', () => {
@@ -908,5 +932,19 @@ describe('canvasContinuations', () => {
 
   it('ignores a parent that no longer exists', () => {
     expect(canvasContinuations([message('b', 3, rect(0, 0), 'gone')])).toEqual([])
+  })
+})
+
+describe('longestLine', () => {
+  it('picks the widest line, so a wrapped term anchors on text', () => {
+    const first = { width: 60, height: 17 }
+    const second = { width: 150, height: 17 }
+    expect(longestLine([first, second])).toBe(second)
+  })
+
+  it('keeps the earliest on a tie and ignores empty boxes', () => {
+    const first = { width: 90, height: 17 }
+    expect(longestLine([{ width: 0, height: 17 }, first, { width: 90, height: 17 }])).toBe(first)
+    expect(longestLine([{ width: 40, height: 0 }])).toBeUndefined()
   })
 })

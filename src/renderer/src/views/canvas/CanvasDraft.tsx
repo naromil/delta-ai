@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { CanvasLinkContext, CanvasRect, CanvasSide } from '../../../../shared/canvas'
 import { estimateWords } from '../../../../shared/canvas'
+import { bodyCharWidth } from '../../lib/char-width'
 
 export interface CanvasDraftSession {
   id: string
@@ -197,7 +198,7 @@ function CanvasDraft({
             </label>
           )}
           <span title="How long the answer will be. Drag the corner or press Alt+arrows to change it.">
-            ≈ {estimateWords(rect, trimmed.length)} words
+            ≈ {estimateWords(rect, trimmed.length, bodyCharWidth())} words
           </span>
         </div>
         <textarea

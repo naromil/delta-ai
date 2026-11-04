@@ -440,14 +440,16 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   `collapsedFrom` is the height to return to, and anything sizing from a card (`openCardSize`) must use
   that, not `rect.h`. Inset cards on a collapsed host are not rendered (`hiddenInsetIds`). Regenerate
   reopens first, as the rectangle decides the length.
-- **The plane moves outside React.** Wheel zoom, wheel pan and drag pan go through
+- **The plane moves outside React.** Wheel zoom, wheel pan, drag pan and arrow keys go through
   `createViewportMotion`: frames ease with `chaseViewport` and are painted directly, with the layer
   promoted (`data-moving`), and `setViewport` runs once the view rests. So `viewportRef` is the live
   value and `viewport` can lag; `claimPress` and `glideTo` call `settle()` before relying on it. The
   transform and grid are never React style props (`paintViewport`), and `--canvas-zoom` changes only
-  at rest because every card inherits it.
-- **A rectangle decides the answer's length.** `estimateWords(rect, captionChars)` mirrors the card
-  typography in `canvas.css`; change them together. `withCanvasFit` appends the size to the newest
+  at rest because every card inherits it. A `glideTo` eases by CSS instead, so the surface transitions
+  its dots (`is-animating`) with the same timing as the world, or they would jump ahead of the cards.
+- **A rectangle decides the answer's length.** `estimateWords(rect, captionChars, charWidth)` mirrors
+  the card typography in `canvas.css`; change them together. It counts paragraphs, whose last lines
+  and gaps use up more of a wide card, and `bodyCharWidth` (`lib/char-width.ts`) measures the font. `withCanvasFit` appends the size to the newest
   user message at request time only, so turns never store it, and the note overrides the system
   prompt's concision and expand's four-sentence limit.
 - **A drag moves what was chosen; touching cards are joined when resizing or with Shift.** A plain drag
@@ -460,7 +462,8 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   back no further (`roomBehind`), so a gesture is limited rather than refused.
 - **A finished answer then fits its card's height, never its width.** `useCanvas` marks a card when
   its answer completes normally (not stopped, not failed), and `CanvasBoard` measures it on screen
-  and applies `fitCardHeight`, so an answer that finished in another view fits on return. It resizes
+  (`measureCardHeight` reads the scroll height of a body squeezed to nothing, so margins and tall
+  formulas that escape the text's box are counted) and applies `fitCardHeight`, so an answer that finished in another view fits on return. It resizes
   as `resizeCard` does. A body still scrolls when the card
   cannot change: an inset card capped by its host (refitted when dragged out), or a card that
   cannot shrink because what hangs below cannot follow.
@@ -488,8 +491,9 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   with no mark is two cards merely placed together, and a card joined to its parent only through a
   third card still gets a link. A `+` shows wherever it has open space to sit (`continueHandleBlocked`), since a drag can place the next message even when a click has no room beside the card.
 - **Canvas is keyboard-drivable.** Cards are focusable: arrows move to `nearestCardInDirection`,
-  Enter/Shift+Enter continue below/right, B goes back (`sourceCardId`; an expansion returns to its
-  term, flashed and scrolled into its card), E edits, Delete deletes, PgUp/PgDn scroll. With no card
+  Enter/Shift+Enter continue below/right, B goes back (`sourceCardId`; an expansion returns to the whole
+  card holding its term, flashed and scrolled into view, by `revealWholeCard`, which never zooms out
+  so far that cards become titles), E edits, Delete deletes, PgUp/PgDn scroll. With no card
   focused, Enter opens the composer, N a new session, arrows pan, +/−/0 zoom, `?` lists them all.
   Clicking a link travels to its farther end. Focus never scrolls the plane: drafts and editors
   focus with `preventScroll`, and the surface resets any scroll a focus causes; only the viewport
@@ -507,7 +511,8 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   host the card is `inset`; dragged clear (`resolveMove`) it stands alone and `CanvasLinks` draws
   the link, under the cards and faintly over them so it never strikes through text. Offsets are
   measured relative to the scaled `.canvas-card-surface`, which stays correct mid-animation.
-  `folded` has no meaning on a canvas.
+  `folded` has no meaning on a canvas. A wrapped term's link starts at the middle of its longest line
+  (`termPoint`), since the middle of its bounding box can be empty space.
 - **The map follows the viewport without rendering.** `paintViewport` calls `CanvasMinimap.paint`, which
   sets the SVG `viewBox` and view rectangle directly. The `viewBox` is held still during a drag on the
   map, or the map would slide from under the pointer. Whether it is open is the one thing kept in

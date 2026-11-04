@@ -322,35 +322,61 @@ export function snapMove(rect: CanvasRect, others: CanvasRect[], threshold: numb
 /* ---- Words that fit ---- */
 
 /*
- * Mirrors the card typography in canvas.css. Fitting is an estimate either way,
- * and the card body scrolls if the model overshoots.
+ * Mirrors the card typography in canvas.css, and was checked against answers laid out in the
+ * real cards: it lands between what plain prose and prose with lists need. The card still fits
+ * its height afterwards, so this only has to get the model close.
  */
-const CARD_PADDING_X = 32
-const CARD_PADDING_Y = 24
+const CARD_CHROME_Y = 3
+const CARD_BODY_INSET_X = 34
+const CARD_BODY_PADDING_Y = 24
+const CARD_HEADER_INSET_X = 30
 const HEADER_PADDING_Y = 20
 const HEADER_LINE_HEIGHT = 18
-const HEADER_CHAR_WIDTH = 6.4
 const HEADER_MAX_LINES = 2
+const BODY_FONT_SIZE = 14
+const HEADER_FONT_SIZE = 12.5
 const BODY_LINE_HEIGHT = 22
-const BODY_CHAR_WIDTH = 7
-const CHARS_PER_WORD = 6
-/** Paragraph gaps and list indents use up some of the area. */
-const AREA_FILL = 0.85
+const PARAGRAPH_GAP = 8
+/** Average width of body text when the renderer has not measured its real font. */
+export const BODY_CHAR_WIDTH = 7
+const CHARS_PER_WORD = 5.9
+const WORDS_PER_PARAGRAPH = 45
+/** A wrapped word leaves the end of each line empty, and a paragraph ends part way along one. */
+const CHARS_LOST_PER_LINE = 2.5
+const LINES_LOST_PER_PARAGRAPH = 0.5
 const MIN_WORDS = 10
 
-function headerLines(width: number, captionChars: number): number {
-  const lines = Math.ceil((captionChars * HEADER_CHAR_WIDTH) / Math.max(width, 1))
+function headerLines(cardWidth: number, captionChars: number, charWidth: number): number {
+  const width = Math.max(cardWidth - CARD_HEADER_INSET_X, 1)
+  const headerCharWidth = (charWidth * HEADER_FONT_SIZE) / BODY_FONT_SIZE
+  const lines = Math.ceil((captionChars * headerCharWidth) / width)
   return Math.min(Math.max(lines, 1), HEADER_MAX_LINES)
 }
 
-/** Roughly how many words of body text fit in a card, below its one or two line caption. */
-export function estimateWords(rect: CanvasRect, captionChars = 0): number {
-  const width = rect.w - CARD_PADDING_X
+/**
+ * Roughly how many words of body text fit in a card, below its one or two line caption.
+ * `charWidth` is the body font's average character width, which varies by platform.
+ */
+export function estimateWords(
+  rect: CanvasRect,
+  captionChars = 0,
+  charWidth = BODY_CHAR_WIDTH
+): number {
   const chrome =
-    CARD_PADDING_Y + HEADER_PADDING_Y + headerLines(width, captionChars) * HEADER_LINE_HEIGHT
+    CARD_CHROME_Y +
+    HEADER_PADDING_Y +
+    headerLines(rect.w, captionChars, charWidth) * HEADER_LINE_HEIGHT +
+    CARD_BODY_PADDING_Y
   const lines = Math.max(rect.h - chrome, 0) / BODY_LINE_HEIGHT
-  const chars = (lines * Math.max(width, 0)) / BODY_CHAR_WIDTH
-  const words = (chars / CHARS_PER_WORD) * AREA_FILL
+  const lineChars = Math.max(
+    Math.max(rect.w - CARD_BODY_INSET_X, 0) / charWidth - CHARS_LOST_PER_LINE,
+    1
+  )
+  const paragraphLines =
+    (WORDS_PER_PARAGRAPH * CHARS_PER_WORD) / lineChars +
+    LINES_LOST_PER_PARAGRAPH +
+    PARAGRAPH_GAP / BODY_LINE_HEIGHT
+  const words = (lines / paragraphLines) * WORDS_PER_PARAGRAPH
   return Math.max(Math.round(words / 5) * 5, MIN_WORDS)
 }
 
@@ -1233,6 +1259,17 @@ export function chaseViewport(
     Math.abs(target.y - next.y) < SETTLED_PX &&
     Math.abs(target.zoom - next.zoom) < SETTLED_ZOOM
   return settled ? target : next
+}
+
+/** The widest of a wrapped inline element's line boxes; the earliest wins a tie. */
+export function longestLine<T extends { width: number; height: number }>(
+  lines: readonly T[]
+): T | undefined {
+  const visible = lines.filter((line) => line.width > 0 && line.height > 0)
+  return visible.reduce<T | undefined>(
+    (best, line) => (best === undefined || line.width > best.width ? line : best),
+    undefined
+  )
 }
 
 const GRID_SPACING = 28

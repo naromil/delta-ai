@@ -65,6 +65,7 @@ import {
 import { isAnchoredRange } from '../lib/markdown'
 import { generateRequestId } from './chat/requests'
 import type { ExpandOutcome } from './useChatStreaming'
+import { bodyCharWidth } from '../lib/char-width'
 
 const SAVE_DELAY_MS = 300
 const UNTITLED = 'Untitled canvas'
@@ -379,7 +380,11 @@ export function useCanvas(): {
         withCanvasSources(serializeForChat({ turns: path }, 'chat'), sources),
         context
       )
-      const words = estimateWords(card.rect, captionLength(question?.content ?? ''))
+      const words = estimateWords(
+        card.rect,
+        captionLength(question?.content ?? ''),
+        bodyCharWidth()
+      )
       startSend(card, withCanvasFit(messages, words))
     },
     [startSend]
@@ -410,7 +415,7 @@ export function useCanvas(): {
       const context = requestContext(layout.cards, layout.links, turns, message.id)
       return withCanvasFit(
         withCanvasContext(messages, context),
-        estimateWords(rect, captionLength(caption))
+        estimateWords(rect, captionLength(caption), bodyCharWidth())
       )
     },
     []

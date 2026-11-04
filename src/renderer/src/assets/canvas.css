@@ -20,6 +20,13 @@
   background-image: radial-gradient(circle, var(--border-strong) 1px, transparent 1.2px);
 }
 
+/* The dots ease with the cards in `.canvas-world.is-animating`, or they would jump ahead of them. */
+.canvas-surface.is-animating {
+  transition:
+    background-position var(--canvas-settle) var(--canvas-ease),
+    background-size var(--canvas-settle) var(--canvas-ease);
+}
+
 .canvas-surface.is-drawing {
   cursor: crosshair;
 }

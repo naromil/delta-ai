@@ -15,6 +15,7 @@ import {
   connectorGeometry,
   linkPath
 } from '../../../../shared/canvas'
+import { termPoint } from './board-helpers'
 
 interface CanvasLinksProps {
   cards: CanvasCard[]
@@ -53,7 +54,7 @@ function isLinked(card: CanvasCard): card is CanvasExpansionCard {
 }
 
 /**
- * Each term's centre relative to its host card. Both come from the same DOM
+ * Where each term's link starts, relative to its host card. Both come from the same DOM
  * reading of the scaled surface, so the result holds while a card lands, lifts
  * or the zoom is mid-transition.
  */
@@ -66,11 +67,11 @@ function measureTermOffsets(cards: CanvasCard[], surface: HTMLElement): TermOffs
     const term = hostEl?.querySelector(`[data-canvas-terms~="${card.expansionId}"]`)
     if (!host || !hostEl || !term) continue
     const hostBox = hostEl.getBoundingClientRect()
-    const termBox = term.getBoundingClientRect()
+    const point = termPoint(term)
     const scale = hostBox.width / host.rect.w
     offsets[card.id] = {
-      x: (termBox.left + termBox.width / 2 - hostBox.left) / scale,
-      y: (termBox.top + termBox.height / 2 - hostBox.top) / scale
+      x: (point.x - hostBox.left) / scale,
+      y: (point.y - hostBox.top) / scale
     }
   }
   return offsets

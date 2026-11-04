@@ -117,9 +117,11 @@ import {
   releaseFocus,
   saveMinimapPreference,
   scrollIntoBody,
+  termPoint,
   wheelPanDelta
 } from './board-helpers'
 import { cardContent } from './card-content'
+import { bodyCharWidth } from '../../lib/char-width'
 import { createRightDrag } from './right-drag'
 import { cardMenuItems, frameMenuItems, linkMenuItems, planeMenuItems } from './canvas-menus'
 import { ZOOM_STEP, useCanvasKeyboard } from './useCanvasKeyboard'
@@ -266,7 +268,6 @@ const VIEW_HISTORY_LIMIT = 50
 /** Space kept around a new session opened from the keyboard. */
 const NEW_SESSION_GAP = 48
 /** How much of the plane around a term is brought on screen when returning to it. */
-const TERM_REVEAL = { w: 360, h: 220 }
 
 const ARROW_SIDES: Readonly<Record<string, CanvasSide>> = {
   ArrowRight: 'right',
@@ -1307,7 +1308,34 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     [flash, revealOnScreen, select, unfollow]
   )
 
-  /** From an expansion back to the term it explains, scrolled into its card and flashed. */
+  /**
+   * Brings all of a card on screen, zooming out only when it would not fit otherwise. Past
+   * the zoom where cards become titles its text would be gone, so a card too tall for that
+   * is centred on `focus` instead.
+   */
+  const revealWholeCard = useCallback(
+    (rect: CanvasRect, focus: CanvasPoint): void => {
+      const { left, width, height } = openArea()
+      const { zoom } = viewportRef.current
+      if (zoom >= FAR_ZOOM && fitsOnScreen(rect, zoom, { width, height })) {
+        revealOnScreen(rect)
+        return
+      }
+      const fit = fitViewport([rect], { width, height })
+      glideTo(
+        fit.zoom >= FAR_ZOOM
+          ? { ...fit, x: fit.x + left }
+          : {
+              x: left + width / 2 - focus.x * FAR_ZOOM,
+              y: height / 2 - focus.y * FAR_ZOOM,
+              zoom: FAR_ZOOM
+            }
+      )
+    },
+    [glideTo, openArea, revealOnScreen]
+  )
+
+  /** From an expansion back to the card its term is in: all of it, with the term flashed. */
   const returnToTerm = useCallback(
     (id: string): void => {
       const card = cardsRef.current.find((item) => item.id === id)
@@ -1325,17 +1353,17 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       const scale = hostEl.getBoundingClientRect().width / host.rect.w
       scrollIntoBody(term, scale)
       const hostBox = hostEl.getBoundingClientRect()
-      const termBox = term.getBoundingClientRect()
-      const center = {
-        x: host.rect.x + (termBox.left + termBox.width / 2 - hostBox.left) / scale,
-        y: host.rect.y + (termBox.top + termBox.height / 2 - hostBox.top) / scale
-      }
-      revealOnScreen(rectCenteredAt(center, TERM_REVEAL))
-      currentIdRef.current = host.id
+      const point = termPoint(term)
+      // First: after a key press this focus reveals the card by itself, which must not win.
       term.focus({ preventScroll: true })
+      revealWholeCard(host.rect, {
+        x: host.rect.x + (point.x - hostBox.left) / scale,
+        y: host.rect.y + (point.y - hostBox.top) / scale
+      })
+      currentIdRef.current = host.id
       flash(host.id, card.expansionId)
     },
-    [flash, focusCard, revealOnScreen, unfollow]
+    [flash, focusCard, revealWholeCard, unfollow]
   )
 
   const goToSource = useCallback(
@@ -1858,8 +1886,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     compose,
     panBy: (dx, dy) => {
       unfollow()
-      const current = viewportRef.current
-      glideTo({ ...current, x: current.x + dx, y: current.y + dy })
+      motionRef.current?.steer((view) => ({ ...view, x: view.x + dx, y: view.y + dy }))
     },
     undo: () => handleUndo(undo),
     redo: () => handleUndo(redo),
@@ -2458,6 +2485,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
 
   const surfaceClasses = [
     'canvas-surface',
+    animating ? 'is-animating' : '',
     isDrawMode || tool === 'connect' ? 'is-drawing' : '',
     tool === 'hand' || spaceHeld || gesture?.type === 'pan' ? 'is-panning' : '',
     gesture?.type === 'pan' ? 'is-grabbing' : '',
@@ -2661,7 +2689,9 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
               }}
             >
               <span className="canvas-draw-badge">
-                {drawsAnswer ? `≈ ${estimateWords(drawing.rect, drawCaption)} words` : ''}
+                {drawsAnswer
+                  ? `≈ ${estimateWords(drawing.rect, drawCaption, bodyCharWidth())} words`
+                  : ''}
                 {!drawsAnswer && gesture.what === 'note' ? 'Note' : ''}
                 {!drawsAnswer && gesture.what === 'frame' ? 'Frame' : ''}
                 {drawParent
@@ -2750,6 +2780,15 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
           onClick={openCanvasMenu}
         >
           ▾
+        </button>
+        <button
+          type="button"
+          className="canvas-tool"
+          title="Start a new, empty canvas"
+          disabled={cards.length === 0 && frames.length === 0}
+          onClick={canvas.newCanvas}
+        >
+          New
         </button>
         <button
           type="button"
