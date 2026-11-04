@@ -32,10 +32,73 @@ dmg:
   artifactName: ${name}-${version}.${ext}
 linux:
   target:
-    - AppImage
     - deb
+    - rpm
+    - pacman
+    - AppImage
   maintainer: naromil <nroamli@gmail.com>
   category: Utility
+  synopsis: AI helper for learning anything
+  syncDesktopName: true
+# electron-builder's default dependency lists are wrong for current distros: the pacman one names
+# packages Arch has dropped, and the rpm one uses a Fedora-only name that blocks openSUSE.
+deb:
+  artifactName: ${name}_${version}_${arch}.${ext}
+  depends:
+    # Plain libasound2 is virtual on Ubuntu 24.04, and apt can satisfy it with an incompatible package.
+    - libasound2t64 | libasound2
+    - libatspi2.0-0
+    - libgbm1
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libsecret-1-0
+    - libuuid1
+    - libxss1
+    - libxtst6
+    - xdg-utils
+  recommends:
+    - libappindicator3-1
+    - wl-clipboard
+rpm:
+  artifactName: ${name}-${version}.${arch}.${ext}
+  depends:
+    - gtk3
+    - libnotify
+    - nss
+    - (libXScrnSaver or libXss1)
+    - (libXtst or libXtst6)
+    - xdg-utils
+    - at-spi2-core
+    - (libuuid or libuuid1)
+    - (libsecret or libsecret-1-0)
+    - alsa-lib
+    - (mesa-libgbm or libgbm1)
+  afterRemove: build/linux/rpm-after-remove.sh
+  fpm:
+    - --directories
+    - /opt/Delta Explorer
+    - --rpm-tag
+    - 'Recommends: wl-clipboard'
+pacman:
+  artifactName: ${name}-${version}-${arch}.pkg.tar.zst
+  compression: zstd
+  depends:
+    - alsa-lib
+    - at-spi2-core
+    - gtk3
+    - libnotify
+    - libsecret
+    - libxss
+    - libxtst
+    - nss
+    - util-linux-libs
+    - xdg-utils
+  fpm:
+    - --pacman-optional-depends
+    - 'libappindicator-gtk3: tray icon on some desktops'
+    - --pacman-optional-depends
+    - 'wl-clipboard: read the clipboard for look-ups on Wayland'
 appImage:
-  artifactName: ${name}-${version}.${ext}
+  artifactName: ${name}-${version}-${arch}.${ext}
 npmRebuild: false

@@ -286,6 +286,11 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 - **Portal code is KDE/Wayland-specific by design.** `isScreenCapturePortalPreferred()` and
   `isKdeWaylandSession()` gate it. Keep `desktopCapturer` as default for
   X11/macOS/Windows and non-KDE Wayland.
+- **Linux ships as deb, rpm and pacman packages, plus a portable AppImage fallback.** Packages install
+  to `/opt/Delta Explorer` (electron-builder's fixed prefix) with `/usr/bin/delta-explorer` and
+  `com.deltaexplorer.desktop`, whose name must match `desktopName` (`syncDesktopName`). The `depends`
+  lists in `electron-builder.yml` are ours on purpose, because the defaults break on current distros.
+  After changing them, test install, launch, upgrade and removal on a real distro image.
 - **Config files** live under `{userData}/config/` (`providers.json`, `settings.json`).
   `settings.json` holds `hotkey`, `closeToTray`, `lookupContextMode`
   (default `'none'`), `kbAutoMaintain` (default `true`) and `theme`

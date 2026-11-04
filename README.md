@@ -110,6 +110,27 @@ Renderer (React 19)          Preload (contextBridge)        Main process (Node)
 
 ## Getting Started
 
+### Install on Linux
+
+Download the package for your distro from the
+[latest release](https://github.com/naromil/delta-ai/releases/latest) and install it from the
+directory you downloaded it to:
+
+| Distro                        | Command                                                                          |
+| ----------------------------- | -------------------------------------------------------------------------------- |
+| Debian, Ubuntu, Mint, Pop!_OS | `sudo apt install ./delta-explorer_<version>_amd64.deb`                          |
+| Fedora, RHEL, Rocky, Alma     | `sudo dnf install ./delta-explorer-<version>.x86_64.rpm`                         |
+| openSUSE                      | `sudo zypper install --allow-unsigned-rpm ./delta-explorer-<version>.x86_64.rpm` |
+| Arch, Manjaro, EndeavourOS    | `sudo pacman -U ./delta-explorer-<version>-x64.pkg.tar.zst`                      |
+
+The app installs to `/opt/Delta Explorer`, adds a `delta-explorer` command and appears in your
+application menu. Remove it with your package manager; your data in `~/.config/delta-explorer` is
+kept.
+
+On any other distro, or without root, use the portable fallback:
+`chmod +x delta-explorer-<version>-x86_64.AppImage` and run it. It needs FUSE 2 and doesn't add a
+menu entry.
+
 ### Prerequisites
 
 - **Node.js** >= 20.19 (CI uses 22)
@@ -146,7 +167,7 @@ with `npm run dev`.
 | `npm run verify`      | typecheck + lint + tests + formatting (CI gate)  |
 | `npm run format`      | Prettier write across the repo                   |
 | `npm run build`       | Typecheck then `electron-vite build`             |
-| `npm run build:linux` | Build Linux AppImage                             |
+| `npm run build:linux` | Build Linux deb, rpm, pacman and AppImage        |
 | `npm run build:mac`   | Build macOS DMG                                  |
 | `npm run build:win`   | Build Windows NSIS installer                     |
 
@@ -200,7 +221,7 @@ On Wayland, Electron's `clipboard.readText()` reads from the XWayland clipboard 
 | UI           | React 19, TypeScript, vanilla CSS                               |
 | OCR          | tesseract.js (WASM)                                             |
 | AI Providers | Google AI Studio, OpenAI, OpenAI Compatible, Ollama, OpenRouter |
-| Packaging    | electron-builder (AppImage, DMG, NSIS)                          |
+| Packaging    | electron-builder (deb, rpm, pacman, AppImage, DMG, NSIS)        |
 | Wayland      | dbus-next (XDG Desktop Portals)                                 |
 
 ---

@@ -5,6 +5,7 @@
   "description": "A revolutionary AI helper for learning anything.",
   "main": "./out/main/index.js",
   "author": "naromil <nroamli@gmail.com>",
+  "license": "MIT",
   "homepage": "https://github.com/naromil/delta-ai/",
   "scripts": {
     "format": "prettier --write .",

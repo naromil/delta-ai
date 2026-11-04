@@ -376,7 +376,8 @@ it asserts markdown constructs, monotonic `data-src` offsets that map back to th
 inline-safe frame markup. There is still no IPC-handler or end-to-end harness.
 
 CI (`.github/workflows/ci.yml`) runs the same checks plus a build on every push and PR. The
-release workflow packages Linux/macOS/Windows artifacts when a GitHub release is published.
+release workflow packages Linux (deb, rpm, pacman, AppImage), macOS and Windows artifacts when a
+GitHub release is published.
 
 ---
 

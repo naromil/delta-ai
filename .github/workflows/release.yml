@@ -33,7 +33,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libfuse2
+          sudo apt-get install -y libfuse2 rpm libarchive-tools zstd
 
       - name: Install dependencies
         run: npm ci
@@ -56,10 +56,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/delta-explorer*
             dist/*.dmg
             dist/*.deb
+            dist/*.rpm
+            dist/*.pkg.tar.zst
             dist/*.AppImage
             dist/*.exe
-            dist/*.snap
           fail_on_unmatched_files: false
