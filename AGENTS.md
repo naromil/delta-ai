@@ -417,7 +417,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   context budget never trims the newest message. Expansions on the branch receive it too. Links
   added after an answer do not change that answer until it is regenerated.
 - **The composer attaches context before anything exists.** `Draft.context` holds pending links;
-  `ask` turns them into real ones. Dragging a card, a note or a card's `+` onto the draft links it
+  `ask` turns them into real ones. A context link is drawn dashed. Dragging a card, a note or a card's `+` onto the draft links it
   (`overDraft`, `linkToDraft`), and everything selected goes along; a dragged card then returns to
   where it stood. A text box is an ordinary note dragged there. Links further up the branch show as
   inherited chips. A draft cannot send while a linked answer is streaming.
