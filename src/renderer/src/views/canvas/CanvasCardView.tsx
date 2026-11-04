@@ -275,12 +275,7 @@ function CanvasCardView(props: CanvasCardViewProps): React.JSX.Element {
       onClick={(e) => onCardClick(e, card.id)}
       onKeyDown={(e) => {
         if (e.target !== e.currentTarget || e.ctrlKey || e.metaKey || e.altKey) return
-        if (
-          (e.key === 'e' || e.key === 'E') &&
-          card.kind === 'message' &&
-          status !== 'streaming' &&
-          !collapsed
-        ) {
+        if ((e.key === 'e' || e.key === 'E') && status !== 'streaming' && !collapsed) {
           e.preventDefault()
           setEditing(true)
           return
@@ -357,7 +352,7 @@ function CanvasCardView(props: CanvasCardViewProps): React.JSX.Element {
                 </ActionIcon>
               </button>
             ) : null}
-            {card.kind === 'message' && status !== 'streaming' && !editing && !collapsed ? (
+            {status !== 'streaming' && !editing && !collapsed ? (
               <button
                 type="button"
                 className="canvas-icon-btn"
@@ -431,7 +426,7 @@ function CanvasCardView(props: CanvasCardViewProps): React.JSX.Element {
         >
           {editing ? (
             <CardQuestionEditor
-              question={caption}
+              question={card.kind === 'expansion' ? (question ?? '') : caption}
               onCancel={finishEditing}
               onSubmit={(question) => {
                 if (onEdit(card.id, question)) finishEditing()

@@ -47,8 +47,6 @@ interface AppSettings {
   lookupContextMode: LookupContextMode
   /** Learn the user's preferences in the background; see `kb/maintenance.ts`. */
   kbAutoMaintain: boolean
-  /** Underline likely-new terms in answers; see `suggested-terms.ts`. */
-  suggestTerms: boolean
   theme: ThemeMode
 }
 
@@ -183,7 +181,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   closeToTray: true,
   lookupContextMode: 'none',
   kbAutoMaintain: true,
-  suggestTerms: true,
   theme: 'dark'
 }
 
@@ -209,10 +206,6 @@ export function normalizeAppSettings(raw: unknown): AppSettings {
       typeof record.kbAutoMaintain === 'boolean'
         ? record.kbAutoMaintain
         : DEFAULT_SETTINGS.kbAutoMaintain,
-    suggestTerms:
-      typeof record.suggestTerms === 'boolean'
-        ? record.suggestTerms
-        : DEFAULT_SETTINGS.suggestTerms,
     theme:
       record.theme === 'system' || record.theme === 'light' || record.theme === 'dark'
         ? record.theme

@@ -16,10 +16,10 @@ interface TurnProps {
   /** Returns `false` when the edit was not sent (e.g. the user cancelled a confirm). */
   onEdit?: (turnId: number, content: string) => boolean
   onRetryExpansion?: (expansionId: number) => void
+  onEditExpansion?: (expansionId: number, at: FramePopupAt) => void
   onDismissExpansion?: (expansionId: number) => void
   onAskAnotherExpansion?: (expansionId: number, at: FramePopupAt) => void
   onPickExpansionAnswer?: (expansionId: number, at: FramePopupAt) => void
-  suggestedTerms?: readonly string[]
 }
 
 function Turn({
@@ -31,10 +31,10 @@ function Turn({
   onRegenerate,
   onEdit,
   onRetryExpansion,
+  onEditExpansion,
   onDismissExpansion,
   onAskAnotherExpansion,
-  onPickExpansionAnswer,
-  suggestedTerms
+  onPickExpansionAnswer
 }: TurnProps): React.JSX.Element {
   const isUser = turn.role === 'user'
   const hasAttachments = (turn.attachments?.length ?? 0) > 0
@@ -103,6 +103,7 @@ function Turn({
         onFold={onFold}
         onUnfold={onUnfold}
         onRetry={onRetryExpansion}
+        onEdit={onEditExpansion}
         onDismiss={onDismissExpansion}
         onAskAnother={onAskAnotherExpansion}
         onPickAnswer={onPickExpansionAnswer}
@@ -112,6 +113,7 @@ function Turn({
       onFold,
       onUnfold,
       onRetryExpansion,
+      onEditExpansion,
       onDismissExpansion,
       onAskAnotherExpansion,
       onPickExpansionAnswer
@@ -204,7 +206,6 @@ function Turn({
             <Markdown
               source={turn.content}
               expansions={turn.expansions}
-              suggestedTerms={suggestedTerms}
               onFold={onFold}
               onUnfold={onUnfold}
               renderExpansion={renderExpansion}

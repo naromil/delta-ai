@@ -5,6 +5,11 @@ export interface ImageAttachment extends ImageInput {
   name: string
 }
 
+/** What a provider receives of an attachment: the name stays on the record. */
+export function attachmentImages(attachments: ImageAttachment[] | undefined): ImageInput[] {
+  return (attachments ?? []).map(({ mediaType, data }) => ({ mediaType, data }))
+}
+
 export const MAX_ATTACHMENTS_PER_MESSAGE = 4
 /** Long-edge limit the renderer scales to; also keeps records and requests small. */
 export const MAX_IMAGE_EDGE = 1568

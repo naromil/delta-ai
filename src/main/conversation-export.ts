@@ -14,6 +14,9 @@ function expansionLines(node: ExpansionNode, depth: number): string[] {
   const prefix = '> '.repeat(depth)
   const prompt = node.prompt ? ` — ${node.prompt}` : ''
   const lines = [`${prefix}**Expansion on “${node.originalText}”**${prompt}`]
+  for (const attachment of node.attachments ?? []) {
+    lines.push(`${prefix}_[Image: ${attachment.name}]_`)
+  }
   const answer = node.answer.trimEnd()
   if (answer) {
     for (const line of answer.split('\n')) lines.push(`${prefix}${line}`)

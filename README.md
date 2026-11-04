@@ -95,7 +95,6 @@ Renderer (React 19)          Preload (contextBridge)        Main process (Node)
 | Channel                                                                            | Direction       | Purpose                                          |
 | ---------------------------------------------------------------------------------- | --------------- | ------------------------------------------------ |
 | `chat-send` / `chat-chunk` / `chat-response` / `chat-error`                        | Renderer ↔ Main | Streaming chat messages (keyed by `requestId`)   |
-| `chat-suggest-terms`                                                               | Renderer → Main | Terms in a finished answer worth underlining     |
 | `chat-expand` / `chat-expand-chunk`                                                | Renderer ↔ Main | Streaming inline expansions                      |
 | `chat-replace-conversation`                                                        | Main → Renderer | Hydrate transferred conversation (lookup → chat) |
 | `lookup-trigger-grow` / `lookup-grow`                                              | Lookup ↔ Main   | Window grow animation on first ask               |

@@ -35,8 +35,8 @@ interface ConversationProps {
   onFold: (id: number) => void
   onUnfold: (id: number) => void
   onRetryExpansion?: (expansionId: number) => void
+  onEditExpansion?: (expansionId: number, prompt: string) => void
   onDismissExpansion?: (expansionId: number) => void
-  suggestedTerms?: Readonly<Record<number, string[]>>
   hideToolbar?: boolean
   transferKey?: number
   conversationId?: string | null
@@ -71,8 +71,8 @@ function Conversation({
   onFold,
   onUnfold,
   onRetryExpansion,
+  onEditExpansion,
   onDismissExpansion,
-  suggestedTerms,
   hideToolbar = false,
   transferKey,
   conversationId,
@@ -105,10 +105,10 @@ function Conversation({
     selectionBar,
     notice,
     handleContextMenu,
-    handleSuggestedTerm,
     regenerateExpansion,
     removeExpansion,
     askAnotherExpansion,
+    editExpansion: startEditingExpansion,
     pickExpansionAnswer,
     closeContextMenu,
     closeExpandPrompt,
@@ -118,7 +118,9 @@ function Conversation({
     onExpand,
     onUnfold,
     onRetryExpansion,
-    onDismissExpansion
+    onEditExpansion,
+    onDismissExpansion,
+    allowImages: true
   })
 
   useEffect(() => {
@@ -451,8 +453,6 @@ function Conversation({
                 className="message-turn"
                 data-turn-id={turn.id}
                 onContextMenu={handleContextMenu}
-                onClick={handleSuggestedTerm}
-                onKeyDown={handleSuggestedTerm}
               >
                 <Turn
                   turn={turn}
@@ -463,10 +463,10 @@ function Conversation({
                   onRegenerate={onRegenerate ? handleRegenerate : undefined}
                   onEdit={onEditMessage ? handleEditMessage : undefined}
                   onRetryExpansion={regenerateExpansion}
+                  onEditExpansion={startEditingExpansion}
                   onDismissExpansion={removeExpansion}
                   onAskAnotherExpansion={askAnotherExpansion}
                   onPickExpansionAnswer={pickExpansionAnswer}
-                  suggestedTerms={suggestedTerms?.[turn.id]}
                 />
               </div>
             ))}

@@ -7,8 +7,7 @@ import ExpansionFrame from '../../src/renderer/src/components/conversation/Expan
 import {
   anchoredRange,
   isAnchoredRange,
-  isPlainMarkdown,
-  suggestedTermRanges
+  isPlainMarkdown
 } from '../../src/renderer/src/lib/markdown'
 
 const noop = (): void => {}
@@ -608,55 +607,5 @@ describe('frame actions and question', () => {
     ])
     expect(markup).not.toContain('>Why is this so?<')
     expect(markup).toContain('title="Why is this so?"')
-  })
-})
-
-describe('suggested terms', () => {
-  const render = (source: string, terms: string[], expansions: ExpansionNode[] = []): string =>
-    renderToStaticMarkup(
-      createElement(Markdown, {
-        source,
-        expansions,
-        suggestedTerms: terms,
-        onFold: noop,
-        onUnfold: noop,
-        renderExpansion: () => null
-      })
-    )
-
-  it('underlines the first whole-word match only, keeping exact offsets', () => {
-    const source = 'A monad wraps. Monads and a monad again.'
-    const [range] = suggestedTermRanges(source, ['monad'], [])
-    expect(source.slice(range.start, range.end)).toBe('monad')
-    const markup = render(source, ['monad'])
-    expect(markup.match(/suggested-term/g)).toHaveLength(1)
-    expect(markup).toContain(`data-src="${range.start}"`)
-    expect(markup).toContain(`data-src="${range.end}"`)
-  })
-
-  it('never marks code, escaped text or an expanded range', () => {
-    expect(suggestedTermRanges('use `monad` here', ['monad'], [])).toEqual([])
-    expect(
-      suggestedTermRanges(
-        'a monad',
-        ['monad'],
-        [expansion({ id: 1, start: 2, end: 7, originalText: 'monad' })]
-      )
-    ).toEqual([])
-  })
-
-  it('does not move the underline to a later mention once a term is expanded', () => {
-    const expanded = expansion({ id: 1, start: 2, end: 7, originalText: 'monad' })
-    expect(suggestedTermRanges('a monad and a monad', ['monad'], [expanded])).toEqual([])
-  })
-
-  it('caps how many terms one answer can underline', () => {
-    const terms = ['a1', 'a2', 'a3', 'a4', 'a5', 'a6', 'a7']
-    expect(suggestedTermRanges(terms.join(' '), terms, [])).toHaveLength(5)
-  })
-
-  it('treats a term as literal text, not a pattern', () => {
-    expect(suggestedTermRanges('see C++ here', ['C++'], [])).toHaveLength(1)
-    expect(suggestedTermRanges('see Cxx here', ['C.*'], [])).toEqual([])
   })
 })

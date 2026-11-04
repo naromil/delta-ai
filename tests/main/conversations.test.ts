@@ -281,4 +281,41 @@ describe('conversation store', () => {
     expect(results[1]).toMatchObject({ matchedIn: 'content' })
     expect(results[1].snippet).toContain('needle')
   })
+
+  it('finds text inside an expansion, however deeply nested', async () => {
+    const node = {
+      id: 1,
+      start: 0,
+      end: 1,
+      originalText: 'a',
+      answer: 'outer',
+      status: 'done' as const,
+      folded: false,
+      children: [
+        {
+          id: 2,
+          start: 0,
+          end: 1,
+          originalText: 'o',
+          answer: 'a buried haystack answer',
+          status: 'done' as const,
+          folded: false,
+          children: []
+        }
+      ]
+    }
+    await saveConversation(
+      record('chat_expanded', {
+        title: 'Unrelated',
+        state: {
+          turns: [{ id: 1, role: 'assistant', content: 'plain', expansions: [node] }]
+        }
+      })
+    )
+
+    const results = await searchConversations('haystack')
+
+    expect(results.map((result) => result.id)).toEqual(['chat_expanded'])
+    expect(results[0].snippet).toContain('haystack')
+  })
 })

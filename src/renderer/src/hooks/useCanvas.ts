@@ -60,7 +60,8 @@ import {
   insertExpansionInTurns,
   maxExpansionId,
   removeExpansionInTurns,
-  restartExpansion
+  restartExpansion,
+  updateExpansion
 } from '../../../shared/rich-text'
 import { isAnchoredRange } from '../lib/markdown'
 import { generateRequestId } from './chat/requests'
@@ -651,12 +652,15 @@ export function useCanvas(): {
   const editCard = useCallback(
     (id: string, question: string): void => {
       const card = docRef.current.layout.cards.find((item) => item.id === id)
-      if (card?.kind !== 'message') return
+      if (!card || card.kind === 'note') return
       updateDoc((prev) => ({
         ...prev,
-        turns: prev.turns.map((turn) =>
-          turn.id === card.userTurnId ? { ...turn, content: question } : turn
-        )
+        turns:
+          card.kind === 'expansion'
+            ? updateExpansion(prev.turns, card.expansionId, { prompt: question })
+            : prev.turns.map((turn) =>
+                turn.id === card.userTurnId ? { ...turn, content: question } : turn
+              )
       }))
       regenerateCard(id)
     },

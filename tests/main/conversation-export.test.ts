@@ -65,6 +65,26 @@ describe('renderConversationMarkdown', () => {
     expect(markdown.endsWith('\n\n')).toBe(false)
   })
 
+  it('names the images asked about in an expansion', () => {
+    const image = { name: 'chart.jpg', mediaType: 'image/jpeg', data: 'AAAA' }
+    const markdown = renderConversationMarkdown(
+      record({
+        state: {
+          turns: [
+            {
+              id: 1,
+              role: 'assistant',
+              content: 'alpha',
+              expansions: [expansion({ attachments: [image] })]
+            }
+          ]
+        }
+      })
+    )
+    expect(markdown).toContain('> _[Image: chart.jpg]_')
+    expect(markdown).not.toContain('AAAA')
+  })
+
   it('quotes each top-level expansion after its turn, including folded ones', () => {
     const markdown = renderConversationMarkdown(
       record({

@@ -16,7 +16,8 @@ import {
   maxExpansionId,
   removeExpansionInTurns,
   restartExpansion,
-  setExpansionFolded
+  setExpansionFolded,
+  updateExpansion
 } from '../../../shared/rich-text'
 import { isAnchoredRange } from '../lib/markdown'
 import { buildExpandRequest } from '../../../shared/expand-prompt'
@@ -56,14 +57,19 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
   /** Why the newest autosave of the open conversation failed, if it did. */
   saveError: string | null
   /** Terms to underline per turn id. Session-only: never written to the conversation. */
-  suggestedTerms: Readonly<Record<number, string[]>>
   send: (content: string, attachments?: ImageAttachment[]) => void
   stop: () => void
   retry: (turnId: number) => void
   regenerate: (turnId: number) => void
   editMessage: (turnId: number, content: string) => void
-  expand: (turnId: number, target: ExpansionTarget, prompt?: string) => ExpandOutcome
+  expand: (
+    turnId: number,
+    target: ExpansionTarget,
+    prompt?: string,
+    attachments?: ImageAttachment[]
+  ) => ExpandOutcome
   retryExpansion: (expansionId: number) => void
+  editExpansion: (expansionId: number, prompt: string) => void
   dismissExpansion: (expansionId: number) => void
   fold: (id: number) => void
   unfold: (id: number) => void
@@ -83,7 +89,6 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
   const [contextReady, setContextReady] = useState(role !== 'lookup')
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [conversationTitle, setConversationTitle] = useState('')
-  const [suggestedTerms, setSuggestedTerms] = useState<Readonly<Record<number, string[]>>>({})
   const requestsRef = useRef<RequestBookkeeping>(createRequests())
   const expansionIdCounterRef = useRef(1)
   const hasSentRef = useRef(false)
@@ -122,13 +127,6 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
       setLoading,
       setContextReady,
       requestSave,
-      onAnswerComplete: (turnId, text) => {
-        void window.api.suggestTerms(text).then((terms) => {
-          // The user may have moved on; a turn that is gone needs no underlines.
-          if (terms.length === 0 || !stateRef.current.turns.some((t) => t.id === turnId)) return
-          setSuggestedTerms((prev) => ({ ...prev, [turnId]: terms }))
-        })
-      },
       onGrown: options?.onGrown,
       onReplaceConversation: (imported) => {
         // The transferred conversation replaces every in-flight request; their
@@ -337,7 +335,12 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
   )
 
   const expand = useCallback(
-    (turnId: number, target: ExpansionTarget, prompt?: string): ExpandOutcome => {
+    (
+      turnId: number,
+      target: ExpansionTarget,
+      prompt?: string,
+      attachments?: ImageAttachment[]
+    ): ExpandOutcome => {
       const turn = stateRef.current.turns.find((item) => item.id === turnId)
       if (!turn) return { ok: false, reason: 'Message not found.' }
 
@@ -355,7 +358,8 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
         target.parentExpansionId,
         target,
         role,
-        prompt
+        prompt,
+        attachments
       )
       if (!messages) return { ok: false, reason: 'Selection is no longer available.' }
 
@@ -365,7 +369,8 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
         turnId,
         target,
         expansionId,
-        prompt
+        prompt,
+        attachments
       )
       if (!insertion.ok) return { ok: false, reason: insertion.reason }
 
@@ -373,7 +378,14 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
       startExpansion(turnId, expansionId, messages)
 
       setState((prev) => {
-        const result = insertExpansionInTurns(prev.turns, turnId, target, expansionId, prompt)
+        const result = insertExpansionInTurns(
+          prev.turns,
+          turnId,
+          target,
+          expansionId,
+          prompt,
+          attachments
+        )
         return result.ok ? { ...prev, turns: result.turns } : prev
       })
       return { ok: true }
@@ -393,8 +405,9 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
     for (const requestId of requestIds) window.api.chatCancel(requestId)
   }, [])
 
-  const retryExpansion = useCallback(
-    (expansionId: number) => {
+  /** A fresh answer in place, to `prompt`: Retry and Regenerate keep the question, Edit changes it. */
+  const restartExpansionWith = useCallback(
+    (expansionId: number, prompt: string | undefined) => {
       const location = findExpansionInTurns(stateRef.current.turns, expansionId)
       if (!location) return
       const parentId = location.parent?.id
@@ -407,16 +420,37 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
         parentId,
         location.node,
         role,
-        location.node.prompt
+        prompt,
+        location.node.attachments
       )
       if (!messages) return
 
       cancelExpansionStreams(expansionId)
       startExpansion(location.turn.id, expansionId, messages)
-      setState((prev) => ({ ...prev, turns: restartExpansion(prev.turns, expansionId) }))
+      setState((prev) => ({
+        ...prev,
+        turns: restartExpansion(updateExpansion(prev.turns, expansionId, { prompt }), expansionId)
+      }))
       requestSave(true)
     },
     [role, startExpansion, cancelExpansionStreams, requestSave]
+  )
+
+  const retryExpansion = useCallback(
+    (expansionId: number) => {
+      const location = findExpansionInTurns(stateRef.current.turns, expansionId)
+      if (location) restartExpansionWith(expansionId, location.node.prompt)
+    },
+    [restartExpansionWith]
+  )
+
+  /** A blank question goes back to the plain definition or explanation. */
+  const editExpansion = useCallback(
+    (expansionId: number, prompt: string) => {
+      const question = prompt.trim()
+      restartExpansionWith(expansionId, question === '' ? undefined : question)
+    },
+    [restartExpansionWith]
   )
 
   const dismissExpansion = useCallback(
@@ -525,7 +559,6 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
     conversationId,
     conversationTitle,
     saveError,
-    suggestedTerms,
     send,
     stop,
     retry,
@@ -533,6 +566,7 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
     editMessage,
     expand,
     retryExpansion,
+    editExpansion,
     dismissExpansion,
     fold,
     unfold,

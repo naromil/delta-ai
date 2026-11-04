@@ -16,7 +16,6 @@ import {
 import { handleHotkeyPressed } from './lookup/lookup'
 import { cancelOCR } from './lookup/capture'
 import { callProviderStream } from './provider'
-import { suggestTermsForAnswer } from './suggested-terms'
 import type { AgentTools, ProviderMessage } from './provider'
 import { IMAGES_UNSUPPORTED_ERROR, fitImagesToSupport, modelImageSupport } from './image-support'
 import type { RoleId } from '../shared/models'
@@ -127,20 +126,31 @@ if (!hasSingleInstanceLock) {
     ipcMain.on('chat-expand', (event, payload: unknown) => {
       const request = parseStreamPayload(payload)
       if (!request) return
-      const { requestId } = request
+      const { requestId, role } = request
       const sender = event.sender
-      const messages = applyContextBudget(withAutoLoadedMemories(request.messages), request.role)
-      void streamToSender(sender, requestId, messages, request.role, {
-        chunk: (delta) => safeSend(sender, 'chat-expand-chunk', { requestId, delta }),
-        done: (text) => safeSend(sender, 'chat-expand-chunk', { requestId, text, done: true }),
-        cancelled: (text) =>
-          safeSend(sender, 'chat-expand-chunk', { requestId, text, done: true, cancelled: true }),
-        failed: (error) => safeSend(sender, 'chat-expand-chunk', { requestId, error })
-      })
+      const fitted = fitImagesToSupport(request.messages, modelImageSupport(role))
+      if (!fitted) {
+        safeSend(sender, 'chat-expand-chunk', { requestId, error: IMAGES_UNSUPPORTED_ERROR })
+        return
+      }
+      // A model that cannot use the tools still gets the auto-loaded notes.
+      const agent = memoryAgentFor(role)
+      const messages = applyContextBudget(agent ? fitted : withAutoLoadedMemories(fitted), role)
+      void streamToSender(
+        sender,
+        requestId,
+        messages,
+        role,
+        {
+          chunk: (delta) => safeSend(sender, 'chat-expand-chunk', { requestId, delta }),
+          done: (text) => safeSend(sender, 'chat-expand-chunk', { requestId, text, done: true }),
+          cancelled: (text) =>
+            safeSend(sender, 'chat-expand-chunk', { requestId, text, done: true, cancelled: true }),
+          failed: (error) => safeSend(sender, 'chat-expand-chunk', { requestId, error })
+        },
+        agent
+      )
     })
-
-    /* Terms in a finished answer worth underlining; empty when off or unavailable. */
-    ipcMain.handle('chat-suggest-terms', (_event, answer: unknown) => suggestTermsForAnswer(answer))
 
     /** Stop a provider stream started by chat-send/chat-expand. */
     ipcMain.on('chat-cancel', (event, requestId: string) => {

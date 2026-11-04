@@ -27,7 +27,6 @@ const api = {
     closeToTray: boolean
     lookupContextMode: string
     kbAutoMaintain: boolean
-    suggestTerms: boolean
     theme: string
   }> => ipcRenderer.invoke('load-settings'),
   saveSettings: (settings: {
@@ -35,7 +34,6 @@ const api = {
     closeToTray?: boolean
     lookupContextMode?: string
     kbAutoMaintain?: boolean
-    suggestTerms?: boolean
     theme?: string
   }): Promise<{ success: boolean; hotkeyMode: 'global' | 'local'; error?: string }> =>
     ipcRenderer.invoke('save-settings', settings),
@@ -78,8 +76,6 @@ const api = {
     role?: string
   }) => ipcRenderer.send('chat-expand', payload),
   chatCancel: (requestId: string) => ipcRenderer.send('chat-cancel', requestId),
-  suggestTerms: (answer: string): Promise<string[]> =>
-    ipcRenderer.invoke('chat-suggest-terms', answer),
   chatOnChunk: (cb: (data: { requestId: string; delta: string }) => void) => {
     const handler = (
       _e: Electron.IpcRendererEvent,

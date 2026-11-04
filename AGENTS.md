@@ -63,7 +63,6 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | `chat-image-support`                      | Renderer → Main | Whether a role's model reads images (`yes` / `no` / `unknown`); the composer asks on attach     |
 | `chat-expand`                             | Renderer → Main | Request an inline word-expansion stream                                                         |
 | `chat-expand-chunk`                       | Main → Renderer | Expand chunks (`done`; `cancelled: true` + partial text after stop)                             |
-| `chat-suggest-terms`                      | Renderer → Main | Terms in a finished answer worth underlining; empty when off or unavailable                     |
 | `chat-replace-conversation`               | Main → Renderer | Hydrate transferred state + id/title/createdAt into the chat window                             |
 | `lookup-trigger-grow`                     | Lookup → Main   | On first ask, signal main to animate window growth                                              |
 | `lookup-transfer`                         | Lookup → Main   | Send `{state, conversationId?}` to chat; main transforms context, persists                      |
@@ -100,8 +99,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | `conversation.ts`     | `ConversationState` / `Turn` (markdown `content` + offset-anchored `expansions`), `ConversationMeta`, `toConversationMeta`, `persistableTurns`, `serializeForChat`, `buildConversationTitle`, `migrateConversationRecord`     |
 | `context-budget.ts`   | Pure token budgeting: `estimateTokens` (4 chars/token), `budgetFor` (85% of the window minus the output reserve), `trimMessages` (drops oldest non-system messages, never the last)                                           |
 | `rich-text.ts`        | Pure rich-text model: `ExpansionNode`, `validateInsertion` / `insertExpansion(InTurns)` / `updateExpansion` / `setExpansionFolded` / `findExpansionIn*` / `maxExpansionId`, `flattenMarkdown`, legacy `migrateLegacySegments` |
-| `expand-prompt.ts`    | `buildExpandRequest(state, turn, parentId, range, role, prompt?)` — system prompt, recent history, ancestor chain, instruction; `buildExpandMessages` assembles them                                                          |
-| `suggested-terms.ts`  | `parseSuggestedTerms` (defensive reply parsing, must occur in the answer), `MAX_SUGGESTED_TERMS`                                                                                                                              |
+| `expand-prompt.ts`    | `buildExpandRequest(state, turn, parentId, range, role, prompt?, attachments?)` — a follow-up's messages at that turn, ancestor chain, instruction; `buildExpandMessages` assembles the branch                                |
 | `attachments.ts`      | `ImageAttachment`, per-message/size limits, `isImageInput` / `isImageAttachment` validation, `scaledImageSize`                                                                                                                |
 | `canvas.ts`           | Pure canvas model: card types, rectangles, snapping, `estimateWords`, `withCanvasFit`, `resolveMove`, session walks (`turnsThroughCard`), `linkPath`, viewport math, `normalizeCanvasLayout`                                  |
 | `canvas-selection.ts` | What a selection covers: `marqueeHits`, `movingForSelection` (frames bring contents, cards bring what is joined), `sessionAncestorIds`, `cardAtPoint`, `selectionMarkdown`, `sourceExcerpts`                                  |
@@ -118,7 +116,6 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | App lifecycle       | `index.ts`                    | Main window, tray, streaming IPC (chat-send/expand/cancel), lookup transfer, conversation IPC                                                                                         |
 | Conversation store  | `conversations.ts`            | CRUD on `{userData}/conversations/{id}.json` + `{id}.meta.json` sidecars; per-id write chain (`saveConversation`, `mutateConversation`); title+content search, KB-fed mark            |
 | Image support       | `image-support.ts`            | `modelImageSupport(role)` (catalog modalities, fail-open) + `fitImagesToSupport` (refuse current, drop history images)                                                                |
-| Suggested terms     | `suggested-terms.ts`          | `suggestTermsForAnswer`: one tool-less `kb-maintenance` call per finished answer, judged from `index*` notes; every failure is no suggestions                                         |
 | Conversation export | `conversation-export.ts`      | `renderConversationMarkdown` (expansions quoted inline) + `exportConversationToFile` (save dialog, atomic write)                                                                      |
 | Memory store        | `memory/store.ts`             | Shell-like ops confined to `{userData}/memories/` (`listMemories`, `readMemory`, `readAutoLoadedMemories`, `grepMemories`, `writeMemory`, `editMemory`, `moveMemory`, `removeMemory`) |
 | Memory tools        | `memory/tools.ts`             | `memory_*` AI SDK tools + `memoryAgentFor(role)` (assistant vs curator prompt, catalog gate, fail-open) + `memory-updated` broadcast                                                  |
@@ -166,7 +163,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | Conversation     | `components/conversation/Conversation.tsx`                 | Message list, composer + Stop button (Esc), toolbar (export/delete), context menu                                                                            |
 | Turn             | `components/conversation/Turn.tsx`                         | Single message (user/assistant) with avatar, markdown body, retry, inline edit-and-resend                                                                    |
 | Markdown         | `components/conversation/Markdown.tsx`                     | remark → mdast → hast → React; block mode for turns, inline mode+`md-*` spans for frames; `data-src` text anchors                                            |
-| Markdown core    | `lib/markdown.ts`                                          | Pure parse/splice/anchor helpers (`prepareMarkdownTree`, `anchoredRange`, `isAnchoredRange`, `suggestedTermRanges`), math delimiters                         |
+| Markdown core    | `lib/markdown.ts`                                          | Pure parse/splice/anchor helpers (`prepareMarkdownTree`, `anchoredRange`, `isAnchoredRange`), math delimiters                                                |
 | Code / math      | `lib/highlight.ts`, `lib/math.ts`                          | lowlight → hast (text-preserving) and KaTeX → HTML (`trust: false`)                                                                                          |
 | Image attach     | `lib/image-attachments.ts`, `hooks/useImageAttachments.ts` | Decode + scale + re-encode to JPEG; composer add flow (capability check, limits, notices)                                                                    |
 | ExpansionFrame   | `components/conversation/ExpansionFrame.tsx`               | Inline expandable frames, folded pills, nested children                                                                                                      |
@@ -190,8 +187,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | Change what an expansion request sends | `shared/expand-prompt.ts` (`buildExpandRequest`)                                                                           |
 | Change the one-click expand questions  | `shared/prompts.ts` (`EXPAND_INTENTS`)                                                                                     |
 | Change the expand selection bar/keys   | `hooks/useExpansionContextMenu.ts` + `ExpandSelectionBar.tsx`                                                              |
-| Change frame actions                   | `ExpansionFrame.tsx` + `useChatStreaming.ts` (`retryExpansion`/`dismissExpansion`)                                         |
-| Change suggested terms                 | `main/suggested-terms.ts`, `shared/prompts.ts`, `lib/markdown.ts` (`suggestedTermRanges`)                                  |
+| Change frame actions                   | `ExpansionFrame.tsx` + `useChatStreaming.ts` (`retryExpansion`/`editExpansion`/`dismissExpansion`)                         |
 | Change the expand instruction text     | `shared/prompts.ts` (`buildExpandUserInstruction`, `buildExpandPromptedInstruction`)                                       |
 | Change the Expand Prompt UI            | `components/conversation/ExpandPrompt.tsx`                                                                                 |
 | Change frame fold/unfold behaviour     | `shared/rich-text.ts` (`setExpansionFolded`) + `ExpansionFrame.tsx`                                                        |
@@ -285,7 +281,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   X11/macOS/Windows and non-KDE Wayland.
 - **Config files** live under `{userData}/config/` (`providers.json`, `settings.json`).
   `settings.json` holds `hotkey`, `closeToTray`, `lookupContextMode`
-  (default `'none'`), `kbAutoMaintain` (default `true`), `suggestTerms` (default `true`) and `theme`
+  (default `'none'`), `kbAutoMaintain` (default `true`) and `theme`
   (`dark` / `light` / `system`, default `dark`); `save-settings` merges a **partial** patch over the stored settings
   (`mergeAppSettings`), so a caller sends only the fields it changes.
   Always go through `config.ts` helpers; call `ensureConfigDir()` before writing. Writes use
@@ -322,7 +318,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   writes and `mutateConversation(id, mutate)` for read-modify-write (KB-fed marking/reset). A
   mutation runs inside the same chain, so it cannot overwrite a newer autosave with the body it
   read first; returning `false` from the mutator cancels the write.
-  `searchConversations` scans chat records by title and flattened turn content, ranking title
+  `searchConversations` scans chat records by title and flattened turn and expansion content, ranking title
   matches first and returning a ±80-char excerpt around the newest matching turn (limit 100).
 - **Hotkey registry** is in `config.ts:registerHotkey`. It auto-routes through the XDG
   portal on Wayland. `save-settings` calls it with `handleHotkeyPressed` before persisting —
@@ -352,7 +348,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   settled request out of its request book, so late chunks for it are no-ops.
 - **The document base is the only personalization.** There is no learned prompt or keyword list:
   chat and lookup learn about the user solely through the memory instructions and tools. A model
-  without tool support therefore gets no personalization, except in expand, which needs no tools. Learning preferences live in the root
+  without tool support therefore gets no personalization, except in expand, which then gets the auto-loaded notes as text. Learning preferences live in the root
   `index-learning.md`, which the curator maintains. `migrateLegacyKbPrompt` moves an older
   install's `kb/prompt.txt` there once at startup and renames the old file `prompt.migrated.txt`.
 - **A document base about the user lives in `{userData}/memories/`** (`~/.config/delta-ai/memories/` on Linux). It is a nested tree of
@@ -363,9 +359,10 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   - **Writers.** The background curator is the primary writer: `runKbAnalysis` runs one tool pass per
     conversation through the `kb-maintenance` role (`KB_MEMORY_SYSTEM_PROMPT`, deliberately
     aggressive), so a failed pass leaves the conversation unfed. Chat and lookup hold the same tools,
-    but their prompt limits writes to explicit requests. Expand gets no tools: the curator learns
-    from expansions instead, via the selected passage and typed question in `buildSingleMaterial`,
-    and `withAutoLoadedMemories` gives expand the auto-loaded files read-only.
+    but their prompt limits writes to explicit requests. Expand holds them too, as a follow-up does;
+    `withAutoLoadedMemories` gives it the auto-loaded files as text only when the model has no tools.
+    The curator also learns from expansions, via the selected passage and typed question in
+    `buildSingleMaterial`.
   - **Auto-loading.** A file directly in the root whose name starts with `index` is injected into
     every memory prompt (8k chars per file, 16k total). No other file ever is, including a nested
     `index.md`: the rest of the tree is listed by path and read on demand. The prompts state this rule
@@ -628,13 +625,13 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   live, a new one paints correctly from its first frame, and there is no theme IPC. Hardcoded colours
   in a surface stylesheet break this, so use a token.
 - **Image attachments live inline on the user turn** (`Turn.attachments`, base64 in `{id}.json`, never
-  in the sidecar). The chat composer is the only entry point (picker, paste, drop); the lookup popup's
-  paste still means OCR. The renderer re-encodes to a JPEG under 1568px, which also strips EXIF, and
+  in the sidecar). The chat composer and the chat window's `ExpandPrompt` are the entry points (picker, paste, drop), and
+  an expansion keeps its images on `ExpansionNode.attachments`; the lookup popup's paste still means OCR. The renderer re-encodes to a JPEG under 1568px, which also strips EXIF, and
   `ProviderMessage.images` carries them to `provider.ts`, where they become SDK `file` parts on the one
-  OpenAI-compatible route. `chat-send` runs `fitImagesToSupport`: on a model the catalog says is
+  OpenAI-compatible route. `chat-send` and `chat-expand` run `fitImagesToSupport`: on a model the catalog says is
   text-only, images in the message being sent are refused and earlier ones become `IMAGE_OMITTED_NOTE`,
   so a model switch cannot strand a chat. Unknown models are sent as-is and the provider decides. Each
-  image counts as `IMAGE_TOKEN_ESTIMATE` in the context budget. Expand, KB analysis, search and
+  image counts as `IMAGE_TOKEN_ESTIMATE` in the context budget. KB analysis, search and
   titles use text only; export writes a `_[Image: name]_` line.
 - **Selections are mapped by offset, never by string search.** `useExpansionContextMenu`
   resolves each Range endpoint to its nearest `[data-src]` leaf plus the character offset (or the
@@ -661,22 +658,18 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 - **Regenerating or removing a frame stops its streams first.** `discardExpandsForExpansions` drops
   the node and its subtree from the request book, and `restartExpansion` clears `children` with the
   answer, since their offsets point into the old text. The UI confirms when nested frames would go.
-- **An expansion request carries real context.** `buildExpandRequest` sends the system prompt,
-  screen context, up to `EXPAND_HISTORY_MESSAGES` earlier messages (text only), the turn, and for a
-  nested selection each ancestor as a question/answer pair. `chat-expand` runs `applyContextBudget`
-  like `chat-send`, so the newest context survives. Plain Expand defines a term and explains a
-  passage (`isTermSelection`).
+- **An expansion is a follow-up that branches from its turn, plus its own features.**
+  `buildExpandRequest` sends exactly what a follow-up at that point would (`serializeForChat`: system
+  prompt, screen context, every earlier turn with its images), then the turn, each ancestor of a nested
+  selection as a question/answer pair, and the instruction. Keep that prefix identical, because it is what
+  a provider's prompt cache reuses. `chat-expand` matches `chat-send` in main too: `fitImagesToSupport`,
+  `memoryAgentFor`, `applyContextBudget`. Being a branch, it never enters the history of later turns or of
+  sibling expansions. Its own features are the anchor, the define/explain instruction
+  (`isTermSelection`) and the short default length. Anything added to follow-ups should reach it as well.
 - **Expanding has several entry points, all through `submit`.** The context menu, the selection
   bar, Ctrl/Cmd+E (Expand) and Ctrl/Cmd+Shift+E (Expand on…) resolve and validate the same way.
   `EXPAND_INTENTS` store their text in `prompt`, so frames, export and the curator treat them as a
   typed question.
-- **Suggested terms are session-only decoration.** After a send finishes normally, the renderer
-  invokes `chat-suggest-terms`; main makes one tool-less call through the `kb-maintenance` role,
-  judged only from the `index*` notes. It makes no request when `settings.json → suggestTerms` is
-  off (default on), no such model is assigned, no notes exist, or the answer is under 200 chars.
-  Results live in `useChatStreaming` state and are never written to the `Turn`, so a reopened
-  conversation shows none. `suggestedTermRanges` underlines at most one place per term, never in
-  code or on an expanded range, and the fragment keeps its `data-src`, so offsets stay exact.
 - **Cross-frame selections disable Expand.** A selection spanning an expansion boundary
   overlaps that expansion's source range, which `validateInsertion` refuses; the menu item
   renders disabled. The same function is shared by the menu (preview) and `expand()`
@@ -687,7 +680,8 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   the old renderer had already stripped markdown). Nothing in the renderer knows about
   segments.
 - **Custom expansion prompt ("Expand on…")** opens a floating `ExpandPrompt` input at the
-  right-click position, or below the frame for "Ask…". On submit, the prompt text (defaulting to
+  right-click position, or below the frame for "Ask…". Edit on a frame or card changes the question and answers again in place (`editExpansion`, `editCard`),
+  dropping nested expansions like Regenerate; blanking it returns to the plain instruction. On submit, the prompt text (defaulting to
   `EXPAND_DEFAULT_PROMPT` if empty) replaces the define/explain instruction via
   `buildExpandPromptedInstruction` in `prompts.ts`, and a non-blank prompt is shown on the frame;
   a folded pill keeps it only as a tooltip.
