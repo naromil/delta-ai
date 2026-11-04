@@ -27,10 +27,11 @@ import {
   LOOKUP_GROWN_HEIGHT
 } from './lookup/window'
 import { sendToSession } from './lookup/state'
+import type { LookupSession } from './lookup/state'
 import { setMainWindow, getMainWindow, clearMainWindow } from './main-window'
 import { applyContextBudget } from './context-budget'
 import { exportConversationToFile } from './conversation-export'
-import type { ConversationRecord, ConversationState } from '../shared/conversation'
+import type { ChatRecord, ConversationState, ConversationTarget } from '../shared/conversation'
 import { buildConversationTitle } from '../shared/conversation'
 import { prepareTransferredState } from './transfer'
 import { guardWindowNavigation } from './window-guards'
@@ -192,14 +193,13 @@ if (!hasSingleInstanceLock) {
         const createdAt = existing?.createdAt ?? now
         const firstUserTurn = transferred.turns.find((turn) => turn.role === 'user')
         const title = existing?.title || buildConversationTitle(firstUserTurn?.content ?? '')
-        const record: ConversationRecord = {
-          ...(existing ?? {}),
+        const record: ChatRecord = {
           id,
           title,
           createdAt,
           updatedAt: now,
           source: 'chat',
-          state: transferred,
+          state: { turns: transferred.turns },
           kbFed: existing?.kbFed ?? false
         }
 
@@ -224,22 +224,27 @@ if (!hasSingleInstanceLock) {
     )
 
     /* Conversation persistence */
-    ipcMain.handle('conversation-save', async (_event, record: unknown) => {
+    ipcMain.handle('conversation-save', async (event, record: unknown) => {
       if (!isConversationRecord(record)) throw new Error('Invalid conversation record.')
+      const session = lookupSessions.find((s) => s.window.webContents.id === event.sender.id)
+      if (session) session.conversationId = record.id
       // Renderer autosaves must not clobber the KB-fed flag owned by main.
       await saveConversation(record, { preserveKbFed: true })
     })
     ipcMain.handle('conversation-load', async (_event, id: string) => {
       return await loadConversation(id)
     })
-    ipcMain.handle('conversation-delete', async (_event, id: string) => {
+    ipcMain.handle('conversation-delete', async (event, id: string) => {
+      // A popup still writing this record would bring it back with its next save.
+      const holder = lookupHolding(id)
+      if (holder && holder.window.webContents.id !== event.sender.id) holder.window.close()
       await deleteConversation(id)
     })
     ipcMain.handle('conversation-list', async () => {
-      return await listConversations('chat')
+      return await listConversations()
     })
-    ipcMain.handle('canvas-list', async () => {
-      return await listConversations('canvas')
+    ipcMain.on('conversation-open', (_event, target: unknown) => {
+      if (isConversationTarget(target)) openConversationWindow(target)
     })
     ipcMain.handle('conversation-search', async (_event, query: string) => {
       return await searchConversations(typeof query === 'string' ? query : '')
@@ -487,6 +492,49 @@ function createWindow(): BrowserWindow {
   return mainWindow
 }
 
+function lookupHolding(id: string): LookupSession | undefined {
+  return lookupSessions.find((s) => s.conversationId === id && !s.window.isDestroyed())
+}
+
+function isConversationTarget(value: unknown): value is ConversationTarget {
+  const { id, source } = (value ?? {}) as Partial<ConversationTarget>
+  return typeof id === 'string' && (source === 'chat' || source === 'lookup' || source === 'canvas')
+}
+
+/** Sends to the main window, creating one and waiting for its renderer when there is none. */
+function sendToMainWindow(channel: string, payload: unknown): void {
+  const existing = getMainWindow()
+  if (existing && !existing.isDestroyed()) {
+    showMainWindow()
+    safeSend(existing.webContents, channel, payload)
+    return
+  }
+
+  const win = createWindow()
+  const deliver = (): void => {
+    if (!win.isDestroyed()) safeSend(win.webContents, channel, payload)
+  }
+  if (win.webContents.isLoading()) {
+    win.webContents.once('did-finish-load', deliver)
+  } else {
+    deliver()
+  }
+}
+
+/**
+ * A look-up with its popup still open is raised rather than opened a second time:
+ * two windows writing one record would overwrite each other's turns.
+ */
+function openConversationWindow(target: ConversationTarget): void {
+  const holder = lookupHolding(target.id)
+  if (holder) {
+    holder.window.show()
+    holder.window.focus()
+    return
+  }
+  sendToMainWindow('conversation-open', target)
+}
+
 interface ConversationDelivery {
   state: ConversationState
   conversationId: string
@@ -499,20 +547,5 @@ interface ConversationDelivery {
  * fresh window is created and receives the payload once its renderer loads.
  */
 function deliverConversation(payload: ConversationDelivery): void {
-  const existing = getMainWindow()
-  if (existing && !existing.isDestroyed()) {
-    showMainWindow()
-    safeSend(existing.webContents, 'chat-replace-conversation', payload)
-    return
-  }
-
-  const win = createWindow()
-  const deliver = (): void => {
-    if (!win.isDestroyed()) safeSend(win.webContents, 'chat-replace-conversation', payload)
-  }
-  if (win.webContents.isLoading()) {
-    win.webContents.once('did-finish-load', deliver)
-  } else {
-    deliver()
-  }
+  sendToMainWindow('chat-replace-conversation', payload)
 }

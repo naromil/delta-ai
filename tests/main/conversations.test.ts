@@ -57,9 +57,10 @@ describe('conversation store', () => {
     await saveConversation(
       record('lookup_a', {
         source: 'lookup',
+        lookup: { context: '' },
         title: 'Lookup',
         updatedAt: '2026-01-03T00:00:00.000Z'
-      })
+      } as Partial<ConversationRecord>)
     )
 
     expect((await loadConversation('chat_a'))?.title).toBe('Conversation chat_a')
@@ -317,5 +318,84 @@ describe('conversation store', () => {
 
     expect(results.map((result) => result.id)).toEqual(['chat_expanded'])
     expect(results[0].snippet).toContain('haystack')
+  })
+
+  it('lists and searches every type together', async () => {
+    const canvas = { cards: [], frames: [], links: [], viewport: { x: 0, y: 0, zoom: 1 } }
+    await saveConversation(record('a_chat'))
+    await saveConversation(
+      record('b_lookup', {
+        source: 'lookup',
+        lookup: { context: '' },
+        updatedAt: '2026-01-03T00:00:00.000Z'
+      } as Partial<ConversationRecord>)
+    )
+    await saveConversation(
+      record('c_canvas', {
+        source: 'canvas',
+        canvas,
+        updatedAt: '2026-01-04T00:00:00.000Z'
+      } as Partial<ConversationRecord>)
+    )
+
+    const expected = [
+      ['c_canvas', 'canvas'],
+      ['b_lookup', 'lookup'],
+      ['a_chat', 'chat']
+    ]
+    const listed = await listConversations()
+    expect(listed.map((meta) => [meta.id, meta.source])).toEqual(expected)
+    const found = await searchConversations('needle')
+    expect(found.map((meta) => [meta.id, meta.source])).toEqual(expected)
+    expect((await searchConversations('needle', 'lookup')).map((meta) => meta.id)).toEqual([
+      'b_lookup'
+    ])
+  })
+
+  it('finds a canvas by the text of a note, which holds no turn', async () => {
+    const rect = { x: 0, y: 0, w: 100, h: 100 }
+    await saveConversation(
+      record('canvas_note', {
+        source: 'canvas',
+        state: { turns: [] },
+        canvas: {
+          cards: [{ kind: 'note', id: 'n', rect, text: 'remember the thimble' }],
+          frames: [],
+          links: [],
+          viewport: { x: 0, y: 0, zoom: 1 }
+        }
+      } as Partial<ConversationRecord>)
+    )
+
+    const [result] = await searchConversations('thimble')
+    expect(result.id).toBe('canvas_note')
+    expect(result.snippet).toContain('thimble')
+  })
+
+  it('reads a record in the old format and writes it back in the new one', async () => {
+    await saveConversation(record('old_lookup'))
+    const bodyPath = join(paths.userData, 'conversations', 'old_lookup.json')
+    const turns = [{ id: 1, role: 'user', content: 'hi', expansions: [] }]
+    writeFileSync(
+      bodyPath,
+      JSON.stringify({
+        ...record('old_lookup'),
+        source: 'lookup',
+        state: { context: 'screen', systemNote: '', turns }
+      })
+    )
+
+    expect(await loadConversation('old_lookup')).toMatchObject({
+      source: 'lookup',
+      state: { turns },
+      lookup: { context: 'screen' }
+    })
+
+    await markConversationKbFed('old_lookup')
+
+    const onDisk = JSON.parse(readFileSync(bodyPath, 'utf-8'))
+    expect(onDisk.kbFed).toBe(true)
+    expect(onDisk.lookup).toEqual({ context: 'screen' })
+    expect(onDisk.state).toEqual({ turns })
   })
 })

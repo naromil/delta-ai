@@ -1,6 +1,7 @@
 import type { ImageAttachment } from './attachments'
 import { attachmentImages } from './attachments'
 import type { CanvasLayout } from './canvas'
+import { normalizeCanvasLayout } from './canvas'
 import type { ProviderMessage } from './models'
 import { getSystemPrompt, buildScreenContextMessage } from './prompts'
 import type { ExpansionNode, LegacyTurn, RichTextTurn } from './rich-text'
@@ -15,25 +16,71 @@ export interface Turn extends RichTextTurn {
   attachments?: ImageAttachment[]
 }
 
-/** Where a conversation started. Canvases have their own list; history shows only chats. */
+/** A conversation's type. Every type is stored and listed the same way. */
 export type ConversationSource = 'chat' | 'lookup' | 'canvas'
 
-export interface ConversationState {
-  context?: string
-  systemNote?: string
-  turns: Turn[]
-  /** Where each turn and expansion sits, on a record with `source: 'canvas'`. */
-  canvas?: CanvasLayout
+export const CONVERSATION_SOURCE_LABELS: Record<ConversationSource, string> = {
+  chat: 'Chat',
+  lookup: 'Look-up',
+  canvas: 'Canvas'
 }
 
-export interface ConversationRecord {
+/** What any window needs to open a conversation in the view that owns its type. */
+export interface ConversationTarget {
+  id: string
+  source: ConversationSource
+}
+
+/** What every type has in common. */
+export interface ConversationContent {
+  turns: Turn[]
+}
+
+/** The chat hook's live state: a line of turns, with a look-up's screen text when it has one. */
+export interface ConversationState extends ConversationContent {
+  context?: string
+}
+
+interface ConversationBase {
   id: string
   title: string
   createdAt: string
   updatedAt: string
-  source: ConversationSource
-  state: ConversationState
+  state: ConversationContent
   kbFed: boolean
+}
+
+export interface ChatRecord extends ConversationBase {
+  source: 'chat'
+}
+
+export interface LookupRecord extends ConversationBase {
+  source: 'lookup'
+  lookup: {
+    /** The screen text the look-up was asked about; empty when it had none. */
+    context: string
+  }
+}
+
+export interface CanvasRecord extends ConversationBase {
+  source: 'canvas'
+  /** Where each turn and expansion sits. */
+  canvas: CanvasLayout
+}
+
+/** One entity: shared fields, plus properties only its own type may hold. */
+export type ConversationRecord = ChatRecord | LookupRecord | CanvasRecord
+
+/** The types the chat hook and the chat view can show. */
+export type LinearRecord = ChatRecord | LookupRecord
+export type LinearSource = LinearRecord['source']
+
+/** Records written before per-type properties kept them all in `state`. */
+type StoredRecord = Omit<ConversationBase, 'state'> & {
+  source?: ConversationSource
+  state: ConversationContent & { context?: string; canvas?: CanvasLayout }
+  lookup?: { context?: string }
+  canvas?: CanvasLayout
 }
 
 export interface ConversationMeta {
@@ -74,14 +121,61 @@ export function toConversationMeta(record: ConversationRecord): ConversationMeta
   }
 }
 
+/** A chat cannot hold screen text, so an old one that does keeps it as its first message. */
+function withContextTurn(turns: Turn[], context: string | undefined): Turn[] {
+  if (!context) return turns
+  const id = Math.min(0, ...turns.map((turn) => turn.id)) - 1
+  return [
+    { id, role: 'user', content: buildScreenContextMessage(context), expansions: [] },
+    ...turns
+  ]
+}
+
 /**
- * Load-time boundary for persisted records: rebuilds turns written before
- * offset-anchored expansions and converts any transient `loading` frame into a
- * recoverable error, so a reload never shows a frame that waits forever.
+ * Load-time boundary for persisted records: gives each type its own properties,
+ * rebuilds turns written before offset-anchored expansions and converts any
+ * transient `loading` frame into a recoverable error, so a reload never shows a
+ * frame that waits forever. Anything belonging to another type is dropped here.
  */
 export function migrateConversationRecord(record: ConversationRecord): ConversationRecord {
-  const migrated = migrateLegacyTurns(record.state.turns as unknown as LegacyTurn[]) as Turn[]
-  return { ...record, state: { ...record.state, turns: finalizeTurns(migrated) } }
+  const stored = record as StoredRecord
+  const { id, title, createdAt, updatedAt, kbFed } = stored
+  const legacyTurns = stored.state.turns as unknown as LegacyTurn[]
+  const turns = finalizeTurns(migrateLegacyTurns(legacyTurns) as Turn[])
+  const base = { id, title, createdAt, updatedAt, kbFed }
+  if (stored.source === 'canvas') {
+    const canvas = stored.canvas ?? stored.state.canvas ?? normalizeCanvasLayout(undefined, turns)
+    return { ...base, source: 'canvas', state: { turns }, canvas }
+  }
+  if (stored.source === 'lookup') {
+    const context = stored.lookup?.context ?? stored.state.context ?? ''
+    return { ...base, source: 'lookup', state: { turns }, lookup: { context } }
+  }
+  return {
+    ...base,
+    source: 'chat',
+    state: { turns: withContextTurn(turns, stored.state.context) }
+  }
+}
+
+/** The chat hook's state for a record it can show. */
+export function linearStateOf(record: LinearRecord): ConversationState {
+  return {
+    context: record.source === 'lookup' ? record.lookup.context : '',
+    turns: record.state.turns
+  }
+}
+
+/** The record for a chat hook's state; screen text is kept only by the type that has it. */
+export function linearRecordOf(
+  meta: Omit<ConversationBase, 'state'> & { source: LinearSource },
+  state: ConversationState
+): LinearRecord {
+  const { id, title, createdAt, updatedAt, kbFed } = meta
+  const base = { id, title, createdAt, updatedAt, kbFed, state: { turns: state.turns } }
+  return meta.source === 'lookup'
+    ? { ...base, source: 'lookup', lookup: { context: state.context ?? '' } }
+    : { ...base, source: 'chat' }
 }
 
 /**

@@ -188,6 +188,25 @@ describe('renderConversationMarkdown', () => {
   })
 })
 
+describe('look-up exports', () => {
+  it('shows the screen text a look-up was asked about, ahead of its turns', () => {
+    const markdown = renderConversationMarkdown(
+      record({
+        source: 'lookup',
+        lookup: { context: 'Text on screen' }
+      } as Partial<ConversationRecord>)
+    )
+    expect(markdown).toContain('## Screen context\n\nText on screen\n\n## You')
+  })
+
+  it('adds nothing when the look-up had no screen text', () => {
+    const markdown = renderConversationMarkdown(
+      record({ source: 'lookup', lookup: { context: '' } } as Partial<ConversationRecord>)
+    )
+    expect(markdown).not.toContain('## Screen context')
+  })
+})
+
 describe('canvas exports', () => {
   it('adds notes and labelled connections, which hold no turn', () => {
     const rect = { x: 0, y: 0, w: 100, h: 100 }
@@ -198,21 +217,21 @@ describe('canvas exports', () => {
           turns: [
             { id: 1, role: 'user', content: 'What is ATP?', expansions: [] },
             { id: 2, role: 'assistant', content: 'An energy carrier.', expansions: [] }
+          ]
+        },
+        canvas: {
+          cards: [
+            { kind: 'message', id: 'm', rect, userTurnId: 1, turnId: 2 },
+            { kind: 'note', id: 'n', rect, text: 'Remember this' }
           ],
-          canvas: {
-            cards: [
-              { kind: 'message', id: 'm', rect, userTurnId: 1, turnId: 2 },
-              { kind: 'note', id: 'n', rect, text: 'Remember this' }
-            ],
-            frames: [],
-            links: [
-              { id: 'a', from: 'm', to: 'n', label: 'explained by' },
-              { id: 'b', from: 'n', to: 'm' }
-            ],
-            viewport: { x: 0, y: 0, zoom: 1 }
-          }
+          frames: [],
+          links: [
+            { id: 'a', from: 'm', to: 'n', label: 'explained by' },
+            { id: 'b', from: 'n', to: 'm' }
+          ],
+          viewport: { x: 0, y: 0, zoom: 1 }
         }
-      })
+      } as Partial<ConversationRecord>)
     )
     expect(markdown).toContain('## Notes\n\nRemember this')
     expect(markdown).toContain('- What is ATP? — explained by → Remember this')
@@ -225,15 +244,15 @@ describe('canvas exports', () => {
       record({
         source: 'canvas',
         state: {
-          turns: [{ id: 1, role: 'user', content: 'Hello', expansions: [] }],
-          canvas: {
-            cards: [{ kind: 'message', id: 'm', rect, userTurnId: 1, turnId: 1 }],
-            frames: [],
-            links: [],
-            viewport: { x: 0, y: 0, zoom: 1 }
-          }
+          turns: [{ id: 1, role: 'user', content: 'Hello', expansions: [] }]
+        },
+        canvas: {
+          cards: [{ kind: 'message', id: 'm', rect, userTurnId: 1, turnId: 1 }],
+          frames: [],
+          links: [],
+          viewport: { x: 0, y: 0, zoom: 1 }
         }
-      })
+      } as Partial<ConversationRecord>)
     )
     expect(markdown).not.toContain('## Notes')
     expect(markdown).not.toContain('## Connections')

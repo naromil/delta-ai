@@ -87,6 +87,8 @@ import ExpandSelectionBar from '../../components/conversation/ExpandSelectionBar
 import type { useCanvas } from '../../hooks/useCanvas'
 import { useExpansionContextMenu } from '../../hooks/useExpansionContextMenu'
 import { formatRelativeTime } from '../../lib/format'
+import type { ConversationMeta } from '../../../../shared/conversation'
+import { CONVERSATION_SOURCE_LABELS } from '../../../../shared/conversation'
 import type { ViewportMotion } from '../../lib/viewport-motion'
 import { createViewportMotion } from '../../lib/viewport-motion'
 import CanvasCardView from './CanvasCardView'
@@ -219,6 +221,8 @@ const VIEWPORT_TRANSITION_MS = 360
 const PULSE_MS = 900
 const NOTICE_MS = 4000
 const EXPORT_SAVED_MS = 2000
+/** Chats and look-ups in the history menu; search reaches the rest. */
+const HISTORY_OTHERS_LIMIT = 8
 
 const REFUSE_TOO_SMALL = 'That rectangle is too small to hold an answer. Draw a larger one.'
 const REFUSE_ARRANGE = 'Other cards are in the way of that arrangement.'
@@ -268,7 +272,13 @@ const ARROW_SIDES: Readonly<Record<string, CanvasSide>> = {
 /** Keeps a run of wheel events on what it started moving as things pass under the pointer. */
 const WHEEL_LATCH_MS = 160
 
-function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
+function CanvasBoard({
+  canvas,
+  onOpenSearch
+}: {
+  canvas: Canvas
+  onOpenSearch: () => void
+}): React.JSX.Element {
   const { cards, frames, links, stack, viewport, turns, setViewport, moveItems, raiseCards } =
     canvas
   const surfaceRef = useRef<HTMLDivElement>(null)
@@ -2006,22 +2016,29 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     zoomToItemRef.current = zoomToItem
   }, [zoomToItem])
 
-  const openCanvasMenu = (e: React.MouseEvent): void => {
-    const box = e.currentTarget.getBoundingClientRect()
-    canvas.refreshCanvases()
+  const showHistoryMenu = (x: number, y: number, sessions: ConversationMeta[]): void => {
+    const others = sessions.filter((item) => item.source !== 'canvas')
     setListMenu({
-      x: box.left,
-      y: box.bottom + 6,
-      label: 'Canvases',
+      x,
+      y,
+      label: 'History',
       items: [
         { label: 'New canvas', onSelect: canvas.newCanvas },
-        ...canvas.canvases
-          .filter((item) => item.id !== canvas.canvasId)
+        ...sessions
+          .filter((item) => item.source === 'canvas' && item.id !== canvas.canvasId)
           .map((item) => ({
             label: item.title,
             detail: formatRelativeTime(item.updatedAt),
             onSelect: () => canvas.openCanvas(item.id)
           })),
+        ...others.slice(0, HISTORY_OTHERS_LIMIT).map((item) => ({
+          label: item.title,
+          detail: `${CONVERSATION_SOURCE_LABELS[item.source]} · ${formatRelativeTime(item.updatedAt)}`,
+          onSelect: () => window.api.openConversation({ id: item.id, source: item.source })
+        })),
+        ...(others.length > HISTORY_OTHERS_LIMIT
+          ? [{ label: 'Search all conversations…', onSelect: onOpenSearch }]
+          : []),
         ...(cards.length > 0
           ? [
               {
@@ -2035,6 +2052,13 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
             ]
           : [])
       ]
+    })
+  }
+
+  const openCanvasMenu = (e: React.MouseEvent): void => {
+    const box = e.currentTarget.getBoundingClientRect()
+    void canvas.refreshSessions().then((sessions) => {
+      showHistoryMenu(box.left, box.bottom + 6, sessions)
     })
   }
 
@@ -2673,7 +2697,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
           type="button"
           className="canvas-tool"
           aria-haspopup="menu"
-          title="Other canvases"
+          title="History: canvases, chats and look-ups"
           onClick={openCanvasMenu}
         >
           ▾
@@ -2873,13 +2897,19 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
 }
 
 /** Remounts the board per canvas, so a half-drawn rectangle never carries over. */
-function CanvasView({ canvas }: { canvas: Canvas }): React.JSX.Element {
+function CanvasView({
+  canvas,
+  onOpenSearch
+}: {
+  canvas: Canvas
+  onOpenSearch: () => void
+}): React.JSX.Element {
   const { ensureLoaded, loaded, canvasId } = canvas
   useEffect(() => {
     ensureLoaded()
   }, [ensureLoaded])
   if (!loaded) return <div className="canvas-view" />
-  return <CanvasBoard key={canvasId} canvas={canvas} />
+  return <CanvasBoard key={canvasId} canvas={canvas} onOpenSearch={onOpenSearch} />
 }
 
 export default CanvasView

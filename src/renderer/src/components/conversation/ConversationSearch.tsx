@@ -1,17 +1,22 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import type { ConversationSearchResult } from '../../../../shared/conversation'
+import type { ConversationSearchResult, ConversationTarget } from '../../../../shared/conversation'
+import { CONVERSATION_SOURCE_LABELS } from '../../../../shared/conversation'
 import { formatRelativeTime } from '../../lib/format'
 
 interface ConversationSearchProps {
-  onSelect: (id: string) => void
+  onSelect: (target: ConversationTarget) => void
   onClose: () => void
-  currentConversationId?: string | null
+  /** Open elsewhere, so an autosave would bring them back; delete those from their toolbar. */
+  openConversationIds?: ReadonlyArray<string | null>
+  /** The popup has no say over what the main window holds open, so it only opens. */
+  canDelete?: boolean
 }
 
 function ConversationSearch({
   onSelect,
   onClose,
-  currentConversationId
+  openConversationIds = [],
+  canDelete = true
 }: ConversationSearchProps): React.JSX.Element {
   const [query, setQuery] = useState('')
   const [conversations, setConversations] = useState<ConversationSearchResult[]>([])
@@ -55,12 +60,15 @@ function ConversationSearch({
   useEffect(() => {
     const timer = setTimeout(() => inputRef.current?.focus(), 0)
     const handleKeyDown = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape' && !e.isComposing) onClose()
+      if (e.key !== 'Escape') return
+      // The popup closes itself on Escape; this closes only the list above it.
+      e.stopPropagation()
+      if (!e.isComposing) onClose()
     }
-    document.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('keydown', handleKeyDown, true)
     return () => {
       clearTimeout(timer)
-      document.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keydown', handleKeyDown, true)
     }
   }, [onClose])
 
@@ -69,8 +77,8 @@ function ConversationSearch({
   }, [activeIndex])
 
   const handleSelect = useCallback(
-    (id: string) => {
-      onSelect(id)
+    ({ id, source }: ConversationTarget) => {
+      onSelect({ id, source })
       onClose()
     },
     [onSelect, onClose]
@@ -81,7 +89,7 @@ function ConversationSearch({
     conversation: ConversationSearchResult
   ): Promise<void> => {
     e.stopPropagation()
-    if (conversation.id === currentConversationId) return
+    if (openConversationIds.includes(conversation.id)) return
     if (!window.confirm(`Delete “${conversation.title}”? This cannot be undone.`)) return
     try {
       await window.api.deleteConversation(conversation.id)
@@ -107,7 +115,7 @@ function ConversationSearch({
     } else if (e.key === 'Enter') {
       e.preventDefault()
       const selected = conversations[activeIndex]
-      if (selected) handleSelect(selected.id)
+      if (selected) handleSelect(selected)
     }
   }
 
@@ -165,38 +173,41 @@ function ConversationSearch({
                 role="button"
                 tabIndex={0}
                 className={`conversation-search-item${idx === activeIndex ? ' selected' : ''}`}
-                onClick={() => handleSelect(conversation.id)}
+                onClick={() => handleSelect(conversation)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault()
                     e.stopPropagation()
-                    handleSelect(conversation.id)
+                    handleSelect(conversation)
                   }
                 }}
                 onMouseEnter={() => setSelectedIndex(idx)}
               >
                 <span className="conversation-search-row">
                   <span className="conversation-search-title">{conversation.title}</span>
-                  <button
-                    type="button"
-                    className="conversation-search-delete"
-                    disabled={conversation.id === currentConversationId}
-                    title={
-                      conversation.id === currentConversationId
-                        ? 'Delete the open conversation from the chat toolbar'
-                        : 'Delete conversation'
-                    }
-                    aria-label={`Delete ${conversation.title}`}
-                    onKeyDown={(e) => e.stopPropagation()}
-                    onClick={(e) => void handleDelete(e, conversation)}
-                  >
-                    ×
-                  </button>
+                  {canDelete && (
+                    <button
+                      type="button"
+                      className="conversation-search-delete"
+                      disabled={openConversationIds.includes(conversation.id)}
+                      title={
+                        openConversationIds.includes(conversation.id)
+                          ? 'Delete the open conversation from its own toolbar'
+                          : 'Delete conversation'
+                      }
+                      aria-label={`Delete ${conversation.title}`}
+                      onKeyDown={(e) => e.stopPropagation()}
+                      onClick={(e) => void handleDelete(e, conversation)}
+                    >
+                      ×
+                    </button>
+                  )}
                 </span>
                 {conversation.snippet && (
                   <span className="conversation-search-snippet">{conversation.snippet}</span>
                 )}
                 <span className="conversation-search-meta">
+                  {CONVERSATION_SOURCE_LABELS[conversation.source]} ·{' '}
                   {formatRelativeTime(conversation.updatedAt)} · {conversation.turnCount} turns
                 </span>
               </div>

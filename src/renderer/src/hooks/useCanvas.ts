@@ -139,7 +139,8 @@ function requestBelongsTo(request: PendingRequest, card: CanvasCard): boolean {
 
 export function useCanvas(): {
   loaded: boolean
-  canvases: ConversationMeta[]
+  /** Every conversation, of every type, newest first. */
+  sessions: ConversationMeta[]
   canvasId: string
   title: string
   turns: Turn[]
@@ -157,7 +158,7 @@ export function useCanvas(): {
   /** Cards whose height should be fitted to their answer the next time they are on screen. */
   fitCardIds: ReadonlySet<string>
   ensureLoaded: () => void
-  refreshCanvases: () => void
+  refreshSessions: () => Promise<ConversationMeta[]>
   newCanvas: () => void
   openCanvas: (id: string) => void
   deleteCanvas: () => void
@@ -208,7 +209,7 @@ export function useCanvas(): {
 } {
   const [doc, setDoc] = useState<CanvasDoc>(emptyDoc)
   const [loaded, setLoaded] = useState(false)
-  const [canvases, setCanvases] = useState<ConversationMeta[]>([])
+  const [sessions, setSessions] = useState<ConversationMeta[]>([])
   const [meta, setMeta] = useState<CanvasMeta>(newMeta)
   const [streamingTurnIds, setStreamingTurnIds] = useState<ReadonlySet<number>>(new Set())
   const [fitCardIds, setFitCardIds] = useState<ReadonlySet<string>>(new Set())
@@ -237,10 +238,17 @@ export function useCanvas(): {
     setMeta(metaRef.current)
   }, [])
 
-  const refreshCanvases = useCallback((): void => {
-    void window.api.listCanvases().then(setCanvases, (err: unknown) => {
-      console.warn('Failed to list canvases:', err)
-    })
+  const refreshSessions = useCallback((): Promise<ConversationMeta[]> => {
+    return window.api.listConversations().then(
+      (list) => {
+        setSessions(list)
+        return list
+      },
+      (err: unknown) => {
+        console.warn('Failed to list conversations:', err)
+        return []
+      }
+    )
   }, [])
 
   /* ---- Persistence ---- */
@@ -255,7 +263,9 @@ export function useCanvas(): {
     if (layout.cards.length === 0 && layout.frames.length === 0) {
       if (!current.persisted) return Promise.resolve()
       updateMeta({ persisted: false })
-      return window.api.deleteConversation(current.id).then(refreshCanvases, onFailure)
+      return window.api.deleteConversation(current.id).then(() => {
+        void refreshSessions()
+      }, onFailure)
     }
     const firstSave = !current.persisted
     updateMeta({ persisted: true })
@@ -267,12 +277,13 @@ export function useCanvas(): {
         updatedAt: current.updatedAt,
         source: 'canvas',
         kbFed: current.kbFed,
-        state: { turns: finalizeTurns(turns), canvas: layout }
+        state: { turns: finalizeTurns(turns) },
+        canvas: layout
       })
       .then(() => {
-        if (firstSave) refreshCanvases()
+        if (firstSave) void refreshSessions()
       }, onFailure)
-  }, [refreshCanvases, updateMeta])
+  }, [refreshSessions, updateMeta])
 
   /** `touchContent` is for content only: moving or panning never reorders the canvas list. */
   const requestSave = useCallback(
@@ -957,19 +968,25 @@ export function useCanvas(): {
 
   const newCanvas = useCallback((): void => {
     replaceDoc(emptyDoc(), newMeta())
-    refreshCanvases()
-  }, [refreshCanvases, replaceDoc])
+    void refreshSessions()
+  }, [refreshSessions, replaceDoc])
 
   const openCanvas = useCallback(
     (id: string): void => {
+      // Opened from another view's history: the first visit must not pick the newest instead.
+      if (!loadStartedRef.current) {
+        loadStartedRef.current = true
+        void refreshSessions()
+      }
       void window.api.loadConversation(id).then((record) => {
         if (!record || record.source !== 'canvas') {
-          refreshCanvases()
+          void refreshSessions()
+          setLoaded(true)
           return
         }
         const turns = finalizeTurns(record.state.turns)
         replaceDoc(
-          { turns, layout: normalizeCanvasLayout(record.state.canvas, turns) },
+          { turns, layout: normalizeCanvasLayout(record.canvas, turns) },
           {
             id: record.id,
             title: record.title,
@@ -982,7 +999,7 @@ export function useCanvas(): {
         setLoaded(true)
       })
     },
-    [refreshCanvases, replaceDoc]
+    [refreshSessions, replaceDoc]
   )
 
   const deleteCanvas = useCallback((): void => {
@@ -990,17 +1007,18 @@ export function useCanvas(): {
     if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current)
     saveTimerRef.current = null
     replaceDoc(emptyDoc(), newMeta())
-    if (persisted) void window.api.deleteConversation(id).then(refreshCanvases)
-  }, [refreshCanvases, replaceDoc])
+    if (persisted) void window.api.deleteConversation(id).then(refreshSessions)
+  }, [refreshSessions, replaceDoc])
 
   const ensureLoaded = useCallback((): void => {
     if (loadStartedRef.current) return
     loadStartedRef.current = true
     void window.api
-      .listCanvases()
+      .listConversations()
       .then((list) => {
-        setCanvases(list)
-        if (list.length > 0) openCanvas(list[0].id)
+        setSessions(list)
+        const newest = list.find((item) => item.source === 'canvas')
+        if (newest) openCanvas(newest.id)
         else setLoaded(true)
       })
       .catch((err: unknown) => {
@@ -1078,7 +1096,7 @@ export function useCanvas(): {
 
   return {
     loaded,
-    canvases,
+    sessions,
     canvasId: meta.id,
     title: meta.title,
     turns: doc.turns,
@@ -1092,7 +1110,7 @@ export function useCanvas(): {
     streamingTurnIds,
     fitCardIds,
     ensureLoaded,
-    refreshCanvases,
+    refreshSessions,
     newCanvas,
     openCanvas,
     deleteCanvas,

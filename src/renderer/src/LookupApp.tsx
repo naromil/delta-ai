@@ -5,6 +5,7 @@ import { useExpansionContextMenu } from './hooks/useExpansionContextMenu'
 import { useStickToBottom } from './hooks/useStickToBottom'
 import Turn from './components/conversation/Turn'
 import ContextMenu from './components/conversation/ContextMenu'
+import ConversationSearch from './components/conversation/ConversationSearch'
 import { LOOKUP_DEFAULT_QUERY } from '../../shared/prompts'
 import ExpandPrompt from './components/conversation/ExpandPrompt'
 import ExpandSelectionBar from './components/conversation/ExpandSelectionBar'
@@ -35,6 +36,7 @@ function LookupApp(): React.JSX.Element {
   const [ocrProcessing, setOcrProcessing] = useState(false)
   const [ocrError, setOcrError] = useState<string | null>(null)
   const [input, setInput] = useState('')
+  const [showHistory, setShowHistory] = useState(false)
   const flashTimerRef = useRef<number | null>(null)
   const askRef = useRef<HTMLInputElement>(null)
 
@@ -177,6 +179,8 @@ function LookupApp(): React.JSX.Element {
   /* ---- Paste ---- */
   useEffect(() => {
     const handlePaste = (e: ClipboardEvent): void => {
+      // A paste into the history search is a query, not new screen context.
+      if (showHistory) return
       const cd = e.clipboardData
       if (!cd) return
 
@@ -251,7 +255,7 @@ function LookupApp(): React.JSX.Element {
     }
     document.addEventListener('paste', handlePaste)
     return () => document.removeEventListener('paste', handlePaste)
-  }, [grown])
+  }, [grown, showHistory])
 
   /* ---- Input change tracking ---- */
   useEffect(() => {
@@ -288,9 +292,33 @@ function LookupApp(): React.JSX.Element {
   return (
     <div className="lookup">
       <MemoryIndicator />
+      {showHistory && (
+        <ConversationSearch
+          onSelect={window.api.openConversation}
+          onClose={() => setShowHistory(false)}
+          canDelete={false}
+        />
+      )}
       <div className="lookup-header">
         <span>Delta AI</span>
         <div className="lookup-header-actions">
+          <button
+            type="button"
+            className="lookup-transfer-btn"
+            onClick={() => setShowHistory(true)}
+            title="History"
+            aria-label="Open history"
+          >
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" aria-hidden="true">
+              <path
+                d="M12 7v5l3 2M21 12a9 9 0 11-9-9 9 9 0 019 9z"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
           <button
             className="lookup-transfer-btn"
             disabled={isTransferDisabled}

@@ -2,8 +2,8 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type {
   ConversationState,
   ConversationRecord,
-  ConversationMeta,
-  ConversationSearchResult
+  ConversationSearchResult,
+  ConversationTarget
 } from '../shared/conversation'
 import type { Connection } from '../shared/models'
 import type { KbMaintenanceStatus, KbRunResult } from '../shared/kb'
@@ -153,7 +153,13 @@ const api = {
     ipcRenderer.invoke('conversation-load', id),
   deleteConversation: (id: string): Promise<void> => ipcRenderer.invoke('conversation-delete', id),
   listConversations: () => ipcRenderer.invoke('conversation-list'),
-  listCanvases: (): Promise<ConversationMeta[]> => ipcRenderer.invoke('canvas-list'),
+  openConversation: (target: ConversationTarget): void =>
+    ipcRenderer.send('conversation-open', target),
+  onConversationOpen: (cb: (target: ConversationTarget) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, target: ConversationTarget): void => cb(target)
+    ipcRenderer.on('conversation-open', handler)
+    return () => ipcRenderer.removeListener('conversation-open', handler)
+  },
   searchConversations: (query: string): Promise<ConversationSearchResult[]> =>
     ipcRenderer.invoke('conversation-search', query),
   listUnfedConversations: () => ipcRenderer.invoke('conversation-list-unfed'),

@@ -10,6 +10,7 @@ import { useChatStreaming } from './hooks/useChatStreaming'
 import { useCanvas } from './hooks/useCanvas'
 import MemoryIndicator from './components/MemoryIndicator'
 import type { ImageAttachment } from '../../shared/attachments'
+import type { ConversationTarget } from '../../shared/conversation'
 
 type View = 'home' | 'chat' | 'canvas' | 'knowledge' | 'lookup-guide' | 'settings'
 
@@ -144,19 +145,29 @@ function App(): React.JSX.Element {
   })
 
   const canvas = useCanvas()
+  const { openCanvas, canvasId } = canvas
 
   const startNewChat = useCallback(() => {
     newChat()
     setView('chat')
   }, [newChat])
 
-  const openConversation = useCallback(
-    (id: string) => {
-      setView('chat')
-      void loadConversation(id)
-    },
-    [loadConversation]
-  )
+  // Every history reaches this through main, which may raise a look-up's popup instead.
+  useEffect(() => {
+    return window.api.onConversationOpen(({ id, source }) => {
+      if (source === 'canvas') {
+        setView('canvas')
+        openCanvas(id)
+      } else {
+        setView('chat')
+        void loadConversation(id)
+      }
+    })
+  }, [openCanvas, loadConversation])
+
+  const openConversation = useCallback((target: ConversationTarget) => {
+    window.api.openConversation(target)
+  }, [])
 
   const openSearch = useCallback(() => setShowSearch(true), [])
   const closeSearch = useCallback(() => setShowSearch(false), [])
@@ -254,7 +265,7 @@ function App(): React.JSX.Element {
             transferKey={transferKey}
           />
         )}
-        {view === 'canvas' && <CanvasView canvas={canvas} />}
+        {view === 'canvas' && <CanvasView canvas={canvas} onOpenSearch={openSearch} />}
         {view === 'knowledge' && <KnowledgeView />}
         {view === 'lookup-guide' && <LookupGuideView />}
         {view === 'settings' && <Settings />}
@@ -263,7 +274,7 @@ function App(): React.JSX.Element {
         <ConversationSearch
           onSelect={openConversation}
           onClose={closeSearch}
-          currentConversationId={conversationId}
+          openConversationIds={[conversationId, canvasId]}
         />
       )}
       <MemoryIndicator />

@@ -3,6 +3,7 @@ import type { ConversationState, Turn, ProviderMessage } from '../../../shared/c
 import {
   serializeForChat,
   buildConversationTitle,
+  linearStateOf,
   CONVERSATION_TITLE_MAX_LENGTH
 } from '../../../shared/conversation'
 import type { ImageAttachment } from '../../../shared/attachments'
@@ -82,7 +83,6 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
   const role = options?.role ?? 'chat'
   const [state, setState] = useState<ConversationState>({
     context: options?.initial?.context ?? '',
-    systemNote: options?.initial?.systemNote ?? '',
     turns: options?.initial?.turns ?? []
   })
   const [loading, setLoading] = useState(false)
@@ -95,7 +95,6 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
   const conversationMetaRef = useRef<ConversationMeta | null>(null)
   const stateRef = useRef<ConversationState>({
     context: options?.initial?.context ?? '',
-    systemNote: options?.initial?.systemNote ?? '',
     turns: options?.initial?.turns ?? []
   })
 
@@ -104,7 +103,7 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
   }, [state])
 
   const { requestSave, saveSnapshot, saveError, reportSaveOutcome, clearSaveError } =
-    useConversationPersistence(state, role, conversationMetaRef)
+    useConversationPersistence(state, conversationMetaRef)
 
   const getRequests = useCallback((): RequestBookkeeping => requestsRef.current, [])
 
@@ -141,6 +140,7 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
         // instead of creating a second conversation under a new id.
         conversationMetaRef.current = {
           id: imported.conversationId,
+          source: 'chat',
           title: imported.conversationTitle,
           createdAt: imported.conversationCreatedAt,
           updatedAt: new Date().toISOString(),
@@ -283,6 +283,7 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
         const now = new Date().toISOString()
         conversationMetaRef.current = {
           id,
+          source: role,
           title,
           createdAt: now,
           updatedAt: now,
@@ -527,20 +528,23 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
 
       const meta = conversationMetaRef.current
       if (meta) {
-        const outcome = await saveConversationState(stateRef.current, role, meta)
+        const outcome = await saveConversationState(stateRef.current, meta)
         reportSaveOutcome(meta.id, outcome)
         // Stay on the unsaved chat so its error is seen and its content is not lost.
         if (outcome && !outcome.ok) return
       }
 
       const loaded = await window.api.loadConversation(id)
-      if (!loaded) return
+      // A canvas belongs to the canvas view; saving it from here would lose its layout.
+      if (!loaded || loaded.source === 'canvas') return
 
-      setState({ ...loaded.state, turns: finalizeTurns(loaded.state.turns) })
+      const loadedState = linearStateOf(loaded)
+      setState({ ...loadedState, turns: finalizeTurns(loadedState.turns) })
       setConversationId(loaded.id)
       setConversationTitle(loaded.title)
       conversationMetaRef.current = {
         id: loaded.id,
+        source: loaded.source,
         title: loaded.title,
         createdAt: loaded.createdAt,
         updatedAt: loaded.updatedAt,
@@ -549,7 +553,7 @@ export function useChatStreaming(options?: UseChatStreamingOptions): {
       clearSaveError()
       expansionIdCounterRef.current = maxExpansionId(loaded.state.turns) + 1
     },
-    [cancelAllRequests, role, reportSaveOutcome, clearSaveError]
+    [cancelAllRequests, reportSaveOutcome, clearSaveError]
   )
 
   return {

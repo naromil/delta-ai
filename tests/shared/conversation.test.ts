@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { ConversationRecord, ExpansionNode, Turn } from '../../src/shared/conversation'
 import {
+  linearRecordOf,
+  linearStateOf,
   buildConversationTitle,
   migrateConversationRecord,
   persistableTurns,
@@ -156,5 +158,93 @@ describe('migrateConversationRecord', () => {
     const migrated = migrateConversationRecord(record)
     expect(migrated.state.turns[0].expansions).toEqual([])
     expect(migrated.state.turns[0].content).toBe('hello')
+  })
+
+  const stored = (extra: object): ConversationRecord =>
+    ({
+      id: 'c1',
+      title: 't',
+      createdAt: '2024-01-01',
+      updatedAt: '2024-01-01',
+      kbFed: true,
+      ...extra
+    }) as unknown as ConversationRecord
+  const turns = [{ id: 1, role: 'user', content: 'hello', expansions: [] }]
+
+  it('moves a stored look-up context into the look-up properties', () => {
+    const migrated = migrateConversationRecord(
+      stored({ source: 'lookup', state: { context: 'screen', systemNote: '', turns } })
+    )
+    expect(migrated).toEqual({
+      id: 'c1',
+      title: 't',
+      createdAt: '2024-01-01',
+      updatedAt: '2024-01-01',
+      kbFed: true,
+      source: 'lookup',
+      state: { turns },
+      lookup: { context: 'screen' }
+    })
+  })
+
+  it('moves a stored layout into the canvas properties', () => {
+    const canvas = { cards: [], frames: [], links: [], viewport: { x: 1, y: 2, zoom: 1 } }
+    const migrated = migrateConversationRecord(
+      stored({ source: 'canvas', state: { turns, canvas } })
+    )
+    expect(migrated).toMatchObject({ source: 'canvas', state: { turns }, canvas })
+    expect(migrated.state).not.toHaveProperty('canvas')
+  })
+
+  it('gives a canvas that never stored a layout an empty one', () => {
+    const migrated = migrateConversationRecord(stored({ source: 'canvas', state: { turns } }))
+    expect(migrated.source === 'canvas' && migrated.canvas.cards).toEqual([])
+  })
+
+  it('keeps screen text an old chat holds, as its first message', () => {
+    const migrated = migrateConversationRecord(
+      stored({ source: 'chat', state: { context: 'screen', turns } })
+    )
+    expect(migrated.state.turns).toHaveLength(2)
+    expect(migrated.state.turns[0].role).toBe('user')
+    expect(migrated.state.turns[0].id).not.toBe(1)
+    expect(migrated.state.turns[0].content).toContain('screen')
+    expect(migrated.state).not.toHaveProperty('context')
+  })
+
+  it('drops what belongs to another type and leaves a current record as it is', () => {
+    const lookup = migrateConversationRecord(
+      stored({ source: 'lookup', state: { turns }, lookup: { context: 'x' }, canvas: {} })
+    )
+    expect(lookup).not.toHaveProperty('canvas')
+    expect(migrateConversationRecord(lookup)).toEqual(lookup)
+  })
+})
+
+describe('linear records', () => {
+  const meta = {
+    id: 'c1',
+    title: 't',
+    createdAt: '2024-01-01',
+    updatedAt: '2024-01-01',
+    kbFed: false
+  }
+  const turns: Turn[] = [{ id: 1, role: 'user', content: 'hello', expansions: [] }]
+
+  it('round-trips a look-up through the state the chat hook holds', () => {
+    const record = linearRecordOf({ ...meta, source: 'lookup' }, { context: 'screen', turns })
+    expect(record).toEqual({
+      ...meta,
+      source: 'lookup',
+      state: { turns },
+      lookup: { context: 'screen' }
+    })
+    expect(linearStateOf(record)).toEqual({ context: 'screen', turns })
+  })
+
+  it('stores no screen text on a chat', () => {
+    const record = linearRecordOf({ ...meta, source: 'chat' }, { context: 'screen', turns })
+    expect(record).toEqual({ ...meta, source: 'chat', state: { turns } })
+    expect(linearStateOf(record)).toEqual({ context: '', turns })
   })
 })

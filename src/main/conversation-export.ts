@@ -1,6 +1,6 @@
 import { BrowserWindow, dialog } from 'electron'
 import { cardText } from '../shared/canvas-selection'
-import type { ConversationRecord, ExpansionNode } from '../shared/conversation'
+import type { CanvasRecord, ConversationRecord, ExpansionNode } from '../shared/conversation'
 import { flattenMarkdown } from '../shared/rich-text'
 import { loadConversation } from './conversations'
 import { writeFileAtomic } from './services/atomic-file'
@@ -26,9 +26,8 @@ function expansionLines(node: ExpansionNode, depth: number): string[] {
 }
 
 /** A canvas's notes and connections, which hold no turn and so appear nowhere else. */
-function canvasLines(record: ConversationRecord): string[] {
-  const layout = record.state.canvas
-  if (!layout) return []
+function canvasLines(record: CanvasRecord): string[] {
+  const layout = record.canvas
   const { turns } = record.state
   const notes = layout.cards.filter((card) => card.kind === 'note')
   const nameOf = (id: string): string => {
@@ -55,12 +54,23 @@ function canvasLines(record: ConversationRecord): string[] {
   return lines
 }
 
+/** The lines only one type has; each type adds its own here. */
+function typeLines(record: ConversationRecord): { before: string[]; after: string[] } {
+  if (record.source === 'canvas') return { before: [], after: canvasLines(record) }
+  if (record.source === 'lookup' && record.lookup.context.trim() !== '') {
+    return { before: ['', '## Screen context', '', record.lookup.context.trimEnd()], after: [] }
+  }
+  return { before: [], after: [] }
+}
+
 /** Renders a conversation as standalone markdown, expansions quoted inline. */
 export function renderConversationMarkdown(record: ConversationRecord): string {
+  const { before, after } = typeLines(record)
   const lines = [
     `# ${record.title}`,
     '',
-    `_Created ${record.createdAt} · Updated ${record.updatedAt}_`
+    `_Created ${record.createdAt} · Updated ${record.updatedAt}_`,
+    ...before
   ]
 
   for (const turn of record.state.turns) {
@@ -76,7 +86,7 @@ export function renderConversationMarkdown(record: ConversationRecord): string {
     }
   }
 
-  lines.push(...canvasLines(record))
+  lines.push(...after)
   return `${lines.join('\n')}\n`
 }
 

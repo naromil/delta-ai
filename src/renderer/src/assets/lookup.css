@@ -261,3 +261,12 @@ body {
   background: var(--border-strong);
   border-radius: 3px;
 }
+
+/* The history list has to fit the small popup. */
+.lookup .conversation-search-overlay {
+  padding-top: 8px;
+}
+
+.lookup .conversation-search-panel {
+  max-height: calc(100vh - 16px);
+}

@@ -54,6 +54,24 @@ describe('conversation shape checks', () => {
     expect(isConversationRecord(record)).toBe(true)
   })
 
+  it('accepts each type with its own properties', () => {
+    const lookup = { ...record, source: 'lookup', lookup: { context: 'screen' } }
+    expect(isConversationRecord(lookup)).toBe(true)
+    expect(isConversationRecord({ ...record, source: 'canvas', canvas: { cards: [] } })).toBe(true)
+  })
+
+  it('refuses a type holding properties it does not own or lacking its own', () => {
+    expect(isConversationRecord({ ...record, canvas: { cards: [] } })).toBe(false)
+    expect(isConversationRecord({ ...record, lookup: { context: 'x' } })).toBe(false)
+    expect(isConversationRecord({ ...record, source: 'lookup' })).toBe(false)
+    expect(isConversationRecord({ ...record, source: 'canvas' })).toBe(false)
+    expect(
+      isConversationRecord({ ...record, source: 'lookup', lookup: { context: 'x' }, canvas: {} })
+    ).toBe(false)
+    expect(isConversationRecord({ ...record, state: { turns: [], context: 'x' } })).toBe(false)
+    expect(isConversationRecord({ ...record, state: { turns: [], canvas: {} } })).toBe(false)
+  })
+
   it('refuses records with a malformed state or source', () => {
     expect(isConversationRecord({ ...record, source: 'other' })).toBe(false)
     expect(isConversationRecord({ ...record, id: 7 })).toBe(false)

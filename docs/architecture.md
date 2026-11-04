@@ -233,7 +233,7 @@ record, and resets `expansionIdCounter` past the max imported id.
 | `lookup-input-changed` / `lookup-close` / `lookup-ready`    | L → M        | Blur guard, close, replay pending context                       |
 | `lookup-transfer`                                           | L → M        | Send the popup conversation to the chat window                  |
 | `conversation-save` / `-load` / `-delete` / `-list`         | R ↔ M        | Conversation CRUD (atomic writes)                               |
-| `conversation-search`                                       | R → M        | Search titles/content; adds `matchedIn`/`snippet`               |
+| `conversation-search`                                       | R → M        | Search every type's titles/content; adds `matchedIn`/`snippet`  |
 | `conversation-list-unfed` / `-kb-fed`                       | R ↔ M        | KB integration                                                  |
 | `conversation-export`                                       | R → M        | Save one conversation as markdown; cancel returns `'Canceled.'` |
 | `load-settings` / `save-settings`                           | R ↔ M        | Save registers hotkey first (`{ success, hotkeyMode, error? }`) |
@@ -468,7 +468,7 @@ These are load-bearing; breaking one causes a bug that is hard to trace:
 
 ## Canvas
 
-A canvas is a conversation record (`source: 'canvas'`) with a `state.canvas` layout. Each card is
+A canvas is a conversation record (`source: 'canvas'`) with a `canvas` layout. Each card is
 a message (one question and its answer), an expansion (an `ExpansionNode` in a turn) or a note (the
 user's own text, holding no turn). The layout also holds frames and connections.
 

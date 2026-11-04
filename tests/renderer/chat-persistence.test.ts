@@ -8,6 +8,7 @@ import type { ConversationMeta } from '../../src/renderer/src/hooks/chat/persist
 
 const meta: ConversationMeta = {
   id: 'conv-1',
+  source: 'chat',
   title: 'A chat',
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-02T00:00:00.000Z',
@@ -35,9 +36,29 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+describe('saveConversationState type', () => {
+  it('keeps a look-up a look-up, screen text included, when the chat view saves it', async () => {
+    const state = { context: 'Text on screen', turns: [turn(1, 'user', 'hi')] }
+    await saveConversationState(state, { ...meta, source: 'lookup' })
+
+    const [saved] = saveConversation.mock.calls[0]
+    expect(saved.source).toBe('lookup')
+    expect(saved).toMatchObject({ lookup: { context: 'Text on screen' } })
+    expect(saved.state).toEqual({ turns: state.turns })
+  })
+
+  it('gives a chat no look-up properties', async () => {
+    await saveConversationState(chat(turn(1, 'user', 'hi')), meta)
+
+    const [saved] = saveConversation.mock.calls[0]
+    expect(saved.source).toBe('chat')
+    expect(saved).not.toHaveProperty('lookup')
+  })
+})
+
 describe('saveConversationState outcome', () => {
   it('resolves ok when the main process saves the record', async () => {
-    const outcome = await saveConversationState(chat(turn(1, 'user', 'hi')), 'chat', meta)
+    const outcome = await saveConversationState(chat(turn(1, 'user', 'hi')), meta)
 
     expect(outcome).toEqual({ ok: true })
   })
@@ -45,7 +66,7 @@ describe('saveConversationState outcome', () => {
   it('resolves with a readable error instead of rejecting when the save fails', async () => {
     saveConversation.mockRejectedValueOnce(new Error('ENOSPC: no space left on device'))
 
-    const outcome = await saveConversationState(chat(turn(1, 'user', 'hi')), 'chat', meta)
+    const outcome = await saveConversationState(chat(turn(1, 'user', 'hi')), meta)
 
     expect(outcome).toEqual({
       ok: false,
@@ -56,7 +77,7 @@ describe('saveConversationState outcome', () => {
   it('falls back to a generic message for a rejection without detail', async () => {
     saveConversation.mockRejectedValueOnce(undefined)
 
-    const outcome = await saveConversationState(chat(turn(1, 'user', 'hi')), 'chat', meta)
+    const outcome = await saveConversationState(chat(turn(1, 'user', 'hi')), meta)
 
     expect(outcome).toEqual({ ok: false, error: `${SAVE_FAILED_MESSAGE}.` })
   })

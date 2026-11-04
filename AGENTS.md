@@ -79,9 +79,9 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | `load-model-catalog`                      | Renderer ↔ Main | models.dev catalog (`force` arg refreshes; cached 24h, offline fallback)                        |
 | `load-settings` / `save-settings`         | Renderer ↔ Main | Settings; save takes a partial patch, registers hotkey first, `{ success, hotkeyMode, error? }` |
 | `conversation-save` / `-load` / `-delete` | Renderer → Main | Conversation CRUD to `{userData}/conversations/` (atomic writes)                                |
-| `conversation-list`                       | Renderer → Main | List chat-source conversations (metadata sorted by updatedAt desc)                              |
-| `conversation-search`                     | Renderer → Main | Search chat titles/content; results extend meta with `matchedIn`/`snippet`                      |
-| `canvas-list`                             | Renderer → Main | List canvases (`source: 'canvas'` metadata sorted by updatedAt desc)                            |
+| `conversation-list`                       | Renderer → Main | List conversations of every type (metadata sorted by updatedAt desc)                            |
+| `conversation-search`                     | Renderer → Main | Search every type's titles/content; results extend meta with `matchedIn`/`snippet`              |
+| `conversation-open`                       | Both            | Any window asks main to open `{id, source}`; main raises a live popup or tells the main window  |
 | `conversation-list-unfed` / `-kb-fed`     | Renderer → Main | KB model integration: list unfed; mark fed                                                      |
 | `conversation-export`                     | Renderer → Main | Save a conversation as markdown (`{ok,path}` or `{ok:false,error}`; cancel is `'Canceled.'`)    |
 
@@ -93,21 +93,21 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 
 ##### Shared (`src/shared/`)
 
-| Module                | Role                                                                                                                                                                                                                          |
-| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `models.ts`           | Shared types + registries (ProviderType, RoleId, Connection, etc.)                                                                                                                                                            |
-| `conversation.ts`     | `ConversationState` / `Turn` (markdown `content` + offset-anchored `expansions`), `ConversationMeta`, `toConversationMeta`, `persistableTurns`, `serializeForChat`, `buildConversationTitle`, `migrateConversationRecord`     |
-| `context-budget.ts`   | Pure token budgeting: `estimateTokens` (4 chars/token), `budgetFor` (85% of the window minus the output reserve), `trimMessages` (drops oldest non-system messages, never the last)                                           |
-| `rich-text.ts`        | Pure rich-text model: `ExpansionNode`, `validateInsertion` / `insertExpansion(InTurns)` / `updateExpansion` / `setExpansionFolded` / `findExpansionIn*` / `maxExpansionId`, `flattenMarkdown`, legacy `migrateLegacySegments` |
-| `expand-prompt.ts`    | `buildExpandRequest(state, turn, parentId, range, role, prompt?, attachments?)` — a follow-up's messages at that turn, ancestor chain, instruction; `buildExpandMessages` assembles the branch                                |
-| `attachments.ts`      | `ImageAttachment`, per-message/size limits, `isImageInput` / `isImageAttachment` validation, `scaledImageSize`                                                                                                                |
-| `canvas.ts`           | Pure canvas model: card types, rectangles, snapping, `estimateWords`, `withCanvasFit`, `resolveMove`, session walks (`turnsThroughCard`), `linkPath`, viewport math, `normalizeCanvasLayout`                                  |
-| `canvas-selection.ts` | What a selection covers: `marqueeHits`, `movingForSelection` (frames bring contents, cards bring what is joined), `sessionAncestorIds`, `cardAtPoint`, `selectionMarkdown`, `sourceExcerpts`                                  |
-| `canvas-arrange.ts`   | Rigid blocks: `alignSelection`, `distributeSelection`, `tidySelection`, `duplicateSelection`; spaces out only what it moves                                                                                                   |
-| `canvas-history.ts`   | Undo as patches: `diffCanvas`, `applyCanvasPatch` (leaves what the patch did not touch, refuses a turn that moved on)                                                                                                         |
-| `canvas-outline.ts`   | The canvas as a list: `canvasOutline`, `searchCanvasOutline`                                                                                                                                                                  |
-| `canvas-context.ts`   | What links send: `sessionContextLinks`, `contextExcerpts` (limits, shared history once), `requestContext`                                                                                                                     |
-| `prompts.ts`          | All LLM-facing prompt/instruction strings: system prompts, context template, lookup default, expand instructions                                                                                                              |
+| Module                | Role                                                                                                                                                                                                                                                                                      |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `models.ts`           | Shared types + registries (ProviderType, RoleId, Connection, etc.)                                                                                                                                                                                                                        |
+| `conversation.ts`     | `ConversationRecord` (chat, lookup, canvas union), `ConversationState` / `Turn` (markdown `content` + offset-anchored `expansions`), `ConversationMeta`, `linearStateOf`, `linearRecordOf`, `persistableTurns`, `serializeForChat`, `buildConversationTitle`, `migrateConversationRecord` |
+| `context-budget.ts`   | Pure token budgeting: `estimateTokens` (4 chars/token), `budgetFor` (85% of the window minus the output reserve), `trimMessages` (drops oldest non-system messages, never the last)                                                                                                       |
+| `rich-text.ts`        | Pure rich-text model: `ExpansionNode`, `validateInsertion` / `insertExpansion(InTurns)` / `updateExpansion` / `setExpansionFolded` / `findExpansionIn*` / `maxExpansionId`, `flattenMarkdown`, legacy `migrateLegacySegments`                                                             |
+| `expand-prompt.ts`    | `buildExpandRequest(state, turn, parentId, range, role, prompt?, attachments?)` — a follow-up's messages at that turn, ancestor chain, instruction; `buildExpandMessages` assembles the branch                                                                                            |
+| `attachments.ts`      | `ImageAttachment`, per-message/size limits, `isImageInput` / `isImageAttachment` validation, `scaledImageSize`                                                                                                                                                                            |
+| `canvas.ts`           | Pure canvas model: card types, rectangles, snapping, `estimateWords`, `withCanvasFit`, `resolveMove`, session walks (`turnsThroughCard`), `linkPath`, viewport math, `normalizeCanvasLayout`                                                                                              |
+| `canvas-selection.ts` | What a selection covers: `marqueeHits`, `movingForSelection` (frames bring contents, cards bring what is joined), `sessionAncestorIds`, `cardAtPoint`, `selectionMarkdown`, `sourceExcerpts`                                                                                              |
+| `canvas-arrange.ts`   | Rigid blocks: `alignSelection`, `distributeSelection`, `tidySelection`, `duplicateSelection`; spaces out only what it moves                                                                                                                                                               |
+| `canvas-history.ts`   | Undo as patches: `diffCanvas`, `applyCanvasPatch` (leaves what the patch did not touch, refuses a turn that moved on)                                                                                                                                                                     |
+| `canvas-outline.ts`   | The canvas as a list: `canvasOutline`, `searchCanvasOutline`                                                                                                                                                                                                                              |
+| `canvas-context.ts`   | What links send: `sessionContextLinks`, `contextExcerpts` (limits, shared history once), `requestContext`                                                                                                                                                                                 |
+| `prompts.ts`          | All LLM-facing prompt/instruction strings: system prompts, context template, lookup default, expand instructions                                                                                                                                                                          |
 
 ##### Main process (`src/main/`)
 
@@ -204,6 +204,8 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | Add a new IPC channel                  | preload `index.ts` + `.d.ts`, then main `index.ts`                                                                         |
 | Change the chat streaming hook         | `hooks/useChatStreaming.ts` + `hooks/chat/{requests,persistence,transport}.ts`                                             |
 | Persist or load conversations          | `conversations.ts` (main) + `useChatStreaming.ts` (renderer)                                                               |
+| Add a property only one type uses      | `shared/conversation.ts` (record type, `migrateConversationRecord`) + `hasOwnTypeProperties` in `main/streaming.ts`        |
+| Conversation history lists             | `ConversationSearch.tsx`, `HomeView.tsx`, `showHistoryMenu` in `CanvasView.tsx`; opening goes through `conversation-open`  |
 | Search conversations                   | `conversations.ts` (`searchConversations`) + `ConversationSearch.tsx`                                                      |
 | Rename / regenerate a conversation     | `useChatStreaming.ts` (`renameConversation`/`regenerate`) + `Conversation.tsx`, `Turn.tsx`                                 |
 | Export a conversation                  | `conversation-export.ts` + `Conversation.tsx` (button states), preload `exportConversation`                                |
@@ -319,7 +321,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   writes and `mutateConversation(id, mutate)` for read-modify-write (KB-fed marking/reset). A
   mutation runs inside the same chain, so it cannot overwrite a newer autosave with the body it
   read first; returning `false` from the mutator cancels the write.
-  `searchConversations` scans chat records by title and flattened turn and expansion content, ranking title
+  `searchConversations` scans every type by title and flattened turn, expansion and canvas note content, ranking title
   matches first and returning a ±80-char excerpt around the newest matching turn (limit 100).
 - **Hotkey registry** is in `config.ts:registerHotkey`. It auto-routes through the XDG
   portal on Wayland. `save-settings` calls it with `handleHotkeyPressed` before persisting —
@@ -377,9 +379,23 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   - **Indicator.** A successful mutation broadcasts `memory-updated` to every window, and
     `MemoryIndicator` shows a transient pill. It is not on a turn because curator writes happen with
     no reply on screen.
-- **A canvas is a conversation record with a layout.** `source: 'canvas'` plus `state.canvas`
-  (`CanvasLayout`: cards and viewport), so storage, atomic writes and the curator need nothing new,
-  and history and search stay chat-only. `state.turns` is a pool rather than a line: a card's history
+- **Every conversation is one entity with type-specific properties.** A `ConversationRecord` has shared
+  fields and `state.turns`, and `source` picks its type: a chat has nothing extra, a look-up holds
+  `lookup.context`, a canvas holds `canvas`. Only the owning type may hold a property:
+  `isConversationRecord` refuses a foreign one on save and `migrateConversationRecord`, run on every read,
+  moves older `state.context`/`state.canvas` into place, so old files are rewritten on their next save.
+  The chat hook's `ConversationState` is not a record; `linearStateOf`/`linearRecordOf` convert at the boundary.
+- **Every history lists every type, and a type opens in its own view.** The Ctrl/Cmd+K list, Home's
+  recents, the canvas history menu and the popup's history button all show all three. A selection goes
+  through `conversation-open`: `App` shows a canvas in the canvas view and a chat or look-up in the chat
+  view. A look-up opened there keeps `source: 'lookup'` (`ConversationMeta.source` in the hook), its
+  context still reaches the model and shows under "Screen context". A popup that saved a record holds
+  it (`LookupSession.conversationId`): opening that record raises the popup instead, and deleting it
+  closes the popup, since two writers would overwrite each other. Search also refuses to delete the
+  chat or canvas open in the main window, and the popup's list cannot delete.
+- **A canvas is a conversation record with a layout.** `source: 'canvas'` plus `canvas`
+  (`CanvasLayout`: cards and viewport), so storage, atomic writes and the curator need nothing new.
+  `state.turns` is a pool rather than a line: a card's history
   is `turnsThroughCard`, following `parentId`, so branches do not see each other. `normalizeCanvasLayout`
   distrusts the stored layout at load. An emptied canvas is deleted from disk.
 - **Select is the default tool; a press decides by where it lands.** On a title it selects and can
@@ -533,8 +549,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   branches, such as a future branching chat, only needs to report its exchanges there.
 - **Chat and lookup are one assistant.** Only the window differs: same memory tools, curation and
   context budget, one `DELTA_SYSTEM_PROMPT` (`LOOKUP_WINDOW_NOTE` adds only a length limit), plus a
-  one-way transfer. `source` records where a conversation started; history lists still show only
-  chats. The curator gets a lookup's turns and expansions but not its raw `state.context`.
+  one-way transfer, which turns the look-up into a chat with its context folded into a turn. The curator gets a lookup's turns and expansions but not its raw `state.context`.
 - **Sends are context-budgeted.** `applyContextBudget(messages, role)` drops the oldest non-system messages until the estimate
   fits 85% of the model's context window minus its output reserve. It is fail-open: an unassigned
   role, unknown model, missing `contextWindow`, or any error returns the messages untouched.
@@ -594,9 +609,8 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 - **App-level chat chrome.** `App.tsx` owns the Ctrl/Cmd+N (new chat, switches to Chat) and
   Ctrl/Cmd+K (search) listeners, the `ConversationSearch` modal and the composer draft, so they
   work from every view and the draft survives `Conversation` unmounting. The Home view lists the
-  five most recent chats (`conversation-list`). Deleting the open conversation goes through the
-  chat toolbar (`deleteConversation` in the hook detaches the meta first so no autosave follows);
-  the search modal still refuses to delete the open chat.
+  five most recent conversations (`conversation-list`). Deleting the open conversation goes through
+  its own toolbar (`deleteConversation` in the hook detaches the meta first so no autosave follows).
 - **Rename is metadata-only.** `renameConversation(title)` trims to the title limit, updates the
   in-memory meta and saves with `touchContent: false`: the body's `title` changes but
   `updatedAt` does not, so the recents list keeps its order. Inline editing in

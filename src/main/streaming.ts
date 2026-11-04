@@ -42,9 +42,8 @@ export function parseProviderMessages(raw: unknown): ProviderMessage[] | null {
   return messages
 }
 
-export function isConversationState(value: unknown): value is ConversationState {
+function hasValidTurns(value: unknown): value is { turns: unknown[] } {
   if (!isRecord(value) || !Array.isArray(value.turns)) return false
-  if (value.context !== undefined && typeof value.context !== 'string') return false
   return value.turns.every(
     (turn) =>
       isRecord(turn) &&
@@ -57,6 +56,22 @@ export function isConversationState(value: unknown): value is ConversationState 
   )
 }
 
+export function isConversationState(value: unknown): value is ConversationState {
+  if (!hasValidTurns(value)) return false
+  const { context } = value as { context?: unknown }
+  return context === undefined || typeof context === 'string'
+}
+
+/** Each type holds its own properties and nobody else's. */
+function hasOwnTypeProperties(value: Record<string, unknown>): boolean {
+  const { source, lookup, canvas } = value
+  if (source === 'chat') return lookup === undefined && canvas === undefined
+  if (source === 'lookup') {
+    return canvas === undefined && isRecord(lookup) && typeof lookup.context === 'string'
+  }
+  return source === 'canvas' && lookup === undefined && isRecord(canvas)
+}
+
 export function isConversationRecord(value: unknown): value is ConversationRecord {
   return (
     isRecord(value) &&
@@ -64,8 +79,10 @@ export function isConversationRecord(value: unknown): value is ConversationRecor
     typeof value.title === 'string' &&
     typeof value.createdAt === 'string' &&
     typeof value.updatedAt === 'string' &&
-    (value.source === 'chat' || value.source === 'lookup' || value.source === 'canvas') &&
-    isConversationState(value.state)
+    hasOwnTypeProperties(value) &&
+    hasValidTurns(value.state) &&
+    (value.state as Record<string, unknown>).context === undefined &&
+    (value.state as Record<string, unknown>).canvas === undefined
   )
 }
 

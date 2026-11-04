@@ -424,6 +424,12 @@ function Conversation({
         {loading ? 'Delta AI is responding' : ''}
       </div>
       <div className="chat-scroll" ref={scrollRef}>
+        {state.context && (
+          <details className="chat-screen-context">
+            <summary>Screen context</summary>
+            <p>{state.context}</p>
+          </details>
+        )}
         {visibleTurns.length === 0 ? (
           <div className="empty-state">
             <div className="empty-state-inner">

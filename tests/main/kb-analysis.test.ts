@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { CanvasCard } from '../../src/shared/canvas'
-import type { ConversationRecord, Turn } from '../../src/shared/conversation'
+import type { CanvasRecord, ConversationRecord, Turn } from '../../src/shared/conversation'
 import { migrateConversationRecord } from '../../src/shared/conversation'
 import type { LegacyTurn } from '../../src/shared/rich-text'
 import { buildSingleMaterial } from '../../src/main/kb/analysis'
@@ -33,12 +33,13 @@ function chatRecord(turns: Turn[]): ConversationRecord {
   }
 }
 
-function canvasRecord(turns: Turn[], cards: CanvasCard[]): ConversationRecord {
+function canvasRecord(turns: Turn[], cards: CanvasCard[]): CanvasRecord {
   const record = chatRecord(turns)
   return {
     ...record,
     source: 'canvas',
-    state: { turns, canvas: { cards, viewport: { x: 0, y: 0, zoom: 1 } } }
+    state: { turns },
+    canvas: { cards, viewport: { x: 0, y: 0, zoom: 1 } } as CanvasRecord['canvas']
   }
 }
 

@@ -1,6 +1,6 @@
 import { KB_MEMORY_SYSTEM_PROMPT } from '../../shared/prompts'
 import { normalizeCanvasLayout } from '../../shared/canvas'
-import type { ConversationRecord, ConversationState, Turn } from '../../shared/conversation'
+import type { CanvasRecord, ConversationRecord, Turn } from '../../shared/conversation'
 import type { ExpansionNode } from '../../shared/rich-text'
 import type { ProviderMessage } from '../provider'
 
@@ -63,8 +63,9 @@ function linearExchanges(turns: Turn[]): Exchange[] {
 }
 
 /** A canvas keeps its turns in creation order, so only its cards say what follows what. */
-function canvasExchanges(state: ConversationState): Exchange[] {
-  const { cards } = normalizeCanvasLayout(state.canvas, state.turns)
+function canvasExchanges(record: CanvasRecord): Exchange[] {
+  const { turns } = record.state
+  const { cards } = normalizeCanvasLayout(record.canvas, turns)
   const placed = new Set<number>()
   const exchanges: Exchange[] = []
   for (const card of cards) {
@@ -73,18 +74,16 @@ function canvasExchanges(state: ConversationState): Exchange[] {
     exchanges.push({
       id: card.id,
       parentId: card.parentId,
-      question: state.turns.find((turn) => turn.id === card.userTurnId),
-      answer: state.turns.find((turn) => turn.id === card.turnId)
+      question: turns.find((turn) => turn.id === card.userTurnId),
+      answer: turns.find((turn) => turn.id === card.turnId)
     })
   }
-  return [...exchanges, ...linearExchanges(state.turns.filter((turn) => !placed.has(turn.id)))]
+  return [...exchanges, ...linearExchanges(turns.filter((turn) => !placed.has(turn.id)))]
 }
 
 /** A record that gains branches only needs to report its exchanges here. */
 function conversationExchanges(record: ConversationRecord): Exchange[] {
-  return record.source === 'canvas'
-    ? canvasExchanges(record.state)
-    : linearExchanges(record.state.turns)
+  return record.source === 'canvas' ? canvasExchanges(record) : linearExchanges(record.state.turns)
 }
 
 function splitIntoThreads(exchanges: Exchange[]): Thread[] {

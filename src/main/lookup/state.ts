@@ -8,6 +8,8 @@ export interface LookupSession {
   ocrToken: number
   hasText: boolean
   pendingState: { status: 'processing' | 'ready'; text: string; hint: string } | null
+  /** The record this popup is writing, once it has saved one. */
+  conversationId?: string
 }
 
 export function clamp(v: number, lo: number, hi: number): number {

@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react'
-import type { ConversationMeta } from '../../../../shared/conversation'
+import type { ConversationMeta, ConversationTarget } from '../../../../shared/conversation'
+import { CONVERSATION_SOURCE_LABELS } from '../../../../shared/conversation'
 import { formatRelativeTime } from '../../lib/format'
 
 type HomeTarget = 'chat' | 'knowledge' | 'lookup-guide'
 
 interface HomeViewProps {
   onNavigate?: (view: HomeTarget) => void
-  onOpenConversation?: (id: string) => void
+  onOpenConversation?: (target: ConversationTarget) => void
 }
 
 const RECENT_LIMIT = 5
@@ -74,7 +75,7 @@ function HomeView({ onNavigate, onOpenConversation }: HomeViewProps): React.JSX.
         if (!cancelled) setRecent(list.slice(0, RECENT_LIMIT))
       })
       .catch(() => {
-        // recents are a shortcut; Ctrl+K search still reaches every chat
+        // recents are a shortcut; Ctrl+K search still reaches every conversation
       })
     return () => {
       cancelled = true
@@ -139,9 +140,10 @@ function HomeView({ onNavigate, onOpenConversation }: HomeViewProps): React.JSX.
             <ul className="home-recent-list">
               {recent.map((meta) => (
                 <li key={meta.id}>
-                  <button className="home-recent-item" onClick={() => onOpenConversation(meta.id)}>
+                  <button className="home-recent-item" onClick={() => onOpenConversation(meta)}>
                     <span className="home-recent-title">{meta.title}</span>
                     <span className="home-recent-meta">
+                      {CONVERSATION_SOURCE_LABELS[meta.source]} ·{' '}
                       {formatRelativeTime(meta.updatedAt)} · {meta.turnCount} turns
                     </span>
                   </button>

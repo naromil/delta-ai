@@ -81,7 +81,7 @@ async function readRecordFile(
 ): Promise<ConversationRecord | null> {
   try {
     const data = await readFile(filePath, 'utf-8')
-    return JSON.parse(data) as ConversationRecord
+    return migrateConversationRecord(JSON.parse(data) as ConversationRecord)
   } catch (err) {
     if (label !== undefined) console.warn(`Failed to read conversation ${label}:`, err)
     return null
@@ -186,8 +186,7 @@ export function mutateConversation(
 export async function loadConversation(id: string): Promise<ConversationRecord | null> {
   const filePath = conversationPath(id)
   if (!filePath) return null
-  const record = await readRecordFile(filePath, id)
-  return record ? migrateConversationRecord(record) : null
+  return await readRecordFile(filePath, id)
 }
 
 async function removeFile(filePath: string): Promise<void> {
@@ -264,25 +263,33 @@ function expansionTexts(nodes: ExpansionNode[]): string[] {
   ])
 }
 
+/** Searchable text, newest first. A canvas's notes hold no turn, so they are added here. */
+function searchableTexts(record: ConversationRecord): string[] {
+  const texts = [...record.state.turns]
+    .reverse()
+    .flatMap((turn) => [turn.content, ...expansionTexts(turn.expansions)])
+  if (record.source !== 'canvas') return texts
+  const notes = record.canvas.cards.flatMap((card) => (card.kind === 'note' ? [card.text] : []))
+  return [...texts, ...notes]
+}
+
 function contentSnippet(record: ConversationRecord, needle: string): string | undefined {
-  for (let i = record.state.turns.length - 1; i >= 0; i--) {
-    const turn = record.state.turns[i]
-    for (const source of [turn.content, ...expansionTexts(turn.expansions)]) {
-      const text = flattenMarkdown(source).replace(/\s+/g, ' ').trim()
-      const index = text.toLowerCase().indexOf(needle)
-      if (index >= 0) return excerptAround(text, index, needle.length)
-    }
+  for (const source of searchableTexts(record)) {
+    const text = flattenMarkdown(source).replace(/\s+/g, ' ').trim()
+    const index = text.toLowerCase().indexOf(needle)
+    if (index >= 0) return excerptAround(text, index, needle.length)
   }
   return undefined
 }
 
 /**
- * Searches chat conversations by title and message content. Title matches rank
- * before content matches; within a group the newest conversation comes first.
+ * Searches conversations of every type by title and content, or one type when
+ * `source` is given. Title matches rank before content matches; within a group
+ * the newest conversation comes first.
  */
 export async function searchConversations(
   query: string,
-  source: 'chat' | 'lookup' = 'chat'
+  source?: ConversationSource
 ): Promise<ConversationSearchResult[]> {
   const needle = query.trim().toLowerCase()
   const metas = await listConversations(source)

@@ -2,7 +2,8 @@ import type {
   ConversationState,
   ConversationRecord,
   ConversationMeta,
-  ConversationSearchResult
+  ConversationSearchResult,
+  ConversationTarget
 } from '../shared/conversation'
 import type { Connection } from '../shared/models'
 import type { KbMaintenanceStatus, KbRunResult } from '../shared/kb'
@@ -98,7 +99,9 @@ declare global {
       loadConversation: (id: string) => Promise<ConversationRecord | null>
       deleteConversation: (id: string) => Promise<void>
       listConversations: () => Promise<ConversationMeta[]>
-      listCanvases: () => Promise<ConversationMeta[]>
+      /** Raises the popup holding it, or opens it in the main window's view for its type. */
+      openConversation: (target: ConversationTarget) => void
+      onConversationOpen: (cb: (target: ConversationTarget) => void) => () => void
       searchConversations: (query: string) => Promise<ConversationSearchResult[]>
       listUnfedConversations: () => Promise<ConversationMeta[]>
       markConversationKbFed: (id: string) => Promise<void>

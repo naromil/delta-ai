@@ -5,12 +5,14 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { RefObject } from 'react'
-import type { ConversationRecord, ConversationState } from '../../../../shared/conversation'
-import { persistableTurns } from '../../../../shared/conversation'
+import type { ConversationState, LinearSource } from '../../../../shared/conversation'
+import { linearRecordOf, persistableTurns } from '../../../../shared/conversation'
 import { finalizeTurns } from '../../../../shared/rich-text'
 
 export interface ConversationMeta {
   id: string
+  /** The record's own type, which stays what it was whichever window has it open. */
+  source: LinearSource
   title: string
   createdAt: string
   /** Last *content* change; fold/dismiss/rename never move this. */
@@ -35,21 +37,11 @@ function saveErrorText(err: unknown): string {
 /** Persists `state`; `undefined` means there was nothing worth saving. Never rejects. */
 export function saveConversationState(
   state: ConversationState,
-  role: 'chat' | 'lookup',
   meta: ConversationMeta
 ): Promise<SaveOutcome> | undefined {
   const turns = finalizeTurns(persistableTurns(state.turns))
   if (turns.length === 0 || turns.every((turn) => turn.content.trim() === '')) return undefined
-  const record: ConversationRecord = {
-    id: meta.id,
-    title: meta.title,
-    createdAt: meta.createdAt,
-    updatedAt: meta.updatedAt,
-    source: role === 'lookup' ? 'lookup' : 'chat',
-    state: { ...state, turns },
-    kbFed: meta.kbFed
-  }
-  return window.api.saveConversation(record).then(
+  return window.api.saveConversation(linearRecordOf(meta, { ...state, turns })).then(
     (): SaveOutcome => ({ ok: true }),
     (err: unknown): SaveOutcome => {
       console.warn('Failed to save conversation:', err)
@@ -60,7 +52,6 @@ export function saveConversationState(
 
 export function useConversationPersistence(
   state: ConversationState,
-  role: 'chat' | 'lookup',
   metaRef: RefObject<ConversationMeta | null>
 ): {
   requestSave: (touchContent: boolean) => void
@@ -89,11 +80,11 @@ export function useConversationPersistence(
       const meta = metaRef.current
       if (!meta) return
       if (touchContent) meta.updatedAt = new Date().toISOString()
-      void saveConversationState(snapshot, role, meta)?.then((outcome) =>
+      void saveConversationState(snapshot, meta)?.then((outcome) =>
         reportSaveOutcome(meta.id, outcome)
       )
     },
-    [role, metaRef, reportSaveOutcome]
+    [metaRef, reportSaveOutcome]
   )
 
   const requestSave = useCallback((touchContent: boolean): void => {
