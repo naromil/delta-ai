@@ -506,6 +506,6 @@ user's own text, holding no turn). The layout also holds frames and connections.
   far out (below 50%) each card shows just its title at a readable size.
 
 Geometry and session rules are pure and live in `src/shared/canvas.ts`, selection in `canvas-selection.ts`,
-alignment, tidying and duplication in `canvas-arrange.ts`, undo in `canvas-history.ts` and the outline in
+alignment and duplication in `canvas-arrange.ts`, tidying in `canvas-tidy.ts` (with `canvas-straighten.ts` and `layered-layout.ts`), undo in `canvas-history.ts` and the outline in
 `canvas-outline.ts`. State and streams are in `hooks/useCanvas.ts`, pointer gestures in
 `views/canvas/CanvasView.tsx` and keys in `views/canvas/useCanvasKeyboard.ts`.

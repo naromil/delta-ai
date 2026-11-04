@@ -59,9 +59,9 @@ import type { CanvasArrangeResult } from '../../../../shared/canvas-arrange'
 import {
   alignSelection,
   distributeSelection,
-  selectionBlockCount,
-  tidySelection
+  selectionBlockCount
 } from '../../../../shared/canvas-arrange'
+import { tidySelection } from '../../../../shared/canvas-tidy'
 import { canvasOutline } from '../../../../shared/canvas-outline'
 import {
   boundsOf,
@@ -222,6 +222,7 @@ const EXPORT_SAVED_MS = 2000
 
 const REFUSE_TOO_SMALL = 'That rectangle is too small to hold an answer. Draw a larger one.'
 const REFUSE_ARRANGE = 'Other cards are in the way of that arrangement.'
+const ALREADY_TIDY = 'Already tidy.'
 const NO_CARD_TO_CONNECT = 'Start a connection on a card.'
 const CONNECT_ANOTHER = 'Drag to a different card to connect them.'
 const NO_CONTINUE_FAILED = 'Retry this answer before continuing it.'
@@ -1133,6 +1134,14 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     [moveItems, showNotice]
   )
 
+  const applyTidy = useCallback(
+    (result: CanvasArrangeResult): void => {
+      if (result.ok) moveItems('Tidy up', result.cards, result.frames)
+      else showNotice(ALREADY_TIDY)
+    },
+    [moveItems, showNotice]
+  )
+
   const handleDuplicate = useCallback(
     (ids: ReadonlySet<string>): void => {
       const copies = duplicate(ids)
@@ -1884,7 +1893,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
           setNoteDraft({ key: ++draftKeyRef.current, rect })
         },
         selectEverything,
-        tidyUp: () => applyArrangement('Tidy up', tidySelection({ cards, frames })),
+        tidyUp: () => applyTidy(tidySelection({ cards, frames, links })),
         showEverything
       })
     )
@@ -2838,7 +2847,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
             onDistribute={(axis) =>
               applyArrangement('Space evenly', distributeSelection(barItems, selectedIds, axis))
             }
-            onTidy={() => applyArrangement('Tidy up', tidySelection(barItems, selectedIds))}
+            onTidy={() => applyTidy(tidySelection({ ...barItems, links }, selectedIds))}
             onConnect={() => {
               const [from, to] = chosenCards
               const id = addLink(from.id, to.id)

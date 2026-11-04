@@ -1,5 +1,6 @@
 /**
- * Moving several things at once: alignment, distribution, tidying and duplication.
+ * Moving several things at once: alignment, distribution and duplication (tidying builds on
+ * these blocks in `canvas-tidy.ts`).
  *
  * The unit is a block: a selected card with what is joined to it, or a frame with what
  * it holds. Blocks move rigidly, so joined cards stay joined and nothing leaves a frame.
@@ -33,11 +34,11 @@ export interface CanvasFrameUpdate {
 export type CanvasArrangeResult =
   { ok: true; cards: CanvasMoveUpdate[]; frames: CanvasFrameUpdate[] } | { ok: false }
 
-interface CanvasBlock extends CanvasMoving {
+export interface CanvasBlock extends CanvasMoving {
   rect: CanvasRect
 }
 
-interface PlacedBlock {
+export interface PlacedBlock {
   block: CanvasBlock
   x: number
   y: number
@@ -46,9 +47,8 @@ interface PlacedBlock {
 const LENGTH: Readonly<Record<CanvasAxis, 'w' | 'h'>> = { x: 'w', y: 'h' }
 /** Space between blocks that an arrangement had to separate. */
 const ARRANGE_GAP = 24
-const TIDY_GAP = 48
-/** The shape a tidied canvas aims for, roughly a window's. */
-const TIDY_ASPECT = 1.6
+/** Between a copy and its original. */
+const DUPLICATE_GAP = 48
 
 function sharesAny(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
   for (const id of a) {
@@ -58,7 +58,7 @@ function sharesAny(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
 }
 
 /** One block per selected item, with blocks that share anything merged. */
-function blocksFor(items: CanvasItems, selected: ReadonlySet<string>): CanvasBlock[] {
+export function blocksFor(items: CanvasItems, selected: ReadonlySet<string>): CanvasBlock[] {
   const merged: CanvasMoving[] = []
   for (const id of selected) {
     let moving = movingForSelection(items, new Set([id]))
@@ -86,8 +86,12 @@ export function selectionBlockCount(items: CanvasItems, selected: ReadonlySet<st
   return blocksFor(items, selected).length
 }
 
+export function placedRect({ block, x, y }: PlacedBlock): CanvasRect {
+  return { ...block.rect, x, y }
+}
+
 /** Turns where each block lands into moves. */
-function settleBlocks(items: CanvasItems, placed: PlacedBlock[]): CanvasArrangeResult {
+export function settleBlocks(items: CanvasItems, placed: PlacedBlock[]): CanvasArrangeResult {
   const cardDelta = new Map<string, { dx: number; dy: number }>()
   const frameDelta = new Map<string, { dx: number; dy: number }>()
   for (const { block, x, y } of placed) {
@@ -112,16 +116,15 @@ function settleBlocks(items: CanvasItems, placed: PlacedBlock[]): CanvasArrangeR
 
 /** Slides blocks along `axis`, in order, until none overlaps one placed before it. */
 function separateAlong(placed: PlacedBlock[], axis: CanvasAxis): PlacedBlock[] {
-  const box = ({ block, x, y }: PlacedBlock): CanvasRect => ({ ...block.rect, x, y })
   const sorted = [...placed].sort((a, b) => a[axis] - b[axis])
   const done: PlacedBlock[] = []
   for (const item of sorted) {
     let current = item
-    let hit = done.find((other) => rectsOverlap(box(current), box(other)))
+    let hit = done.find((other) => rectsOverlap(placedRect(current), placedRect(other)))
     while (hit) {
       const pushed: number = hit[axis] + hit.block.rect[LENGTH[axis]] + ARRANGE_GAP
       current = { ...current, [axis]: pushed }
-      hit = done.find((other) => rectsOverlap(box(current), box(other)))
+      hit = done.find((other) => rectsOverlap(placedRect(current), placedRect(other)))
     }
     done.push(current)
   }
@@ -177,59 +180,6 @@ export function distributeSelection(
   return settleBlocks(items, placed)
 }
 
-/**
- * Packs blocks into rows in reading order, starting where they start now. Without a
- * selection it tidies everything. What stays put is cleared by moving the result down.
- */
-export function tidySelection(
-  items: CanvasItems,
-  selected?: ReadonlySet<string>
-): CanvasArrangeResult {
-  const ids =
-    selected ??
-    new Set([...items.cards.map((card) => card.id), ...items.frames.map((frame) => frame.id)])
-  const blocks = blocksFor(items, ids)
-  const bounds = boundsOf(blocks.map((block) => block.rect))
-  if (blocks.length === 0 || !bounds) return { ok: false }
-
-  const area = blocks.reduce((sum, { rect }) => sum + (rect.w + TIDY_GAP) * (rect.h + TIDY_GAP), 0)
-  const widest = Math.max(...blocks.map((block) => block.rect.w))
-  const rowWidth = Math.max(Math.sqrt(area * TIDY_ASPECT), widest)
-  const sorted = [...blocks].sort((a, b) => a.rect.y - b.rect.y || a.rect.x - b.rect.x)
-
-  let x = 0
-  let y = 0
-  let rowHeight = 0
-  const packed = sorted.map((block): PlacedBlock => {
-    if (x > 0 && x + block.rect.w > rowWidth) {
-      x = 0
-      y += rowHeight + TIDY_GAP
-      rowHeight = 0
-    }
-    const placed = { block, x, y }
-    x += block.rect.w + TIDY_GAP
-    rowHeight = Math.max(rowHeight, block.rect.h)
-    return placed
-  })
-
-  const moving = {
-    cards: new Set(blocks.flatMap((block) => [...block.cards])),
-    frames: new Set(blocks.flatMap((block) => [...block.frames]))
-  }
-  const packedBounds = boundsOf(
-    packed.map(({ block, x: px, y: py }) => ({ ...block.rect, x: px, y: py }))
-  ) as CanvasRect
-  const landing = rectClearOf(
-    { ...packedBounds, x: bounds.x, y: bounds.y },
-    cardRects(items.cards, moving.cards),
-    TIDY_GAP
-  )
-  return settleBlocks(
-    items,
-    packed.map((item) => ({ ...item, x: item.x + landing.x, y: item.y + landing.y }))
-  )
-}
-
 /* ---- Duplicating ---- */
 
 export interface CanvasDuplicate {
@@ -272,7 +222,7 @@ export function duplicateSelection(
   if (!bounds) return null
 
   const landing = rectClearOf(
-    { ...bounds, x: bounds.x + bounds.w + TIDY_GAP },
+    { ...bounds, x: bounds.x + bounds.w + DUPLICATE_GAP },
     cardRects(layout.cards),
     ARRANGE_GAP
   )
