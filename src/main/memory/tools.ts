@@ -142,7 +142,7 @@ export function memoryAgentFor(role: RoleId): AgentTools | undefined {
 }
 
 /**
- * Adds the auto-loaded memories to an expand request, which holds no tools. Never throws:
+ * Adds the auto-loaded memories to an expand request whose model holds no tools. Never throws:
  * memory problems must not be why an expansion fails.
  */
 export function withAutoLoadedMemories(messages: ProviderMessage[]): ProviderMessage[] {

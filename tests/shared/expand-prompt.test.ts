@@ -1,10 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ConversationState, Turn } from '../../src/shared/conversation'
-import {
-  EXPAND_HISTORY_MESSAGES,
-  buildExpandMessages,
-  buildExpandRequest
-} from '../../src/shared/expand-prompt'
+import { serializeForChat } from '../../src/shared/conversation'
+import { buildExpandMessages, buildExpandRequest } from '../../src/shared/expand-prompt'
 import {
   EXPAND_DEFAULT_PROMPT,
   buildExpandPromptedInstruction,
@@ -88,34 +85,55 @@ describe('buildExpandRequest', () => {
     expect(messages?.[3].content).toContain('"beta"')
   })
 
-  it('leaves out turns after the answer, failed turns and images', () => {
-    const image = { name: 'a.jpg', mediaType: 'image/jpeg', data: 'AAAA' } as never
+  it('leaves out turns after the answer and failed turns', () => {
     const state: ConversationState = {
       turns: [
-        userTurn(1, '', { attachments: [image] }),
         assistantTurn(2, 'boom', { error: true }),
-        userTurn(3, 'with image', { attachments: [image] }),
+        question,
         answer,
         userTurn(4, 'a later question')
       ]
     }
-    const messages = buildExpandRequest(state, answer, undefined, { start: 0, end: 5 }, 'chat')
-    const text = JSON.stringify(messages)
+    const text = JSON.stringify(
+      buildExpandRequest(state, answer, undefined, { start: 0, end: 5 }, 'chat')
+    )
     expect(text).not.toContain('a later question')
     expect(text).not.toContain('boom')
-    expect(text).not.toContain('AAAA')
-    expect(messages?.some((message) => message.content === '')).toBe(false)
   })
 
-  it('keeps the screen context and only the newest history', () => {
+  it('sends exactly what a follow-up would, so the prompt cache can reuse it', () => {
+    const image = { name: 'a.jpg', mediaType: 'image/jpeg', data: 'AAAA' }
     const turns: Turn[] = []
     for (let i = 0; i < 20; i++) turns.push(userTurn(100 + i, `message ${i}`))
-    const state: ConversationState = { context: 'screen text', turns: [...turns, answer] }
+    turns.push(userTurn(200, '', { attachments: [image] }), answer)
+    const state: ConversationState = { context: 'screen text', turns }
+
+    const followUp = serializeForChat(state, 'lookup')
     const messages = buildExpandRequest(state, answer, undefined, { start: 0, end: 5 }, 'lookup')
-    expect(messages?.[1].content).toContain('screen text')
-    const history = messages?.filter((message) => message.content.startsWith('message ')) ?? []
-    expect(history).toHaveLength(EXPAND_HISTORY_MESSAGES)
-    expect(history[history.length - 1].content).toBe('message 19')
+
+    expect(messages?.slice(0, followUp.length)).toEqual(followUp)
+    expect(messages).toHaveLength(followUp.length + 1)
+    expect(followUp.some((message) => message.images?.length)).toBe(true)
+  })
+
+  it('carries images asked with the expansion and with its ancestors', () => {
+    const image = { name: 'a.jpg', mediaType: 'image/jpeg', data: 'AAAA' }
+    const other = { name: 'b.jpg', mediaType: 'image/jpeg', data: 'BBBB' }
+    const outer = frame(1, { answer: 'beta explained', attachments: [other] })
+    const nested = assistantTurn(2, 'alpha is here', { expansions: [outer] })
+    const state: ConversationState = { turns: [question, nested] }
+
+    const messages =
+      buildExpandRequest(state, nested, 1, { start: 0, end: 4 }, 'chat', 'What is this?', [
+        image
+      ]) ?? []
+
+    expect(messages[messages.length - 1].images).toEqual([
+      { mediaType: 'image/jpeg', data: 'AAAA' }
+    ])
+    expect(messages[messages.length - 3].images).toEqual([
+      { mediaType: 'image/jpeg', data: 'BBBB' }
+    ])
   })
 
   it('walks a nested selection up through every ancestor', () => {

@@ -33,6 +33,7 @@ import {
   resolveMove,
   rectClearBelow,
   rectClearOf,
+  rectFromCorner,
   rectFromPoints,
   rectsOverlap,
   revealRect,
@@ -105,6 +106,15 @@ function node(
 }
 
 describe('rectangles', () => {
+  it('places a default-sized rectangle with its top-left corner at the point', () => {
+    expect(rectFromCorner({ x: 50, y: 80 }, { w: 200, h: 100 })).toEqual({
+      x: 50,
+      y: 80,
+      w: 200,
+      h: 100
+    })
+  })
+
   it('builds a positive rectangle whichever way it was dragged', () => {
     expect(rectFromPoints({ x: 50, y: 80 }, { x: 10, y: 20 })).toEqual({
       x: 10,

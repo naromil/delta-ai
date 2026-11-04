@@ -8,7 +8,6 @@ import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import type { ExpansionNode, ExpansionRange } from '../../../shared/rich-text'
 import { activeExpansion, isSameRange } from '../../../shared/rich-text'
-import { MAX_SUGGESTED_TERMS } from '../../../shared/suggested-terms'
 
 export const SOURCED_TEXT = 'sourcedText'
 export const EXPANSION_NODE = 'expansion'
@@ -23,7 +22,6 @@ export interface MarkdownNode {
   value?: string
   id?: number
   src?: number
-  suggested?: boolean
   lang?: string | null
   position?: MarkdownPosition
   children?: MarkdownNode[]
@@ -259,98 +257,6 @@ export function isPlainMarkdown(text: string): boolean {
   return others.length === 0 && inner?.type === 'text' && inner.value === text
 }
 
-/* ---- Suggested terms ---- */
-
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
-function verbatimTextSpans(source: string): ExpansionRange[] {
-  const spans: ExpansionRange[] = []
-  walk(parseMarkdown(source), (node) => {
-    if (node.type !== 'text' || !isVerbatimText(node, source)) return
-    const start = offsetAt(node.position, 'start')
-    const end = offsetAt(node.position, 'end')
-    if (start !== null && end !== null) spans.push({ start, end })
-  })
-  return spans
-}
-
-/**
- * Where to underline each term: its first whole-word occurrence in prose, never
- * in code or on text an expansion already covers. Each term marks one place, so
- * an answer stays readable however often the word recurs.
- */
-export function suggestedTermRanges(
-  source: string,
-  terms: readonly string[],
-  expansions: ExpansionNode[]
-): ExpansionRange[] {
-  if (terms.length === 0) return []
-  const spans = verbatimTextSpans(source)
-  const taken: ExpansionRange[] = [...expansions]
-  const ranges: ExpansionRange[] = []
-
-  for (const term of terms.slice(0, MAX_SUGGESTED_TERMS)) {
-    // Once expanded it has done its job; don't move the underline to a later mention.
-    const key = term.toLowerCase()
-    if (expansions.some((node) => node.originalText.toLowerCase() === key)) continue
-    const pattern = new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(term)}(?![\\p{L}\\p{N}])`, 'iu')
-    for (const span of spans) {
-      const match = pattern.exec(source.slice(span.start, span.end))
-      if (!match) continue
-      const start = span.start + match.index
-      const range = { start, end: start + match[0].length }
-      if (taken.some((other) => range.start < other.end && other.start < range.end)) continue
-      taken.push(range)
-      ranges.push(range)
-      break
-    }
-  }
-  return ranges
-}
-
-function splitTextNode(
-  children: MarkdownNode[],
-  index: number,
-  range: ExpansionRange,
-  replacement: MarkdownNode
-): void {
-  const child = children[index]
-  const start = offsetAt(child.position, 'start') ?? 0
-  const end = offsetAt(child.position, 'end') ?? 0
-  const value = child.value ?? ''
-  const before = value.slice(0, range.start - start)
-  const after = value.slice(range.end - start)
-  const nodes: MarkdownNode[] = []
-  if (before !== '') nodes.push(textNode(before, start, range.start))
-  nodes.push(replacement)
-  if (after !== '') nodes.push(textNode(after, range.end, end))
-  children.splice(index, 1, ...nodes)
-}
-
-function markSuggestedInChildren(parent: MarkdownNode, range: ExpansionRange): boolean {
-  const children = parent.children ?? []
-  for (let index = 0; index < children.length; index++) {
-    const child = children[index]
-    const start = offsetAt(child.position, 'start')
-    const end = offsetAt(child.position, 'end')
-    if (start === null || end === null || start > range.start || end < range.end) continue
-    if (child.type === 'text') {
-      const marked = textNode(
-        (child.value ?? '').slice(range.start - start, range.end - start),
-        range.start,
-        range.end
-      )
-      marked.suggested = true
-      splitTextNode(children, index, range, marked)
-      return true
-    }
-    if (markSuggestedInChildren(child, range)) return true
-  }
-  return false
-}
-
 function spliceRun(
   children: MarkdownNode[],
   firstIndex: number,
@@ -437,17 +343,11 @@ function visibleExpansions(expansions: ExpansionNode[]): ExpansionNode[] {
 /**
  * Parses `source` and splices every anchored expansion into the tree as an
  * `expansion` node between split text fragments. Each remaining text node is
- * converted to a `sourcedText` node carrying its absolute source offset, and
- * `suggested` ranges become their own text nodes so they can be underlined.
+ * converted to a `sourcedText` node carrying its absolute source offset.
  */
-export function prepareMarkdownTree(
-  source: string,
-  expansions: ExpansionNode[],
-  suggested: readonly ExpansionRange[] = []
-): MarkdownNode {
+export function prepareMarkdownTree(source: string, expansions: ExpansionNode[]): MarkdownNode {
   const tree = parseMarkdown(source)
   for (const expansion of visibleExpansions(expansions)) spliceInChildren(tree, expansion)
-  for (const range of suggested) markSuggestedInChildren(tree, range)
   markSourceText(tree)
   return tree
 }

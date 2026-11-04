@@ -151,6 +151,11 @@ export function rectFromPoints(a: CanvasPoint, b: CanvasPoint): CanvasRect {
   }
 }
 
+/** A default-sized rectangle placed at the pointer: its corner is there, as when drawing one. */
+export function rectFromCorner(point: CanvasPoint, size: { w: number; h: number }): CanvasRect {
+  return { x: point.x, y: point.y, w: size.w, h: size.h }
+}
+
 export function rectCenteredAt(point: CanvasPoint, size: { w: number; h: number }): CanvasRect {
   return { x: point.x - size.w / 2, y: point.y - size.h / 2, w: size.w, h: size.h }
 }

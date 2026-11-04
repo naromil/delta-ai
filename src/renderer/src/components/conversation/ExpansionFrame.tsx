@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import { flattenMarkdown } from '../../../../shared/rich-text'
 import type { ExpansionNode } from '../../../../shared/rich-text'
+import { attachmentSrc } from '../../lib/image-attachments'
 import { isPlainMarkdown } from '../../lib/markdown'
 import Markdown from './Markdown'
 
@@ -12,6 +13,8 @@ export interface ExpansionFrameActions {
   onUnfold: (id: number) => void
   /** Fresh answer in place: Retry on a failed frame, Regenerate on a finished one. */
   onRetry?: (id: number) => void
+  /** Change the question and get a fresh answer in place. */
+  onEdit?: (id: number, at: FramePopupAt) => void
   onDismiss?: (id: number) => void
   /** Ask a new question about the same range; earlier answers stay in the list. */
   onAskAnother?: (id: number, at: FramePopupAt) => void
@@ -94,7 +97,7 @@ function FrameButton({
  * pill and frame open a list of the answers instead of unfolding directly.
  */
 function ExpansionFrame({ node, group, ...actions }: ExpansionFrameProps): React.JSX.Element {
-  const { onFold, onUnfold, onRetry, onDismiss, onAskAnother, onPickAnswer } = actions
+  const { onFold, onUnfold, onRetry, onEdit, onDismiss, onAskAnother, onPickAnswer } = actions
   const bodyId = `expansion-body-${node.id}`
   const [copied, setCopied] = useState(false)
   const copiedTimerRef = useRef<number | null>(null)
@@ -170,6 +173,18 @@ function ExpansionFrame({ node, group, ...actions }: ExpansionFrameProps): React
           </span>
         ) : null}
         {question ? <span className="frame-question">{question}</span> : null}
+        {node.attachments?.length ? (
+          <span className="frame-attachments">
+            {node.attachments.map((attachment, index) => (
+              <img
+                key={index}
+                src={attachmentSrc(attachment)}
+                alt={attachment.name}
+                title={attachment.name}
+              />
+            ))}
+          </span>
+        ) : null}
         {pending ? (
           <span className="frame-placeholder">Thinking…</span>
         ) : (
@@ -215,6 +230,13 @@ function ExpansionFrame({ node, group, ...actions }: ExpansionFrameProps): React
             <FrameButton
               label={node.status === 'error' ? 'Retry' : 'Regenerate'}
               onClick={() => onRetry(node.id)}
+            />
+          ) : null}
+          {finished && onEdit ? (
+            <FrameButton
+              label="Edit"
+              title="Change the question and get a new answer"
+              onClick={(element) => onEdit(node.id, popupPointBelow(element))}
             />
           ) : null}
           {finished && onAskAnother ? (

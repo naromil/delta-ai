@@ -91,11 +91,20 @@ function sameOffsets(a: TermOffsets, b: TermOffsets): boolean {
   )
 }
 
-function LinkLine({ d, arrow = false }: { d: string; arrow?: boolean }): React.JSX.Element {
+function LinkLine({
+  d,
+  arrow = false,
+  dashed = false
+}: {
+  d: string
+  arrow?: boolean
+  dashed?: boolean
+}): React.JSX.Element {
+  // A normalised length is only for the draw-in animation; it would stretch real dashes.
   return (
     <path
       className="canvas-link-line"
-      pathLength={1}
+      pathLength={dashed ? undefined : 1}
       markerEnd={arrow ? 'url(#canvas-arrow)' : undefined}
       style={{ d: `path("${d}")` } as React.CSSProperties}
     />
@@ -275,7 +284,7 @@ function CanvasLinks({
             }`}
             data-canvas-link={link.id}
           >
-            <LinkLine d={d} arrow />
+            <LinkLine d={d} arrow dashed={Boolean(link.context)} />
             <path
               className="canvas-link-hit"
               d={d}
@@ -325,7 +334,9 @@ function CanvasLinks({
           </g>
         ))}
         {connectors.map(({ link, d }) => (
-          <LinkLine key={link.id} d={d} />
+          <g key={link.id} className={link.context ? 'canvas-connector--context' : undefined}>
+            <LinkLine d={d} dashed={Boolean(link.context)} />
+          </g>
         ))}
         {sessionLinks.map(({ id, d, end, side }) => (
           <g key={id}>

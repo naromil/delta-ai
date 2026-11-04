@@ -35,6 +35,7 @@ import {
   openCardSize,
   rectAgainst,
   rectCenteredAt,
+  rectFromCorner,
   rectClearOf,
   rectFromPoints,
   rectsOverlap,
@@ -503,7 +504,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
 
       if (what === 'frame') {
         const snapped = snapEdges(
-          isClick ? rectCenteredAt(end, DEFAULT_FRAME_SIZE) : raw,
+          isClick ? rectFromCorner(start, DEFAULT_FRAME_SIZE) : raw,
           others,
           threshold
         )
@@ -518,7 +519,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
           ? DEFAULT_NOTE_SIZE
           : DEFAULT_MESSAGE_SIZE
       const snapped: SnapResult = snapEdges(
-        isClick ? rectCenteredAt(end, clickSize) : raw,
+        isClick ? rectFromCorner(start, clickSize) : raw,
         others,
         threshold
       )
@@ -1508,7 +1509,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
   const askAt = useCallback(
     (point: CanvasPoint): void => {
       const rect = rectClearOf(
-        rectCenteredAt(point, DEFAULT_MESSAGE_SIZE),
+        rectFromCorner(point, DEFAULT_MESSAGE_SIZE),
         cardRects(cardsRef.current),
         NEW_SESSION_GAP / 2
       )
@@ -1624,14 +1625,13 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     (text: string): void => {
       const point = lastPointerRef.current
       const size = surfaceSize()
-      const center = point
-        ? pointerInWorld(point)
-        : screenToWorld(viewportRef.current, { x: size.width / 2, y: size.height / 2 })
-      const rect = rectClearOf(
-        rectCenteredAt(center, DEFAULT_NOTE_SIZE),
-        cardRects(cardsRef.current),
-        NEW_SESSION_GAP / 2
-      )
+      const placed = point
+        ? rectFromCorner(pointerInWorld(point), DEFAULT_NOTE_SIZE)
+        : rectCenteredAt(
+            screenToWorld(viewportRef.current, { x: size.width / 2, y: size.height / 2 }),
+            DEFAULT_NOTE_SIZE
+          )
+      const rect = rectClearOf(placed, cardRects(cardsRef.current), NEW_SESSION_GAP / 2)
       select([addNote(rect, text)])
     },
     [addNote, pointerInWorld, select, surfaceSize]
@@ -1877,7 +1877,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
         askHere: () => askAt(at),
         noteHere: () => {
           const rect = rectClearOf(
-            rectCenteredAt(at, DEFAULT_NOTE_SIZE),
+            rectFromCorner(at, DEFAULT_NOTE_SIZE),
             cardRects(cards),
             NEW_SESSION_GAP / 2
           )

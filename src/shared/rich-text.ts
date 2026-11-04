@@ -7,6 +7,8 @@
  * legacy segment migration.
  */
 
+import type { ImageAttachment } from './attachments'
+
 export type ExpansionStatus = 'loading' | 'done' | 'error'
 
 export interface ExpansionNode {
@@ -19,6 +21,8 @@ export interface ExpansionNode {
   /** Markdown answer streamed from the model. */
   answer: string
   prompt?: string
+  /** Images asked about with `prompt`, like those on a user turn. */
+  attachments?: ImageAttachment[]
   /**
    * Terminal status. A node is streaming while `status === 'loading'`; a
    * loading node with a non-empty `answer` is already showing text.
@@ -227,7 +231,8 @@ export function insertExpansion(
   expansions: ExpansionNode[],
   target: ExpansionTarget,
   id: number,
-  prompt?: string
+  prompt?: string,
+  attachments?: ImageAttachment[]
 ): InsertExpansionResult {
   const refusal = validateExpansionTarget(source, expansions, target)
   if (refusal) return { ok: false, reason: refusal }
@@ -239,6 +244,7 @@ export function insertExpansion(
     originalText: source.slice(target.start, target.end),
     answer: '',
     ...(prompt !== undefined ? { prompt } : {}),
+    ...(attachments?.length ? { attachments } : {}),
     status: 'loading',
     folded: false,
     children: []
@@ -511,7 +517,8 @@ export function insertExpansionInTurns<T extends RichTextTurn>(
   turnId: number,
   target: ExpansionTarget,
   newExpansionId: number,
-  prompt?: string
+  prompt?: string,
+  attachments?: ImageAttachment[]
 ): InsertExpansionInTurnsResult<T> {
   const index = turns.findIndex((turn) => turn.id === turnId)
   if (index < 0) return { ok: false, reason: 'turn-not-found' }
@@ -527,7 +534,8 @@ export function insertExpansionInTurns<T extends RichTextTurn>(
     parent ? parent.node.children : turn.expansions,
     target,
     newExpansionId,
-    prompt
+    prompt,
+    attachments
   )
   if (!result.ok) return { ok: false, reason: result.reason }
 

@@ -45,8 +45,8 @@ function LookupApp(): React.JSX.Element {
     send,
     expand,
     retryExpansion,
+    editExpansion,
     dismissExpansion,
-    suggestedTerms,
     fold,
     unfold,
     setState,
@@ -66,10 +66,10 @@ function LookupApp(): React.JSX.Element {
     selectionBar,
     notice,
     handleContextMenu,
-    handleSuggestedTerm,
     regenerateExpansion,
     removeExpansion,
     askAnotherExpansion,
+    editExpansion: startEditingExpansion,
     pickExpansionAnswer,
     closeContextMenu,
     closeExpandPrompt,
@@ -79,6 +79,7 @@ function LookupApp(): React.JSX.Element {
     onExpand: expand,
     onUnfold: unfold,
     onRetryExpansion: retryExpansion,
+    onEditExpansion: editExpansion,
     onDismissExpansion: dismissExpansion
   })
 
@@ -365,8 +366,6 @@ function LookupApp(): React.JSX.Element {
               className="message-turn"
               data-turn-id={turn.id}
               onContextMenu={handleContextMenu}
-              onClick={handleSuggestedTerm}
-              onKeyDown={handleSuggestedTerm}
             >
               <Turn
                 turn={turn}
@@ -374,10 +373,10 @@ function LookupApp(): React.JSX.Element {
                 onFold={fold}
                 onUnfold={unfold}
                 onRetryExpansion={regenerateExpansion}
+                onEditExpansion={startEditingExpansion}
                 onDismissExpansion={removeExpansion}
                 onAskAnotherExpansion={askAnotherExpansion}
                 onPickExpansionAnswer={pickExpansionAnswer}
-                suggestedTerms={suggestedTerms[turn.id]}
               />
             </div>
           ))}

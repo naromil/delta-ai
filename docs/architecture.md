@@ -36,7 +36,7 @@ Both windows talk to the same main process. Everything the app knows about the u
 | `src/shared/conversation.ts`                                      | `ConversationState` / `Turn` / `ConversationRecord`: a turn is markdown `content` plus `expansions: ExpansionNode[]`. `persistableTurns`, `serializeForChat`, `buildConversationTitle`, and `migrateConversationRecord` (the load-time legacy boundary)                                                                                                      |
 | `src/shared/rich-text.ts`                                         | The rich-text model and all pure operations: `ExpansionNode` (absolute `[start,end)` anchors, markdown `answer`, `status`, `folded`, nested `children`), `validateInsertion`, `insertExpansion(InTurns)`, `updateExpansion`, `setExpansionFolded`, `findExpansionIn*`, `maxExpansionId`, `expansionMessageInput`, `flattenMarkdown`, `migrateLegacySegments` |
 | `src/shared/prompts.ts`                                           | Every LLM-facing string: system prompts, screen-context template, lookup default, expand instructions, KB prompts                                                                                                                                                                                                                                            |
-| `src/shared/expand-prompt.ts`                                     | `buildExpandRequest` (system prompt, recent history, ancestor chain, instruction) over `buildExpandMessages`                                                                                                                                                                                                                                                 |
+| `src/shared/expand-prompt.ts`                                     | `buildExpandRequest` (a follow-up's messages at that turn, ancestor chain, instruction) over `buildExpandMessages`                                                                                                                                                                                                                                           |
 | `src/shared/context-budget.ts`                                    | Pure budgeting: `estimateTokens` (4 chars/token), `budgetFor` (85% of the window minus a capped output reserve, floor 1024), `trimMessages` (drops the oldest non-system messages, never the last)                                                                                                                                                           |
 | `src/main/index.ts`                                               | App lifecycle, main window, tray, streaming IPC (`chat-send`, `chat-expand`, `chat-cancel`) with `safeSend` + owner-scoped cancellation, lookup grow/transfer, conversation CRUD + search/export channels                                                                                                                                                    |
 | `src/main/context-budget.ts`                                      | `applyContextBudget(messages, role)`: trims sends using the cached models.dev entry (`getCachedModel`, no network); returns the input untouched on any missing input or error                                                                                                                                                                                |
@@ -121,10 +121,11 @@ Both windows talk to the same main process. Everything the app knows about the u
    with an existing expansion. The exact same range is allowed and adds another answer there; one
    shows at a time and the rest are reached from a list. The menu, the selection bar, the
    Ctrl/Cmd+E shortcuts and `expand()` all use the same checks.
-3. `useChatStreaming.expand` builds the request with `buildExpandRequest` (question and recent
-   turns, plus the ancestor chain for a nested selection), inserts a `status: 'loading'` node via
-   `insertExpansionInTurns`, then sends `chat-expand`. Main adds the auto-loaded notes and applies
-   the context budget.
+3. `useChatStreaming.expand` builds the request with `buildExpandRequest` (what a follow-up at that
+   turn would send, plus the ancestor chain for a nested selection), inserts a `status: 'loading'`
+   node via `insertExpansionInTurns`, then sends `chat-expand`. Main treats it like `chat-send`: it
+   fits images to the model, gives it the memory tools (the auto-loaded notes as text if the model
+   has none) and applies the context budget.
 4. `chat-expand-chunk` carries `{ text, done? }` or `{ error }`; a cancelled expand ends with
    `{ text: partial, done: true, cancelled: true }`. The handler patches `answer` with the
    cumulative text, flips `status` to `'done'` on completion and to `'error'` with the message on
@@ -497,7 +498,7 @@ user's own text, holding no turn). The layout also holds frames and connections.
   beside a new session. It is material, not history; a single answer simply continues instead.
 - **Context links** send material from elsewhere on the plane with a branch's requests: one card, a whole
   branch, or a note (`canvas-context.ts`). They are read at request time and reach every later card on that
-  branch. Dragging a card, note or `+` onto the composer adds one while the question is written, and its corner sets the answer's length. Dragging a `+` to open space places the next message there and sizes it.
+  branch. They are drawn dashed. Dragging a card, note or `+` onto the composer adds one while the question is written, and its corner sets the answer's length. Dragging a `+` to open space places the next message there and sizes it.
 - **Undo** is a stack of patches, not snapshots (`canvas-history.ts`), so taking back a move cannot
   rewind an answer that is still streaming. Asking is not an undoable action. A patch whose turn has
   moved on (it was regenerated) is refused and dropped.

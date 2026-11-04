@@ -1,4 +1,5 @@
 import type { ImageAttachment } from './attachments'
+import { attachmentImages } from './attachments'
 import type { CanvasLayout } from './canvas'
 import type { ProviderMessage } from './models'
 import { getSystemPrompt, buildScreenContextMessage } from './prompts'
@@ -108,11 +109,11 @@ export function serializeForChat(
     // Failed turns store the error text for the UI, and empty assistant turns are
     // in-flight/legacy placeholders; neither may be replayed to the model.
     if (turn.role === 'assistant' && (turn.error || turn.content.trim() === '')) continue
-    const images = turn.attachments?.map(({ mediaType, data }) => ({ mediaType, data }))
+    const images = attachmentImages(turn.attachments)
     messages.push({
       role: turn.role,
       content: turn.content,
-      ...(images?.length ? { images } : {})
+      ...(images.length > 0 ? { images } : {})
     })
   }
   return messages

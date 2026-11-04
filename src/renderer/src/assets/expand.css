@@ -107,24 +107,6 @@
   color: var(--text-1);
 }
 
-/* A term the document base suggests is new: quiet enough to read past. */
-.suggested-term {
-  text-decoration: underline dotted var(--accent);
-  text-underline-offset: 3px;
-  cursor: pointer;
-}
-
-.suggested-term:hover {
-  background: var(--accent-soft);
-  border-radius: 3px;
-}
-
-.suggested-term:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-  border-radius: 3px;
-}
-
 /* A slice with bold or code renders through markdown, but a pill or term stays one line. */
 .queried .md-p,
 .frame-term .md-p {
@@ -364,6 +346,22 @@
   margin: 5px 4px;
 }
 
+/* Images asked about in a frame: the host is a span, so these stay inline. */
+.frame-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 0.4em;
+}
+
+.frame-attachments img {
+  max-width: 160px;
+  max-height: 120px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+}
+
 /* Expand-on prompt input */
 #expandPrompt {
   position: fixed;
@@ -388,6 +386,20 @@
   font-size: 13px;
   font-family: inherit;
   min-width: 200px;
+  flex: 1;
+}
+
+.expand-prompt-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.expand-prompt-notice {
+  margin: 6px 0 0;
+  max-width: 280px;
+  color: var(--text-2);
+  font-size: 12px;
 }
 
 .expand-prompt-input::placeholder {

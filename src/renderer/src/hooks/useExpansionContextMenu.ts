@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { ImageAttachment } from '../../../shared/attachments'
 import type { Turn } from '../../../shared/conversation'
 import type { ExpansionRange, ExpansionTarget } from '../../../shared/rich-text'
 import {
@@ -21,7 +22,8 @@ export type { ExpansionTarget }
 export type ExpandRequest = (
   turnId: number,
   target: ExpansionTarget,
-  prompt?: string
+  prompt?: string,
+  attachments?: ImageAttachment[]
 ) => ExpandOutcome
 
 interface SourceAnchor {
@@ -49,7 +51,10 @@ interface UseExpansionContextMenuOptions {
   onExpand: ExpandRequest
   onUnfold: (id: number) => void
   onRetryExpansion?: (id: number) => void
+  onEditExpansion?: (id: number, prompt: string) => void
   onDismissExpansion?: (id: number) => void
+  /** The prompt can attach images: only where the composer can. */
+  allowImages?: boolean
 }
 
 /** A selection in an answer, with what it would expand if the user asks. */
@@ -63,7 +68,6 @@ interface LiveSelection {
 const FRAME_SELECTOR = '[data-expansion-id]'
 const ATOM_SELECTOR = '[data-atom-start]'
 const PILL_SELECTOR = '.queried[data-expansion-id]'
-const SUGGESTED_SELECTOR = '[data-suggested]'
 const OVERLAY_SELECTOR = '.expand-selection-bar, #expandPrompt, #ctxMenu'
 const NOTICE_TIMEOUT_MS = 4000
 const ANSWER_PREVIEW_LENGTH = 70
@@ -307,8 +311,8 @@ export function useExpansionContextMenu(options: UseExpansionContextMenuOptions)
   selectionBar: ExpandSelectionBarState | null
   notice: string | null
   handleContextMenu: (e: React.MouseEvent) => void
-  handleSuggestedTerm: (e: React.MouseEvent | React.KeyboardEvent) => void
   regenerateExpansion: (id: number) => void
+  editExpansion: (id: number, at: FramePopupAt) => void
   removeExpansion: (id: number) => void
   askAnotherExpansion: (id: number, at: FramePopupAt) => void
   pickExpansionAnswer: (id: number, at: FramePopupAt) => void
@@ -320,7 +324,9 @@ export function useExpansionContextMenu(options: UseExpansionContextMenuOptions)
   const [expandPrompt, setExpandPrompt] = useState<ExpandPromptState | null>(null)
   const [selectionBar, setSelectionBar] = useState<ExpandSelectionBarState | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  const { turns, onExpand, onUnfold, onRetryExpansion, onDismissExpansion } = options
+  const { turns, onExpand, onUnfold, onRetryExpansion, onEditExpansion, onDismissExpansion } =
+    options
+  const { allowImages = false } = options
 
   // Submits happen after the menu opened; read the newest turns, not the
   // closure captured when the menu rendered.
@@ -351,7 +357,7 @@ export function useExpansionContextMenu(options: UseExpansionContextMenuOptions)
   }, [])
 
   const submit = useCallback(
-    (prompt?: string) => {
+    (prompt?: string, attachments?: ImageAttachment[]) => {
       const pending = pendingRef.current
       if (!pending) return
 
@@ -394,7 +400,7 @@ export function useExpansionContextMenu(options: UseExpansionContextMenuOptions)
         return
       }
 
-      const outcome = onExpand(pending.turnId, target, prompt)
+      const outcome = onExpand(pending.turnId, target, prompt, attachments)
       if (!outcome.ok) showNotice(refusalMessage(outcome.reason))
     },
     [onExpand, showNotice]
@@ -404,9 +410,14 @@ export function useExpansionContextMenu(options: UseExpansionContextMenuOptions)
     (pending: PendingSelection, at: FramePopupAt) => {
       pendingRef.current = pending
       setSelectionBar(null)
-      setExpandPrompt({ x: at.x, y: at.y, onSubmit: (prompt) => submit(prompt) })
+      setExpandPrompt({
+        x: at.x,
+        y: at.y,
+        allowImages,
+        onSubmit: (prompt, attachments) => submit(prompt, attachments)
+      })
     },
-    [submit]
+    [allowImages, submit]
   )
 
   const handleContextMenu = useCallback(
@@ -668,7 +679,7 @@ export function useExpansionContextMenu(options: UseExpansionContextMenuOptions)
     }
   }, [refreshSelectionBar, pendingFromLive, submitLive, openPrompt, showNotice])
 
-  /* ---- Frame and suggested-term actions ---- */
+  /* ---- Frame actions ---- */
 
   const confirmDroppingNested = useCallback((id: number, action: string): boolean => {
     const nested = findExpansionInTurns(turnsRef.current, id)?.node.children.length ?? 0
@@ -681,6 +692,23 @@ export function useExpansionContextMenu(options: UseExpansionContextMenuOptions)
       if (confirmDroppingNested(id, 'Regenerate this answer')) onRetryExpansion?.(id)
     },
     [confirmDroppingNested, onRetryExpansion]
+  )
+
+  const editExpansion = useCallback(
+    (id: number, at: FramePopupAt) => {
+      const node = findExpansionInTurns(turnsRef.current, id)?.node
+      if (!node) return
+      setSelectionBar(null)
+      setExpandPrompt({
+        x: at.x,
+        y: at.y,
+        initialPrompt: node.prompt ?? '',
+        onSubmit: (prompt) => {
+          if (confirmDroppingNested(id, 'Replace this answer')) onEditExpansion?.(id, prompt)
+        }
+      })
+    },
+    [confirmDroppingNested, onEditExpansion]
   )
 
   const removeExpansion = useCallback(
@@ -715,31 +743,6 @@ export function useExpansionContextMenu(options: UseExpansionContextMenuOptions)
     [askAnotherExpansion, onUnfold]
   )
 
-  /** One click (or Enter) on an underlined term expands it. */
-  const handleSuggestedTerm = useCallback(
-    (e: React.MouseEvent | React.KeyboardEvent) => {
-      if ('key' in e && e.key !== 'Enter' && e.key !== ' ') return
-      const term = (e.target as Element).closest?.(SUGGESTED_SELECTOR) as HTMLElement | null
-      if (!term) return
-      // Finishing a drag over the word is a selection, not a click.
-      if (!('key' in e) && !(window.getSelection()?.isCollapsed ?? true)) return
-      e.preventDefault()
-
-      const turnId = Number((e.currentTarget as HTMLElement).dataset.turnId)
-      const start = Number(term.dataset.src)
-      const text = term.textContent ?? ''
-      if (!Number.isFinite(turnId) || !Number.isFinite(start)) return
-      pendingRef.current = {
-        turnId,
-        range: null,
-        selection: text,
-        target: { start, end: start + text.length, selection: text }
-      }
-      submit()
-    },
-    [submit]
-  )
-
   const closeContextMenu = useCallback(() => {
     setCtxMenu(null)
   }, [])
@@ -754,8 +757,8 @@ export function useExpansionContextMenu(options: UseExpansionContextMenuOptions)
     selectionBar,
     notice,
     handleContextMenu,
-    handleSuggestedTerm,
     regenerateExpansion,
+    editExpansion,
     removeExpansion,
     askAnotherExpansion,
     pickExpansionAnswer,

@@ -1022,6 +1022,11 @@
   stroke: var(--accent);
 }
 
+.canvas-connector--context .canvas-link-line {
+  stroke-dasharray: calc(6px / var(--canvas-zoom)) calc(4px / var(--canvas-zoom));
+  animation: none;
+}
+
 .canvas-link-line--pending {
   stroke-dasharray: calc(6px / var(--canvas-zoom)) calc(4px / var(--canvas-zoom));
   animation: none;

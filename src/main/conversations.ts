@@ -9,6 +9,7 @@ import type {
   ConversationSearchResult
 } from '../shared/conversation'
 import { migrateConversationRecord, toConversationMeta } from '../shared/conversation'
+import type { ExpansionNode } from '../shared/rich-text'
 import { flattenMarkdown } from '../shared/rich-text'
 import { writeFileAtomic } from './services/atomic-file'
 
@@ -255,12 +256,22 @@ function excerptAround(text: string, index: number, length: number): string {
   return `${start > 0 ? '…' : ''}${text.slice(start, end)}${end < text.length ? '…' : ''}`
 }
 
+function expansionTexts(nodes: ExpansionNode[]): string[] {
+  return nodes.flatMap((node) => [
+    ...(node.prompt ? [node.prompt] : []),
+    node.answer,
+    ...expansionTexts(node.children)
+  ])
+}
+
 function contentSnippet(record: ConversationRecord, needle: string): string | undefined {
   for (let i = record.state.turns.length - 1; i >= 0; i--) {
     const turn = record.state.turns[i]
-    const text = flattenMarkdown(turn.content).replace(/\s+/g, ' ').trim()
-    const index = text.toLowerCase().indexOf(needle)
-    if (index >= 0) return excerptAround(text, index, needle.length)
+    for (const source of [turn.content, ...expansionTexts(turn.expansions)]) {
+      const text = flattenMarkdown(source).replace(/\s+/g, ' ').trim()
+      const index = text.toLowerCase().indexOf(needle)
+      if (index >= 0) return excerptAround(text, index, needle.length)
+    }
   }
   return undefined
 }

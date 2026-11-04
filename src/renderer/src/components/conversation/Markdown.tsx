@@ -26,8 +26,7 @@ import {
   EXPANSION_NODE,
   SOURCED_TEXT,
   isDisplayMath,
-  prepareMarkdownTree,
-  suggestedTermRanges
+  prepareMarkdownTree
 } from '../../lib/markdown'
 import type { MarkdownNode } from '../../lib/markdown'
 
@@ -251,16 +250,7 @@ function createHandlers(source: string, anchored: boolean): Handlers {
       type: 'element',
       tagName: 'span',
       properties: {
-        ...(anchored ? { 'data-src': node.src ?? 0 } : {}),
-        ...(node.suggested
-          ? {
-              className: ['suggested-term'],
-              'data-suggested': 'true',
-              role: 'button',
-              tabIndex: 0,
-              title: 'Click to expand'
-            }
-          : {})
+        ...(anchored ? { 'data-src': node.src ?? 0 } : {})
       },
       children: [{ type: 'text', value: node.value ?? '' }]
     }),
@@ -312,11 +302,9 @@ function renderMarkdown(
   source: string,
   expansions: ExpansionNode[],
   inline: boolean,
-  anchored: boolean,
-  suggestedTerms: readonly string[]
+  anchored: boolean
 ): React.ReactNode {
-  const suggested = suggestedTermRanges(source, suggestedTerms, expansions)
-  const tree = prepareMarkdownTree(source, expansions, suggested)
+  const tree = prepareMarkdownTree(source, expansions)
   const hast = toHast(tree as unknown as MdastRoot, {
     handlers: createHandlers(source, anchored)
   }) as HastRoot
@@ -336,11 +324,8 @@ export interface MarkdownProps extends MarkdownActions {
    * relative to that snippet, so no element may look like a selection target.
    */
   anchored?: boolean
-  suggestedTerms?: readonly string[]
   renderExpansion: RenderExpansion
 }
-
-const NO_TERMS: readonly string[] = []
 
 function buildNodeEntries(
   expansions: ExpansionNode[]
@@ -358,7 +343,6 @@ function Markdown({
   expansions,
   inline = false,
   anchored = true,
-  suggestedTerms = NO_TERMS,
   onFold,
   onUnfold,
   renderExpansion
@@ -374,8 +358,8 @@ function Markdown({
   )
 
   const body = useMemo(
-    () => renderMarkdown(source, expansions, inline, anchored, suggestedTerms),
-    [source, expansions, inline, anchored, suggestedTerms]
+    () => renderMarkdown(source, expansions, inline, anchored),
+    [source, expansions, inline, anchored]
   )
 
   return (
