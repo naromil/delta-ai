@@ -19,6 +19,8 @@ import {
   openCardSize,
   rectsOverlap,
   setCardCollapsed,
+  sharedSide,
+  sharesSide,
   turnsThroughCard,
   withCanvasSources
 } from '../../src/shared/canvas'
@@ -26,9 +28,9 @@ import {
   alignSelection,
   distributeSelection,
   duplicateSelection,
-  selectionBlockCount,
-  tidySelection
+  selectionBlockCount
 } from '../../src/shared/canvas-arrange'
+import { tidySelection } from '../../src/shared/canvas-tidy'
 import type { CanvasSnapshot } from '../../src/shared/canvas-history'
 import { applyCanvasPatch, diffCanvas } from '../../src/shared/canvas-history'
 import { canvasOutline, searchCanvasOutline } from '../../src/shared/canvas-outline'
@@ -408,7 +410,7 @@ describe('arranging', () => {
       message('inframe', 7, rect(5010, 5010))
     ]
     const frames = [frame('f', rect(5000, 5000, 300, 300))]
-    const result = tidySelection({ cards, frames })
+    const result = tidySelection({ cards, frames, links: [] })
     expect(result.ok).toBe(true)
     if (!result.ok) return
     const at = Object.fromEntries(result.cards.map((update) => [update.id, update.rect]))
@@ -429,13 +431,232 @@ describe('arranging', () => {
       message('b', 3, rect(0, 500)),
       message('still', 5, rect(0, 120))
     ]
-    const result = tidySelection({ cards, frames: [] }, new Set(['a', 'b']))
+    const result = tidySelection({ cards, frames: [], links: [] }, new Set(['a', 'b']))
     expect(result.ok).toBe(true)
     if (!result.ok) return
     for (const update of result.cards) {
       expect(rectsOverlap(update.rect, cards[2].rect)).toBe(false)
     }
     expect(result.cards.some((update) => update.id === 'still')).toBe(false)
+  })
+})
+
+describe('tidying family by family', () => {
+  const center = (at: CanvasRect): { x: number; y: number } => ({
+    x: at.x + at.w / 2,
+    y: at.y + at.h / 2
+  })
+  const tidied = (
+    cards: CanvasCard[],
+    links: CanvasLink[] = [],
+    selected?: ReadonlySet<string>
+  ): Record<string, CanvasRect> => {
+    const result = tidySelection({ cards, frames: [], links }, selected)
+    if (!result.ok) throw new Error('refused')
+    return Object.fromEntries(result.cards.map((update) => [update.id, update.rect]))
+  }
+  const expectNoOverlaps = (at: Record<string, CanvasRect>): void => {
+    const rects = Object.values(at)
+    for (const [i, one] of rects.entries()) {
+      for (const other of rects.slice(i + 1)) expect(rectsOverlap(one, other)).toBe(false)
+    }
+  }
+  const segmentsCross = (a: CanvasRect, b: CanvasRect, c: CanvasRect, d: CanvasRect): boolean => {
+    const [p, q, r, s] = [center(a), center(b), center(c), center(d)]
+    const turn = (u: typeof p, v: typeof p, w: typeof p): number =>
+      (v.x - u.x) * (w.y - u.y) - (v.y - u.y) * (w.x - u.x)
+    return turn(p, q, r) * turn(p, q, s) < 0 && turn(r, s, p) * turn(r, s, q) < 0
+  }
+
+  it('rearranges the blocks of one session, which are not attached', () => {
+    const at = tidied([
+      message('a', 1, rect(0, 0)),
+      message('b', 3, rect(60, 400, 200), 'a'),
+      message('c', 5, rect(-80, 900), 'b')
+    ])
+    expect(at.a.y).toBeLessThan(at.b.y)
+    expect(at.b.y).toBeLessThan(at.c.y)
+    expect(center(at.a).x).toBe(center(at.b).x)
+    expect(center(at.b).x).toBe(center(at.c).x)
+  })
+
+  it('keeps a session running sideways running sideways', () => {
+    const at = tidied([
+      message('a', 1, rect(0, 0)),
+      message('b', 3, rect(400, 90), 'a'),
+      message('c', 5, rect(800, -60), 'b')
+    ])
+    expect(at.a.x).toBeLessThan(at.b.x)
+    expect(at.b.x).toBeLessThan(at.c.x)
+    expect(center(at.a).y).toBe(center(at.c).y)
+  })
+
+  it('straightens attached cards as they stood: the seam meets the parent edge, tops align', () => {
+    const at = tidied([
+      message('top', 1, rect(175, 0, 294, 200)),
+      message('below', 3, rect(148, 200, 260, 228), 'top'),
+      message('beside', 5, rect(408, 245, 296, 245), 'below')
+    ])
+    expect(sharedSide(at.top, at.below)).toBe('bottom')
+    expect(sharedSide(at.below, at.beside)).toBe('right')
+    expect(at.beside.y).toBe(at.below.y)
+    expect(at.top.x + at.top.w).toBe(at.beside.x)
+    expect(at.below.x + at.below.w).toBe(at.beside.x)
+    expect([at.top.w, at.below.h, at.beside.w]).toEqual([294, 228, 296])
+  })
+
+  it('moves an attached block whole once it is straight', () => {
+    const at = tidied([
+      message('a', 1, rect(0, 0, 300, 200)),
+      message('b', 3, rect(0, 200, 200, 100), 'a'),
+      message('far', 7, rect(3000, 3000), 'b')
+    ])
+    expect({ x: at.b.x - at.a.x, y: at.b.y - at.a.y }).toEqual({ x: 0, y: 200 })
+    expect(at.far.y).toBeGreaterThan(at.b.y + at.b.h)
+  })
+
+  it('never gives up a seam or an attachment when straightening', () => {
+    const at = tidied([
+      message('a', 1, rect(0, 0, 300, 200)),
+      message('b', 3, rect(30, 200, 200, 100), 'a'),
+      message('c', 5, rect(230, 230, 100, 300), 'b'),
+      note('d', rect(20, -100, 120, 100))
+    ])
+    expect(sharesSide(at.a, at.b)).toBe(true)
+    expect(sharesSide(at.b, at.c)).toBe(true)
+    expect(sharesSide(at.a, at.d)).toBe(true)
+    expectNoOverlaps(at)
+  })
+
+  it('leaves a block with a frame in it as it stands', () => {
+    const cards = [
+      message('a', 1, rect(10, 10, 100, 100)),
+      message('b', 3, rect(30, 110, 80, 100), 'a')
+    ]
+    const frames = [frame('f', rect(0, 0, 400, 400))]
+    const result = tidySelection({ cards, frames, links: [] })
+    expect(result.ok).toBe(false)
+  })
+
+  it('stands a family together, closer than to another family', () => {
+    const at = tidied([
+      message('parent', 1, rect(0, 0)),
+      expansion('child', 'parent', rect(4000, 4000)),
+      note('other', rect(0, 200))
+    ])
+    const distance = (one: CanvasRect, two: CanvasRect): number =>
+      Math.hypot(center(one).x - center(two).x, center(one).y - center(two).y)
+    expect(distance(at.parent, at.child)).toBeLessThan(distance(at.child, at.other))
+    expectNoOverlaps(at)
+  })
+
+  it('uncrosses the lines inside a family', () => {
+    const at = tidied([
+      message('a', 1, rect(0, 0)),
+      message('b', 3, rect(300, 0)),
+      message('a2', 5, rect(300, 400), 'a'),
+      message('b2', 7, rect(0, 400), 'b')
+    ])
+    expect(segmentsCross(at.a, at.a2, at.b, at.b2)).toBe(false)
+  })
+
+  it('does not make a family of a drawn link, but stands its ends near each other', () => {
+    const cards = [note('a', rect(0, 0)), note('stranger', rect(0, 200)), note('b', rect(0, 5000))]
+    const at = tidied(cards, [{ id: 'l', from: 'a', to: 'b' }])
+    expect(Math.abs(at.a.y - at.b.y)).toBeLessThanOrEqual(0)
+    const distance = (one: CanvasRect, two: CanvasRect): number =>
+      Math.hypot(center(one).x - center(two).x, center(one).y - center(two).y)
+    expect(distance(at.a, at.b)).toBeLessThan(distance(at.b, at.stranger))
+  })
+
+  it('orders families so the links between them do not cross', () => {
+    // Reading order alone would draw these two links as an X.
+    const cards = [
+      note('a', rect(0, 0)),
+      note('b', rect(300, 0)),
+      note('c', rect(0, 300)),
+      note('d', rect(300, 300))
+    ]
+    const links = [
+      { id: 'l1', from: 'a', to: 'd' },
+      { id: 'l2', from: 'b', to: 'c' }
+    ]
+    const at = tidied(cards, links)
+    expect(segmentsCross(at.a, at.d, at.b, at.c)).toBe(false)
+  })
+
+  it('ignores lines to what stays put', () => {
+    const cards = [
+      message('a', 1, rect(0, 0)),
+      message('still', 3, rect(3000, 3000), 'a'),
+      note('n', rect(0, 500))
+    ]
+    const at = tidied(cards, [], new Set(['a', 'n']))
+    expect(at.still).toBeUndefined()
+    expect(at.a.y).toBe(at.n.y)
+  })
+
+  it('says so when everything is attached, straight and nothing can move', () => {
+    const cards = [
+      message('p', 1, rect(70, 40, 400, 200)),
+      message('child', 3, rect(70, 240, 300, 200), 'p')
+    ]
+    expect(tidySelection({ cards, frames: [], links: [] }).ok).toBe(false)
+  })
+
+  it('straightens even when a single attached block is all there is', () => {
+    const cards = [
+      message('p', 1, rect(70, 40, 400, 200)),
+      message('child', 3, rect(90, 240, 300, 200), 'p')
+    ]
+    expect(tidied(cards).child.x).toBe(tidied(cards).p.x)
+  })
+
+  it('never overlaps, and a second tidy changes nothing', () => {
+    let seed = 17
+    const random = (limit: number): number => {
+      seed = (seed * 1103515245 + 12345) % 2147483648
+      return seed % limit
+    }
+    for (let round = 0; round < 40; round++) {
+      const cards: CanvasCard[] = []
+      for (let i = 0; i < 14; i++) {
+        const size = rect(0, 0, 200 + random(300), 100 + random(400))
+        const parent = i > 0 && random(3) > 0 ? `c${random(i)}` : undefined
+        const from = parent ? cards.find((card) => card.id === parent)?.rect : undefined
+        // A third of continuations attach to their parent, the rest stand anywhere.
+        const at =
+          from && random(3) === 0
+            ? { ...size, x: from.x + 30 - random(60), y: from.y + from.h }
+            : { ...size, x: random(9000), y: random(9000) }
+        cards.push(
+          parent && random(4) === 0
+            ? expansion(`c${i}`, parent, at, 100 + i)
+            : message(`c${i}`, i * 2 + 1, at, parent)
+        )
+      }
+      const links = [{ id: 'l', from: `c${random(14)}`, to: `c${random(14)}` }]
+      const first = tidied(cards, links)
+      const before = new Set(
+        cards.flatMap((a, i) =>
+          cards
+            .slice(i + 1)
+            .filter((b) => rectsOverlap(a.rect, b.rect))
+            .map((b) => `${a.id}:${b.id}`)
+        )
+      )
+      for (const [i, a] of cards.entries()) {
+        for (const b of cards.slice(i + 1)) {
+          if (before.has(`${a.id}:${b.id}`)) continue
+          expect(rectsOverlap(first[a.id], first[b.id])).toBe(false)
+          if (sharesSide(a.rect, b.rect) && (b as CanvasMessageCard).parentId === a.id) {
+            expect(sharesSide(first[a.id], first[b.id])).toBe(true)
+          }
+        }
+      }
+      const again = cards.map((card) => ({ ...card, rect: first[card.id] }))
+      expect(tidySelection({ cards: again, frames: [], links }).ok).toBe(false)
+    }
   })
 })
 
