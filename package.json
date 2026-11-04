@@ -1,7 +1,7 @@
 {
   "name": "delta-explorer",
   "desktopName": "com.deltaexplorer.desktop",
-  "version": "0.6.4",
+  "version": "0.6.11",
   "description": "A revolutionary AI helper for learning anything.",
   "main": "./out/main/index.js",
   "author": "naromil <nroamli@gmail.com>",
