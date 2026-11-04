@@ -52,7 +52,7 @@ describe('renderConversationMarkdown', () => {
         '## You',
         'Hello',
         '',
-        '## Delta AI',
+        '## Delta Explorer',
         'Hi there',
         ''
       ].join('\n')
@@ -183,8 +183,8 @@ describe('renderConversationMarkdown', () => {
     expect(markdown).not.toContain('API error text')
     expect(markdown).not.toContain('broken')
     expect(markdown).not.toContain('blank')
-    expect(markdown).toContain('## Delta AI\nReal answer')
-    expect(markdown.match(/## Delta AI/g)).toHaveLength(1)
+    expect(markdown).toContain('## Delta Explorer\nReal answer')
+    expect(markdown.match(/## Delta Explorer/g)).toHaveLength(1)
   })
 })
 

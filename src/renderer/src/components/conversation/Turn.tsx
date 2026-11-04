@@ -174,7 +174,7 @@ function Turn({
               <span></span>
               <span></span>
             </div>
-            <span className="sr-only">Delta AI is responding</span>
+            <span className="sr-only">Delta Explorer is responding</span>
           </div>
         ) : editing ? (
           <div className="message-content message-edit">

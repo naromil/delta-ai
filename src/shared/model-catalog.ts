@@ -106,7 +106,7 @@ function buildProviderModels(raw: unknown): CatalogModel[] {
 
 /**
  * Flattens a models.dev `api.json` payload into per-provider model lists,
- * keeping only the provider types Delta AI can dispatch to.
+ * keeping only the provider types Delta Explorer can dispatch to.
  */
 export function buildModelCatalog(raw: unknown, fetchedAt: string): ModelCatalog {
   const providers = asRecord(raw) ?? {}

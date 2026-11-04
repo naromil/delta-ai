@@ -14,7 +14,7 @@ const PORTAL_DEST = 'org.freedesktop.portal.Desktop'
 const PORTAL_PATH = '/org/freedesktop/portal/desktop'
 const PORTAL_IFACE = 'org.freedesktop.portal.GlobalShortcuts'
 const REQUEST_IFACE = 'org.freedesktop.portal.Request'
-const SHORTCUT_ID = 'delta-ai-trigger'
+const SHORTCUT_ID = 'delta-explorer-trigger'
 
 let bus: MessageBus | null = null
 let sessionHandle: string | null = null
@@ -241,7 +241,7 @@ async function bindThroughPortal(accelerator: string, onActivated: () => void): 
       [
         SHORTCUT_ID,
         {
-          description: new Variant('s', 'Capture cursor region with Delta AI'),
+          description: new Variant('s', 'Capture cursor region with Delta Explorer'),
           trigger: new Variant('s', gtk)
         }
       ]
@@ -259,7 +259,7 @@ async function bindThroughPortal(accelerator: string, onActivated: () => void): 
       console.warn(
         `Portal accepted "${accelerator}" (${gtk}) but assigned no trigger — ` +
           'KDE/GNOME may require you to assign it once in the desktop Global ' +
-          'Shortcuts settings (look for "Delta AI"). Choose the same combo there.'
+          'Shortcuts settings (look for "Delta Explorer"). Choose the same combo there.'
       )
       return false
     }

@@ -9,7 +9,7 @@
  * "remember my choice" checkbox is broken (the permission is dropped between
  * ScreenCast sessions, pending a longstanding xdg-desktop-portal-kde fix).
  *
- * For single-frame screen-grab use cases (like delta-ai's OCR captured region)
+ * For single-frame screen-grab use cases (like Delta Explorer's OCR captured region)
  * we do not need a live stream — we need one still image. The Freedesktop
  * `Screenshot` portal handles that with `interactive=false`, which on KDE
  * captures the active monitor silently with no persistent prompt (after the

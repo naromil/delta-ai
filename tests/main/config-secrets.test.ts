@@ -57,7 +57,7 @@ function storedKey(): string | undefined {
 
 describe('API key storage', () => {
   beforeEach(() => {
-    h.userData = mkdtempSync(join(tmpdir(), 'delta-ai-secrets-'))
+    h.userData = mkdtempSync(join(tmpdir(), 'delta-explorer-secrets-'))
     h.encryptionAvailable = true
     h.decryptFails = false
   })

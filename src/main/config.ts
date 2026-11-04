@@ -159,7 +159,7 @@ export async function registerHotkey(accelerator: string, onPressed: () => void)
   configureLocalShortcut(accelerator, true)
   console.warn(
     `Global shortcut ${accelerator} unavailable — using the in-app shortcut, ` +
-      'which fires while a Delta AI window is focused.'
+      'which fires while a Delta Explorer window is focused.'
   )
   return false
 }

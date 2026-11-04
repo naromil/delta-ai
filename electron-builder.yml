@@ -1,5 +1,5 @@
-appId: com.deltaai
-productName: 'Delta AI'
+appId: com.deltaexplorer
+productName: 'Delta Explorer'
 directories:
   buildResources: build
 files:
@@ -19,7 +19,7 @@ extraResources:
 asarUnpack:
   - resources/**
 win:
-  executableName: DeltaAI
+  executableName: DeltaExplorer
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}

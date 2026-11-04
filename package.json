@@ -1,6 +1,6 @@
 {
-  "name": "delta-ai",
-  "desktopName": "com.deltaai.desktop",
+  "name": "delta-explorer",
+  "desktopName": "com.deltaexplorer.desktop",
   "version": "0.6.4",
   "description": "A revolutionary AI helper for learning anything.",
   "main": "./out/main/index.js",

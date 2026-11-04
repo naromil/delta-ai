@@ -14,7 +14,7 @@ import { loadKbState, migrateLegacyKbPrompt, saveKbState } from '../../src/main/
 
 describe('KB store', () => {
   beforeEach(() => {
-    paths.userData = mkdtempSync(join(tmpdir(), 'delta-ai-kb-'))
+    paths.userData = mkdtempSync(join(tmpdir(), 'delta-explorer-kb-'))
   })
 
   afterEach(() => {

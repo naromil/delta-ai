@@ -216,9 +216,9 @@ function KnowledgeView(): React.JSX.Element {
         {lastResult && <p className="kb-result">{lastResult}</p>}
 
         <p className="kb-section-desc">
-          Delta AI keeps private markdown notes about you and uses them to personalize chats and
-          look-ups. Analyze now curates chats still in the queue; Re-Analyze goes over recent chats
-          again.
+          Delta Explorer keeps private markdown notes about you and uses them to personalize chats
+          and look-ups. Analyze now curates chats still in the queue; Re-Analyze goes over recent
+          chats again.
         </p>
       </div>
     </div>

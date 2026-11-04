@@ -5,7 +5,7 @@ import { applyAppSettings, mergeAppSettings, normalizeAppSettings } from '../../
 // config.ts pulls in Electron, the portal and the lookup orchestrator. Everything
 // under test (settings normalization) is pure, so replace the heavy edges.
 vi.mock('electron', () => ({
-  app: { getPath: (): string => '/tmp/delta-ai-test' },
+  app: { getPath: (): string => '/tmp/delta-explorer-test' },
   ipcMain: { handle: vi.fn(), on: vi.fn() },
   globalShortcut: {
     register: vi.fn(() => true),

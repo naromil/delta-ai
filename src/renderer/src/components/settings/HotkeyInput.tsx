@@ -121,10 +121,10 @@ function HotkeyInput({ value, onChange, mode = 'global' }: HotkeyInputProps): Re
       </p>
       {mode === 'local' && (
         <p className="settings-hint settings-hint--notice">
-          The desktop did not register this key for the whole system, so it is armed inside Delta AI
-          only: press it while one of the app windows is focused. Expected when the app is started
-          from a terminal (e.g. npm run dev) — a system-wide binding needs a desktop-launched
-          process.
+          The desktop did not register this key for the whole system, so it is armed inside Delta
+          Explorer only: press it while one of the app windows is focused. Expected when the app is
+          started from a terminal (e.g. npm run dev) — a system-wide binding needs a
+          desktop-launched process.
         </p>
       )}
     </div>

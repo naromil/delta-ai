@@ -1,4 +1,4 @@
-# Delta AI
+# Delta Explorer
 
 Electron desktop app (BYOK) with a ChatGPT-like chat UI (React 19), an infinite canvas of
 answer rectangles, and an always-on-top lookup popup that performs OCR on screen captures via
@@ -337,7 +337,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 - **`@renderer` path alias** is defined in `electron.vite.config.ts` as
   `src/renderer/src` and available for renderer imports, though current code uses
   relative paths to `shared/` instead.
-- **Tray support**: `index.ts` creates a `Tray` with context menu (New Look-up, Show Delta AI, Quit);
+- **Tray support**: `index.ts` creates a `Tray` with context menu (New Look-up, Show Delta Explorer, Quit);
   `createTray()` is idempotent, so repeated `whenReady` paths cannot stack trays.
   `config.ts:currentCloseToTray` controls whether closing the main window hides to tray
   instead of quitting. The `close` handler in `createWindow` checks
@@ -358,7 +358,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   without tool support therefore gets no personalization, except in expand, which then gets the auto-loaded notes as text. Learning preferences live in the root
   `index-learning.md`, which the curator maintains. `migrateLegacyKbPrompt` moves an older
   install's `kb/prompt.txt` there once at startup and renames the old file `prompt.migrated.txt`.
-- **A document base about the user lives in `{userData}/memories/`** (`~/.config/delta-ai/memories/` on Linux). It is a nested tree of
+- **A document base about the user lives in `{userData}/memories/`** (`~/.config/delta-explorer/memories/` on Linux). It is a nested tree of
   markdown files managed through the `memory_*` function tools (ls, cat, grep, write, edit, mkdir, mv,
   rm). These are not a real shell and must not become one: the model can receive untrusted screen
   text, so `memory/store.ts` implements each command in JS, confines every path to the root, refuses

@@ -37,7 +37,7 @@ function payload(): unknown {
         'imagen-9': { name: 'Imagen 9', type: 'image', tool_call: false }
       }
     },
-    // Unsupported by Delta AI: must not reach the renderer.
+    // Unsupported by Delta Explorer: must not reach the renderer.
     groq: { name: 'Groq', models: { 'llama-x': { name: 'Llama X', tool_call: true } } }
   }
 }

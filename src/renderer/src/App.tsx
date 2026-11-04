@@ -204,7 +204,7 @@ function App(): React.JSX.Element {
             <path d="M2 17l10 5 10-5" />
             <path d="M2 12l10 5 10-5" />
           </svg>
-          <span className="sidebar-brand-name">Delta AI</span>
+          <span className="sidebar-brand-name">Delta Explorer</span>
         </div>
         <nav className="sidebar-nav">
           {mainNavEntries.map((entry) => (

@@ -1,9 +1,9 @@
-# Delta AI
+# Delta Explorer
 
 **An always-on desktop AI assistant for learning anything.**  
 Screen-aware, multi-provider, privacy-respecting — built with Electron + React 19.
 
-Delta AI lives in two windows: a full **chat** interface and an **always-on-top lookup popup** that captures your screen, runs OCR, and answers questions about what you're reading. A global hotkey opens the popup instantly over any application.
+Delta Explorer lives in two windows: a full **chat** interface and an **always-on-top lookup popup** that captures your screen, runs OCR, and answers questions about what you're reading. A global hotkey opens the popup instantly over any application.
 
 ---
 
@@ -152,7 +152,7 @@ with `npm run dev`.
 
 ### Configuration
 
-Delta AI requires **your own API keys** to function. Open Settings → Models to configure:
+Delta Explorer requires **your own API keys** to function. Open Settings → Models to configure:
 
 1. **Add a connection** — pick a provider (Google AI Studio, OpenAI Compatible, OpenAI, Ollama, or OpenRouter) and enter your API key or host.
 2. **Assign roles** — map the Chat, Lookup and Knowledge Base Maintenance roles to a connection + model. A lightweight model is recommended for the Lookup role since no heavy reasoning is needed; leaving Knowledge Base Maintenance unassigned disables automatic learning.
@@ -177,7 +177,7 @@ Memories live in `{userData}/memories/`; curation pacing state lives in `{userDa
 | **macOS**                       | `globalShortcut.register()` | `desktopCapturer.getSources()` | Electron clipboard |
 | **Windows**                     | `globalShortcut.register()` | `desktopCapturer.getSources()` | Electron clipboard |
 
-On Wayland, Electron's `clipboard.readText()` reads from the XWayland clipboard which is frequently out of sync with the native Wayland clipboard. Delta AI uses `wl-paste` to read the correct clipboard and falls back to Electron's API when `wl-paste` is unavailable.
+On Wayland, Electron's `clipboard.readText()` reads from the XWayland clipboard which is frequently out of sync with the native Wayland clipboard. Delta Explorer uses `wl-paste` to read the correct clipboard and falls back to Electron's API when `wl-paste` is unavailable.
 
 ---
 

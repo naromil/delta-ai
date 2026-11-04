@@ -407,7 +407,7 @@ function Settings(): React.JSX.Element {
         )}
         {activeTab === 'about' && (
           <div className="settings-section">
-            <h3 className="settings-section-title">Delta AI</h3>
+            <h3 className="settings-section-title">Delta Explorer</h3>
             <p className="settings-about-text">
               An AI-powered desktop assistant that captures your screen, runs OCR, and provides
               context-aware answers via the model of your choice.

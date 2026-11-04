@@ -40,7 +40,7 @@ function record(title: string): ConversationRecord {
 
 describe('saveConversation queue', () => {
   beforeEach(() => {
-    paths.userData = mkdtempSync(join(tmpdir(), 'delta-ai-queue-'))
+    paths.userData = mkdtempSync(join(tmpdir(), 'delta-explorer-queue-'))
     writes.length = 0
   })
 

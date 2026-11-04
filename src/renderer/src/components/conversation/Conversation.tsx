@@ -421,7 +421,7 @@ function Conversation({
         </div>
       )}
       <div className="sr-only" role="status" aria-live="polite">
-        {loading ? 'Delta AI is responding' : ''}
+        {loading ? 'Delta Explorer is responding' : ''}
       </div>
       <div className="chat-scroll" ref={scrollRef}>
         {state.context && (
@@ -435,8 +435,8 @@ function Conversation({
             <div className="empty-state-inner">
               <h1 className="empty-title">Grow with me</h1>
               <p className="empty-subtitle">
-                Ask anything, or start from one of these. Delta AI remembers what matters from every
-                conversation.
+                Ask anything, or start from one of these. Delta Explorer remembers what matters from
+                every conversation.
               </p>
               <div className="empty-suggestions">
                 {SUGGESTIONS.map((suggestion) => (
@@ -562,8 +562,8 @@ function Conversation({
             onChange={(e) => onInputChange(e.target.value)}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
-            placeholder="Message Delta AI..."
-            aria-label="Message Delta AI"
+            placeholder="Message Delta Explorer..."
+            aria-label="Message Delta Explorer"
             rows={1}
           />
           {loading ? (
@@ -591,7 +591,7 @@ function Conversation({
           )}
         </div>
         <div className="composer-meta">
-          <p className="composer-hint">Delta AI can make mistakes. Check important info.</p>
+          <p className="composer-hint">Delta Explorer can make mistakes. Check important info.</p>
           <span className="composer-keys">
             <kbd className="kbd">Enter</kbd> send
             <span className="keys-sep" aria-hidden="true">

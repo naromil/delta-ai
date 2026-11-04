@@ -1,6 +1,6 @@
-# Delta AI — Architecture
+# Delta Explorer — Architecture
 
-Delta AI is an Electron desktop app with two windows that share one renderer bundle:
+Delta Explorer is an Electron desktop app with two windows that share one renderer bundle:
 
 - **Main window** — sidebar with Home, Chat, Knowledge Base, Look-Up Guide and Settings.
 - **Look-Up popup** — a frameless, always-on-top 420×320 window created near the cursor by the
@@ -329,7 +329,7 @@ the `{userData}/memories/` document base, and they are sent identically on every
 Wayland caveats worth knowing:
 
 - The portal may accept a shortcut but assign no trigger until the user approves it once in the
-  desktop's Global Shortcuts settings (listed as "Delta AI"). `registerGlobalShortcutPortal`
+  desktop's Global Shortcuts settings (listed as "Delta Explorer"). `registerGlobalShortcutPortal`
   returns `false` in that case.
 - Electron's clipboard reads the XWayland clipboard, which is often stale; `wl-paste` is tried
   first and Electron is the fallback.

@@ -77,7 +77,7 @@ export function renderConversationMarkdown(record: ConversationRecord): string {
     // Same rule as serializeForChat: failed and blank assistant turns are not content.
     if (turn.role === 'assistant' && (turn.error || turn.content.trim() === '')) continue
 
-    lines.push('', turn.role === 'user' ? '## You' : '## Delta AI')
+    lines.push('', turn.role === 'user' ? '## You' : '## Delta Explorer')
     for (const attachment of turn.attachments ?? []) lines.push(`_[Image: ${attachment.name}]_`)
     const body = turn.content.trimEnd()
     if (body) lines.push(body)

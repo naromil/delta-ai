@@ -300,7 +300,7 @@ function LookupApp(): React.JSX.Element {
         />
       )}
       <div className="lookup-header">
-        <span>Delta AI</span>
+        <span>Delta Explorer</span>
         <div className="lookup-header-actions">
           <button
             type="button"
@@ -362,8 +362,8 @@ function LookupApp(): React.JSX.Element {
             ref={askRef}
             className="ask"
             type="text"
-            placeholder="Ask Delta AI..."
-            aria-label="Ask Delta AI"
+            placeholder="Ask Delta Explorer..."
+            aria-label="Ask Delta Explorer"
             autoComplete="off"
             value={input}
             onChange={(e) => {

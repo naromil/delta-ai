@@ -56,7 +56,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/delta-ai*
+            dist/delta-explorer*
             dist/*.dmg
             dist/*.deb
             dist/*.AppImage

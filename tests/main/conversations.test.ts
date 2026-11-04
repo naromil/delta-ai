@@ -45,7 +45,7 @@ function record(id: string, overrides: Partial<ConversationRecord> = {}): Conver
 
 describe('conversation store', () => {
   beforeEach(() => {
-    paths.userData = mkdtempSync(join(tmpdir(), 'delta-ai-conv-'))
+    paths.userData = mkdtempSync(join(tmpdir(), 'delta-explorer-conv-'))
   })
 
   afterEach(() => {

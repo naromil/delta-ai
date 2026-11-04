@@ -8,7 +8,7 @@ describe('atomic file writes', () => {
   let dir = ''
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'delta-ai-atomic-'))
+    dir = mkdtempSync(join(tmpdir(), 'delta-explorer-atomic-'))
   })
 
   afterEach(() => {

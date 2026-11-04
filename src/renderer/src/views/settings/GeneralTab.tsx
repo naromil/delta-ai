@@ -85,7 +85,7 @@ function GeneralTab({
           </span>
         </label>
         <p className="settings-hint">
-          Delta AI periodically curates your conversations into private markdown notes, which
+          Delta Explorer periodically curates your conversations into private markdown notes, which
           personalize chats and look-ups. Runs use the Knowledge Base Maintenance model, which must
           support tool calling, and never block a look-up.
         </p>

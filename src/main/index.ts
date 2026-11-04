@@ -84,7 +84,7 @@ if (!hasSingleInstanceLock) {
   })
 
   app.whenReady().then(async () => {
-    electronApp.setAppUserModelId('com.deltaai')
+    electronApp.setAppUserModelId('com.deltaexplorer')
 
     app.on('browser-window-created', (_, window) => {
       optimizer.watchWindowShortcuts(window)
@@ -403,7 +403,7 @@ app.on('before-quit', () => {
 function createTray(): void {
   if (tray) return
   tray = new Tray(icon)
-  tray.setToolTip('Delta AI')
+  tray.setToolTip('Delta Explorer')
 
   const contextMenu = Menu.buildFromTemplate([
     {
@@ -413,7 +413,7 @@ function createTray(): void {
       }
     },
     {
-      label: 'Show Delta AI',
+      label: 'Show Delta Explorer',
       click: () => showMainWindow()
     },
     { type: 'separator' },

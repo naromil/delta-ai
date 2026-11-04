@@ -110,7 +110,7 @@ function HomeView({ onNavigate, onOpenConversation }: HomeViewProps): React.JSX.
             </span>
             <span className="home-action-body">
               <span className="home-action-title">Start a chat</span>
-              <span className="home-action-desc">Ask anything — Delta AI remembers.</span>
+              <span className="home-action-desc">Ask anything — Delta Explorer remembers.</span>
             </span>
           </button>
           <button className="home-action" onClick={() => onNavigate?.('knowledge')}>
