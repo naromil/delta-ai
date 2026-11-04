@@ -83,7 +83,8 @@ interface CanvasNoteViewProps {
   editing: boolean
   selected: boolean
   dragging: boolean
-  invalid: boolean
+  /** Its height in the pile where cards overlap; a held card rises above all of them. */
+  stackLevel: number
   pulsing: boolean
   dimmed: boolean
   /** A connection being drawn starts or would end here. */
@@ -98,7 +99,7 @@ interface CanvasNoteViewProps {
 }
 
 function CanvasNoteView(props: CanvasNoteViewProps): React.JSX.Element {
-  const { card, editing, selected, dragging, invalid, pulsing, dimmed, continued } = props
+  const { card, editing, selected, dragging, stackLevel, pulsing, dimmed, continued } = props
   const { onDragStart, onResizeStart, onClick, onKeyDown, onMenu, onEdit, onCommit } = props
   const { rect } = card
   const articleRef = useRef<HTMLElement>(null)
@@ -108,7 +109,6 @@ function CanvasNoteView(props: CanvasNoteViewProps): React.JSX.Element {
     editing ? 'is-editing' : '',
     selected ? 'is-selected' : '',
     dragging ? 'is-dragging' : '',
-    invalid ? 'is-invalid' : '',
     pulsing ? 'is-pulsing' : '',
     dimmed ? 'is-dimmed' : '',
     continued ? 'is-continued' : ''
@@ -129,7 +129,12 @@ function CanvasNoteView(props: CanvasNoteViewProps): React.JSX.Element {
       data-color={card.color}
       tabIndex={0}
       aria-label={`Note: ${card.text.slice(0, 120)}`}
-      style={{ transform: `translate(${rect.x}px, ${rect.y}px)`, width: rect.w, height: rect.h }}
+      style={{
+        transform: `translate(${rect.x}px, ${rect.y}px)`,
+        width: rect.w,
+        height: rect.h,
+        zIndex: dragging ? undefined : stackLevel
+      }}
       onClick={(e) => onClick(e, card.id)}
       onContextMenu={(e) => onMenu(e, card.id)}
       onKeyDown={(e) => {

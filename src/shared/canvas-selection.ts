@@ -13,11 +13,9 @@ import type {
 import {
   containsPoint,
   containsRect,
-  hiddenInsetIds,
-  isTopLevel,
-  detachedCardIds,
   movingCardIds,
   pulledOutCardIds,
+  cardStackRanks,
   rectsOverlap,
   unionRect
 } from './canvas'
@@ -41,19 +39,15 @@ export function boundsOf(rects: CanvasRect[]): CanvasRect | null {
 
 /** What a marquee catches: cards it touches and, as they are large, frames it wholly covers. */
 export function marqueeHits(items: CanvasItems, marquee: CanvasRect): string[] {
-  const hidden = hiddenInsetIds(items.cards)
   return [
-    ...items.cards
-      .filter((card) => isTopLevel(card) && !hidden.has(card.id))
-      .filter((card) => rectsOverlap(card.rect, marquee))
-      .map((card) => card.id),
+    ...items.cards.filter((card) => rectsOverlap(card.rect, marquee)).map((card) => card.id),
     ...items.frames.filter((frame) => containsRect(marquee, frame.rect)).map((frame) => frame.id)
   ]
 }
 
 /** The cards standing wholly inside a frame. */
 export function cardsInsideFrame(cards: CanvasCard[], frame: CanvasFrame): CanvasCard[] {
-  return cards.filter((card) => isTopLevel(card) && containsRect(frame.rect, card.rect))
+  return cards.filter((card) => containsRect(frame.rect, card.rect))
 }
 
 function framesInside(frames: CanvasFrame[], outer: CanvasFrame): CanvasFrame[] {
@@ -63,14 +57,13 @@ function framesInside(frames: CanvasFrame[], outer: CanvasFrame): CanvasFrame[] 
 /**
  * What moves when a selection is dragged. A frame takes what stands inside it, frames
  * included. Each card brings what is joined to it, or with `pulledOut` only its attached
- * descendants, leaving its parent, its neighbours and any child reached by a link. An inset card selected without its host stays out of a group,
- * as it could not be carried off its host's text.
+ * descendants, leaving its parent, its neighbours and any child reached by a link.
  */
 export type CanvasCarrying = 'detached' | 'joined' | 'pulled'
 
 const CARRYING: Readonly<Record<CanvasCarrying, (cards: CanvasCard[], id: string) => Set<string>>> =
   {
-    detached: detachedCardIds,
+    detached: (_cards, id) => new Set([id]),
     joined: movingCardIds,
     pulled: pulledOutCardIds
   }
@@ -96,10 +89,6 @@ export function movingForSelection(
 
   const cards = new Set<string>()
   for (const id of seeds) {
-    const card = items.cards.find((item) => item.id === id)
-    if (card?.kind === 'expansion' && card.inset && seeds.size > 1 && !seeds.has(card.hostId)) {
-      continue
-    }
     const moving = CARRYING[carrying](items.cards, id)
     for (const movingId of moving) cards.add(movingId)
   }
@@ -120,9 +109,7 @@ export function selectedCards(items: CanvasItems, selected: ReadonlySet<string>)
 /** The rectangle that holds everything in a moving set, for snapping it as one. */
 export function movingBounds(items: CanvasItems, moving: CanvasMoving): CanvasRect | null {
   return boundsOf([
-    ...items.cards
-      .filter((card) => moving.cards.has(card.id) && isTopLevel(card))
-      .map((card) => card.rect),
+    ...items.cards.filter((card) => moving.cards.has(card.id)).map((card) => card.rect),
     ...items.frames.filter((frame) => moving.frames.has(frame.id)).map((frame) => frame.rect)
   ])
 }
@@ -141,11 +128,20 @@ export function sessionAncestorIds(cards: CanvasCard[], id: string): Set<string>
   return ancestors
 }
 
-/** The card under a point: one drawn over another's text before the one it sits on. */
-export function cardAtPoint(cards: CanvasCard[], point: CanvasPoint): CanvasCard | undefined {
-  const hidden = hiddenInsetIds(cards)
-  const hits = cards.filter((card) => !hidden.has(card.id) && containsPoint(card.rect, point))
-  return hits.find((card) => !isTopLevel(card)) ?? hits.at(-1)
+/** The card under a point: the one on top where cards overlap. */
+export function cardAtPoint(
+  cards: CanvasCard[],
+  point: CanvasPoint,
+  stack: readonly string[]
+): CanvasCard | undefined {
+  const ranks = cardStackRanks(cards, stack)
+  const rank = (card: CanvasCard): number => ranks.get(card.id) ?? -1
+  return cards
+    .filter((card) => containsPoint(card.rect, point))
+    .reduce<CanvasCard | undefined>(
+      (top, card) => (top && rank(top) > rank(card) ? top : card),
+      undefined
+    )
 }
 
 /** A card's title and body as text: a note has only a body. */

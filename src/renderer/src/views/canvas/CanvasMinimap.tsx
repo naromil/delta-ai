@@ -6,7 +6,7 @@ import type {
   CanvasRect,
   CanvasViewport
 } from '../../../../shared/canvas'
-import { hiddenInsetIds, isTopLevel, unionRect, visibleWorldRect } from '../../../../shared/canvas'
+import { unionRect, visibleWorldRect } from '../../../../shared/canvas'
 import { boundsOf } from '../../../../shared/canvas-selection'
 
 export interface CanvasMinimapHandle {
@@ -34,9 +34,7 @@ const CanvasMinimap = forwardRef<CanvasMinimapHandle, CanvasMinimapProps>(functi
   const svgRef = useRef<SVGSVGElement>(null)
   const viewRef = useRef<SVGRectElement>(null)
   const heldRef = useRef(false)
-  const hidden = hiddenInsetIds(cards)
-  const shown = cards.filter((card) => isTopLevel(card) && !hidden.has(card.id))
-  const content = boundsOf([...shown.map((card) => card.rect), ...frames.map((f) => f.rect)])
+  const content = boundsOf([...cards.map((card) => card.rect), ...frames.map((f) => f.rect)])
 
   const paint = useCallback(
     (viewport: CanvasViewport): void => {
@@ -111,7 +109,7 @@ const CanvasMinimap = forwardRef<CanvasMinimapHandle, CanvasMinimapProps>(functi
           height={frame.rect.h}
         />
       ))}
-      {shown.map((card) => (
+      {cards.map((card) => (
         <rect
           key={card.id}
           className={`canvas-minimap-card${selectedIds.has(card.id) ? ' is-selected' : ''}`}

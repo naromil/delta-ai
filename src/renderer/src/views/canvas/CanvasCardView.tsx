@@ -53,7 +53,8 @@ interface CanvasCardViewProps extends CanvasCardActions {
   /** Whether each side's `+` has open space to sit in. */
   handleRight: boolean
   handleBottom: boolean
-  invalid: boolean
+  /** Its height in the pile where cards overlap; a held card rises above all of them. */
+  stackLevel: number
   pulsing: boolean
   dimmed: boolean
   selected: boolean
@@ -152,7 +153,8 @@ function CardQuestionEditor({
 
 function CanvasCardView(props: CanvasCardViewProps): React.JSX.Element {
   const { card, rect, caption, question, answer, expansions, status, failure } = props
-  const { dragging, handleRight, handleBottom, invalid, pulsing, dimmed, selected, onPath } = props
+  const { dragging, handleRight, handleBottom, stackLevel, pulsing, dimmed, selected, onPath } =
+    props
   const { continued, pulseTermId, onCardClick, onCardMenu, onToggleCollapse } = props
   const { onDragStart, onResizeStart, onStop, onRegenerate, onEdit, onDelete } = props
   const { onContinue, onContinueStart } = props
@@ -242,21 +244,19 @@ function CanvasCardView(props: CanvasCardViewProps): React.JSX.Element {
   const classes = [
     'canvas-card',
     `canvas-card--${card.kind}`,
-    card.kind === 'expansion' && card.inset ? 'is-inset' : '',
     collapsed ? 'is-collapsed' : '',
     selected ? 'is-selected' : '',
     onPath ? 'is-on-path' : '',
     status === 'streaming' ? 'is-streaming' : '',
     status === 'failed' ? 'is-failed' : '',
     dragging ? 'is-dragging' : '',
-    invalid ? 'is-invalid' : '',
     pulsing ? 'is-pulsing' : '',
     dimmed ? 'is-dimmed' : '',
     continued ? 'is-continued' : ''
   ]
     .filter(Boolean)
     .join(' ')
-  const canContinue = (card.kind === 'message' || !card.inset) && status === 'done' && !collapsed
+  const canContinue = status === 'done' && !collapsed
   const waiting = status === 'streaming' && answer === ''
   const expansionId = card.kind === 'expansion' ? card.expansionId : undefined
   const hasSource = card.kind === 'expansion' || card.parentId !== undefined
@@ -271,7 +271,12 @@ function CanvasCardView(props: CanvasCardViewProps): React.JSX.Element {
       tabIndex={0}
       aria-label={`${card.kind === 'expansion' ? 'Expansion' : 'Question'}: ${label.slice(0, 120)}`}
       aria-busy={status === 'streaming'}
-      style={{ transform: `translate(${rect.x}px, ${rect.y}px)`, width: rect.w, height: rect.h }}
+      style={{
+        transform: `translate(${rect.x}px, ${rect.y}px)`,
+        width: rect.w,
+        height: rect.h,
+        zIndex: dragging ? undefined : stackLevel
+      }}
       onClick={(e) => onCardClick(e, card.id)}
       onKeyDown={(e) => {
         if (e.target !== e.currentTarget || e.ctrlKey || e.metaKey || e.altKey) return

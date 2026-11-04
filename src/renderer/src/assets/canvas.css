@@ -92,6 +92,11 @@
 
 /* ---- Cards ---- */
 
+/*
+ * Cards take their z-index from their place in the pile, from 1 up (`stackLevel`). Everything
+ * drawn over all of them starts at 100000: links and labels, then the draft, the held card,
+ * then seams and drawing aids. The world's transform keeps these from reaching the chrome.
+ */
 .canvas-card {
   position: absolute;
   top: 0;
@@ -105,12 +110,8 @@
     opacity var(--dur-2) var(--ease-out);
 }
 
-.canvas-card.is-inset {
-  z-index: 3;
-}
-
 .canvas-card.is-dragging {
-  z-index: 5;
+  z-index: 100002;
   transition: opacity var(--dur-2) var(--ease-out);
 }
 
@@ -159,18 +160,8 @@
   border-color: color-mix(in srgb, var(--tint) 55%, var(--border-strong));
 }
 
-.canvas-card.is-inset .canvas-card-surface {
-  background: var(--surface-2);
-  border-color: var(--accent);
-  box-shadow: var(--shadow-2);
-}
-
 .canvas-card.is-dragging .canvas-card-surface {
   box-shadow: var(--shadow-3);
-}
-
-.canvas-card.is-invalid .canvas-card-surface {
-  border-color: var(--error);
 }
 
 .canvas-card.is-pulsing .canvas-card-surface {
@@ -737,7 +728,7 @@
 /* ---- A rectangle waiting for its question ---- */
 
 .canvas-card--draft {
-  z-index: 4;
+  z-index: 100001;
 }
 
 /*
@@ -943,7 +934,7 @@
 }
 
 .canvas-links--over {
-  z-index: 2;
+  z-index: 100000;
 }
 
 .canvas-links--over .canvas-link-line {
@@ -956,7 +947,7 @@
 
 /* Above a dragged block, whose own boundaries travel with it. */
 .canvas-links--seams {
-  z-index: 6;
+  z-index: 100003;
 }
 
 .canvas-link-line {
@@ -1054,7 +1045,7 @@
   position: absolute;
   top: 0;
   left: 0;
-  z-index: 2;
+  z-index: 100000;
   max-width: 240px;
   padding: 2px 8px;
   overflow: hidden;
@@ -1125,7 +1116,7 @@
   position: absolute;
   top: 0;
   left: 0;
-  z-index: 6;
+  z-index: 100003;
   background: var(--accent-soft);
   outline: calc(1.5px / var(--canvas-zoom)) dashed var(--accent);
   border-radius: 6px;
@@ -1136,7 +1127,7 @@
   position: absolute;
   top: 0;
   left: 0;
-  z-index: 6;
+  z-index: 100003;
   background: var(--accent-soft);
   border: calc(1px / var(--canvas-zoom)) solid var(--accent);
   pointer-events: none;
@@ -1169,7 +1160,7 @@
 
 .canvas-guide {
   position: absolute;
-  z-index: 6;
+  z-index: 100003;
   background: var(--accent);
   opacity: 0.7;
   pointer-events: none;

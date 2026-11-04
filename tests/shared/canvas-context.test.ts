@@ -7,7 +7,6 @@ import type {
 } from '../../src/shared/canvas'
 import {
   normalizeCanvasLayout,
-  rectsOverlap,
   resizeDraftRect,
   sessionCardIds,
   withCanvasContext
@@ -265,19 +264,10 @@ describe('resizeDraftRect', () => {
     expect(rect).toEqual({ x: 100, y: 100, w: 200, h: 120 })
   })
 
-  it('stops at what stands in the way rather than overlapping it', () => {
+  it('grows over what stands in the way', () => {
     const wall = { x: 600, y: 0, w: 100, h: 1000 }
     const { rect } = resizeDraftRect(start, undefined, { dw: 500, dh: 40 }, [wall], 0)
-    expect(rect.w).toBe(500)
+    expect(rect.w).toBe(900)
     expect(rect.h).toBe(320)
-    expect(rectsOverlap(rect, wall)).toBe(false)
-  })
-
-  it('takes the smaller cut when a corner runs into a card', () => {
-    const block = { x: 520, y: 390, w: 200, h: 200 }
-    const { rect } = resizeDraftRect(start, undefined, { dw: 100, dh: 100 }, [block], 0)
-    expect(rectsOverlap(rect, block)).toBe(false)
-    expect(rect.w).toBe(420)
-    expect(rect.h).toBe(380)
   })
 })

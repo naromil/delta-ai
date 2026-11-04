@@ -13,12 +13,15 @@ import {
   canvasContinuations,
   clampPointInside,
   connectorGeometry,
-  linkPath
+  containsPoint,
+  linkPath,
+  sourceCardId
 } from '../../../../shared/canvas'
 import { termPoint } from './board-helpers'
 
 interface CanvasLinksProps {
   cards: CanvasCard[]
+  stackRanks: ReadonlyMap<string, number>
   links: CanvasLink[]
   surfaceRef: RefObject<HTMLDivElement | null>
   /** Links of cards being dragged follow the pointer instead of easing after it. */
@@ -50,7 +53,7 @@ const SIDE_ANGLE: Readonly<Record<CanvasSide, number>> = {
 }
 
 function isLinked(card: CanvasCard): card is CanvasExpansionCard {
-  return card.kind === 'expansion' && !card.inset
+  return card.kind === 'expansion'
 }
 
 /**
@@ -155,6 +158,7 @@ function LabelEditor({
  */
 function CanvasLinks({
   cards,
+  stackRanks,
   links,
   surfaceRef,
   dragging,
@@ -198,9 +202,17 @@ function CanvasLinks({
   const rectOf = new Map(cards.map((card) => [card.id, card.rect]))
   const continuations = canvasContinuations(cards)
   const sessionLinks = continuations.filter((item) => item.kind === 'link')
-  const seams = continuations.filter((item) => item.kind === 'seam')
+  const allSeams = continuations.filter((item) => item.kind === 'seam')
+  // Seams are drawn above every card, so one under a third card has to be left out.
+  const rankOf = (id: string | undefined): number => (id ? (stackRanks.get(id) ?? -1) : -1)
+  const seams = allSeams.filter(({ id, start, end }) => {
+    const card = cards.find((item) => item.id === id)
+    const level = Math.max(rankOf(id), rankOf(card && sourceCardId(card)))
+    const middle = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 }
+    return !cards.some((other) => rankOf(other.id) > level && containsPoint(other.rect, middle))
+  })
   const termLinks = cards.filter(isLinked).flatMap((card) => {
-    if (seams.some((seam) => seam.id === card.id)) return []
+    if (allSeams.some((seam) => seam.id === card.id)) return []
     const host = cards.find((other) => other.id === card.hostId)
     if (!host) return []
     const raw = offsets[card.id] ?? { x: host.rect.w / 2, y: host.rect.h / 2 }

@@ -15,7 +15,6 @@ import {
   connectorGeometry,
   continuationCandidates,
   fitCardHeight,
-  hiddenInsetIds,
   normalizeCanvasLayout,
   openCardSize,
   rectsOverlap,
@@ -58,8 +57,13 @@ function message(id: string, turn: number, at: CanvasRect, parentId?: string): C
   }
 }
 
-function inset(id: string, hostId: string, at: CanvasRect, expansionId = 7): CanvasExpansionCard {
-  return { kind: 'expansion', id, rect: at, turnId: 2, expansionId, hostId, inset: true }
+function expansion(
+  id: string,
+  hostId: string,
+  at: CanvasRect,
+  expansionId = 7
+): CanvasExpansionCard {
+  return { kind: 'expansion', id, rect: at, turnId: 2, expansionId, hostId }
 }
 
 function note(id: string, at: CanvasRect, text = 'a thought'): CanvasNoteCard {
@@ -109,16 +113,22 @@ describe('selecting', () => {
     ])
   })
 
-  it('never catches a card drawn over text, as it rides on its host', () => {
-    const cards = [message('a', 1, rect(0, 0, 400, 400)), inset('i', 'a', rect(10, 10, 80, 80))]
-    expect(marqueeHits({ cards, frames: [] }, rect(0, 0, 50, 50))).toEqual(['a'])
+  it('catches an expansion over its host like any other card', () => {
+    const cards = [message('a', 1, rect(0, 0, 400, 400)), expansion('i', 'a', rect(10, 10, 80, 80))]
+    expect(marqueeHits({ cards, frames: [] }, rect(0, 0, 50, 50))).toEqual(['a', 'i'])
   })
 
-  it('finds a card drawn over text before the card it sits on', () => {
-    const cards = [message('a', 1, rect(0, 0, 400, 400)), inset('i', 'a', rect(10, 10, 80, 80))]
-    expect(cardAtPoint(cards, { x: 20, y: 20 })?.id).toBe('i')
-    expect(cardAtPoint(cards, { x: 300, y: 300 })?.id).toBe('a')
-    expect(cardAtPoint(cards, { x: 900, y: 900 })).toBeUndefined()
+  it('finds a newer card over an older one', () => {
+    const cards = [message('a', 1, rect(0, 0, 400, 400)), expansion('i', 'a', rect(10, 10, 80, 80))]
+    expect(cardAtPoint(cards, { x: 20, y: 20 }, [])?.id).toBe('i')
+    expect(cardAtPoint(cards, { x: 300, y: 300 }, [])?.id).toBe('a')
+    expect(cardAtPoint(cards, { x: 900, y: 900 }, [])).toBeUndefined()
+  })
+
+  it('finds whichever overlapping card is on top', () => {
+    const cards = [message('a', 1, rect(0, 0, 200, 200)), message('b', 3, rect(100, 100, 200, 200))]
+    expect(cardAtPoint(cards, { x: 150, y: 150 }, [])?.id).toBe('b')
+    expect(cardAtPoint(cards, { x: 150, y: 150 }, ['b', 'a'])?.id).toBe('a')
   })
 
   it('shows a colour as chosen only when the whole selection shares it', () => {
@@ -138,15 +148,15 @@ describe('what a selection carries when dragged', () => {
     expect([...moving.cards].sort()).toEqual(['a', 'b'])
   })
 
-  it('moves only the chosen card by default, with what is drawn over its text', () => {
+  it('moves only the chosen card by default, even with an expansion over it', () => {
     const cards = [
       message('a', 1, rect(0, 0)),
       message('b', 3, rect(100, 0), 'a'),
-      inset('over', 'a', rect(10, 10, 40, 40), 5),
-      { ...inset('touching', 'a', rect(0, 100)), inset: false }
+      expansion('over', 'a', rect(10, 10, 40, 40), 5),
+      expansion('touching', 'a', rect(0, 100))
     ]
     const moving = movingForSelection({ cards, frames: [] }, new Set(['a']), 'detached')
-    expect([...moving.cards].sort()).toEqual(['a', 'over'])
+    expect([...moving.cards]).toEqual(['a'])
   })
 
   it('pulls a card off its parent with its attached descendants only', () => {
@@ -155,17 +165,15 @@ describe('what a selection carries when dragged', () => {
       message('pulled', 3, rect(100, 0), 'parent'),
       message('child', 5, rect(200, 0), 'pulled'),
       message('grandchild', 7, rect(300, 0), 'child'),
-      inset('over', 'pulled', rect(110, 10, 40, 40), 9),
-      { ...inset('touching', 'pulled', rect(100, 100), 11), inset: false },
-      { ...inset('linked', 'pulled', rect(500, 500), 13), inset: false },
+      expansion('over', 'pulled', rect(110, 10, 40, 40), 9),
+      expansion('touching', 'pulled', rect(100, 100), 11),
+      expansion('linked', 'pulled', rect(500, 500), 13),
       message('linkedChild', 15, rect(900, 0), 'pulled'),
       message('beyondLink', 17, rect(1000, 0), 'linkedChild'),
       message('neighbour', 19, rect(100, -100))
     ]
     const moving = movingForSelection({ cards, frames: [] }, new Set(['pulled']), 'pulled')
-    expect([...moving.cards].sort()).toEqual(
-      ['child', 'grandchild', 'over', 'pulled', 'touching'].sort()
-    )
+    expect([...moving.cards].sort()).toEqual(['child', 'grandchild', 'pulled', 'touching'].sort())
   })
 
   it('leaves a child joined to its parent only through a third card', () => {
@@ -192,14 +200,14 @@ describe('what a selection carries when dragged', () => {
     expect([...movingForSelection({ cards, frames }, new Set(['in'])).frames]).toEqual([])
   })
 
-  it('does not carry an inset card off a host that is staying', () => {
+  it('moves an expansion chosen without its host', () => {
     const cards = [
       message('host', 1, rect(0, 0, 400, 400)),
-      inset('i', 'host', rect(10, 10, 80, 80)),
+      expansion('i', 'host', rect(10, 10, 80, 80)),
       message('other', 3, rect(900, 0))
     ]
     const moving = movingForSelection({ cards, frames: [] }, new Set(['i', 'other']))
-    expect([...moving.cards]).toEqual(['other'])
+    expect([...moving.cards].sort()).toEqual(['i', 'other'])
   })
 })
 
@@ -208,7 +216,7 @@ describe('session paths', () => {
     const cards = [
       message('a', 1, rect(0, 0)),
       message('b', 3, rect(0, 100), 'a'),
-      inset('i', 'b', rect(0, 110, 50, 50))
+      expansion('i', 'b', rect(0, 110, 50, 50))
     ]
     expect([...sessionAncestorIds(cards, 'i')]).toEqual(['b', 'a'])
     expect([...sessionAncestorIds(cards, 'a')]).toEqual([])
@@ -312,21 +320,6 @@ describe('collapsing', () => {
     expect(setCardCollapsed(cards, 'm', false)).toBe(cards)
   })
 
-  it('hides what is drawn over a collapsed card, however deep', () => {
-    const host = { ...message('a', 1, rect(0, 0, 400, 400)), collapsedFrom: 400 }
-    const cards = [
-      host,
-      inset('i', 'a', rect(10, 10, 100, 100)),
-      inset('j', 'i', rect(20, 20, 50, 50), 8)
-    ]
-    expect([...hiddenInsetIds(cards)].sort()).toEqual(['i', 'j'])
-  })
-
-  it('survives a stored layout whose hosts form a loop', () => {
-    const cards = [inset('i', 'j', rect(0, 0, 50, 50)), inset('j', 'i', rect(0, 0, 50, 50), 8)]
-    expect([...hiddenInsetIds(cards)]).toEqual([])
-  })
-
   it('does not fit the height of a collapsed card to an answer it cannot show', () => {
     const closed = setCardCollapsed([message('a', 1, rect(0, 0, 100, 300))], 'a', true)
     expect(fitCardHeight(closed, 'a', 900)).toEqual([])
@@ -363,10 +356,11 @@ describe('arranging', () => {
     expect(rectsOverlap(at.a, at.b)).toBe(false)
   })
 
-  it('refuses rather than land on a card outside the selection', () => {
+  it('may land on a card outside the selection', () => {
     const cards = [...two, message('c', 5, rect(0, 300, 100, 100))]
-    const result = alignSelection({ cards, frames: [] }, new Set(['a', 'b']), 'left')
-    expect(result.ok).toBe(false)
+    const at = landed(alignSelection({ cards, frames: [] }, new Set(['a', 'b']), 'left'), cards)
+    expect(at.a.x).toBe(0)
+    expect(at.b.x).toBe(0)
   })
 
   it('moves joined cards together, so aligning cannot split a session', () => {
@@ -482,7 +476,7 @@ describe('duplicating', () => {
     const turns = turnsFor(1).map((turn) =>
       turn.role === 'assistant' ? { ...turn, expansions: [expansionNode] } : turn
     )
-    const cards = [message('a', 1, rect(0, 0, 400, 400)), inset('i', 'a', rect(10, 10, 80, 80))]
+    const cards = [message('a', 1, rect(0, 0, 400, 400)), expansion('i', 'a', rect(10, 10, 80, 80))]
     const copy = duplicateSelection({ cards, frames: [], links: [] }, turns, new Set(['a']), ids())
     expect(copy?.cards.map((card) => card.kind)).toEqual(['message'])
     expect(copy?.turns.every((turn) => turn.expansions.length === 0)).toBe(true)
@@ -615,7 +609,7 @@ describe('undo and redo', () => {
     const withExpansion = turnsFor(1).map((turn) =>
       turn.role === 'assistant' ? { ...turn, expansions: [streaming] } : turn
     )
-    const cards = [message('a', 1, rect(0, 0)), inset('i', 'a', rect(5, 5, 50, 50))]
+    const cards = [message('a', 1, rect(0, 0)), expansion('i', 'a', rect(5, 5, 50, 50))]
     const before = snapshot(cards, withExpansion)
     const after = snapshot(
       [cards[0]],
@@ -633,7 +627,7 @@ describe('undo and redo', () => {
     const turns = turnsFor(1).map((turn) =>
       turn.role === 'assistant' ? { ...turn, expansions: [expansionNode] } : turn
     )
-    const cards = [message('a', 1, rect(0, 0)), inset('i', 'a', rect(5, 5, 50, 50))]
+    const cards = [message('a', 1, rect(0, 0)), expansion('i', 'a', rect(5, 5, 50, 50))]
     const before = snapshot(cards, turns)
     const afterTurns = turns.map((turn) => ({ ...turn, expansions: [] }))
     const after = snapshot([cards[0]], afterTurns)
@@ -644,10 +638,10 @@ describe('undo and redo', () => {
         turn.role === 'assistant' ? { ...turn, content: 'a fresh answer' } : turn
       )
     }
-    expect(applyCanvasPatch(regenerated, patch, 'undo')).toEqual({ ok: false, reason: 'changed' })
+    expect(applyCanvasPatch(regenerated, patch, 'undo')).toEqual({ ok: false })
   })
 
-  it('refuses to put a card back on top of one that took its place', () => {
+  it('puts a card back even on top of one that took its place', () => {
     const start = message('a', 1, rect(0, 0))
     const before = snapshot([start], turnsFor(1))
     const after = { ...before, cards: [moved(start, 500)] }
@@ -657,7 +651,9 @@ describe('undo and redo', () => {
       turns: [...after.turns, ...turnsFor(3)],
       cards: [...after.cards, message('new', 3, rect(0, 0))]
     }
-    expect(applyCanvasPatch(occupied, patch, 'undo')).toEqual({ ok: false, reason: 'blocked' })
+    const result = applyCanvasPatch(occupied, patch, 'undo')
+    if (!result.ok) throw new Error('refused')
+    expect(result.snapshot.cards.find((card) => card.id === 'a')?.rect).toEqual(start.rect)
   })
 
   it('does not bring back a card that left some other way since', () => {
@@ -695,6 +691,18 @@ describe('the load boundary', () => {
     expect(layout.frames).toEqual([])
     expect(layout.links).toEqual([])
     expect(layout.cards).toHaveLength(1)
+  })
+
+  it('forgets that an older canvas drew an expansion inside its host', () => {
+    const turns = turnsFor(1).map((turn) =>
+      turn.role === 'assistant' ? { ...turn, expansions: [expansionNode] } : turn
+    )
+    const stored = { ...expansion('i', 'a', rect(5, 5, 50, 50)), inset: true }
+    const layout = normalizeCanvasLayout(
+      { cards: [message('a', 1, rect(0, 0)), stored], viewport: { x: 0, y: 0, zoom: 1 } },
+      turns
+    )
+    expect(layout.cards[1]).toEqual(expansion('i', 'a', rect(5, 5, 50, 50)))
   })
 
   it('keeps sound notes, frames and links, and drops what cannot be used', () => {

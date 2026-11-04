@@ -23,6 +23,7 @@ import {
   cascadeCardIds,
   estimateWords,
   fitCardHeight,
+  raisedStack,
   normalizeCanvasLayout,
   setCardCollapsed,
   turnsThroughCard,
@@ -91,7 +92,6 @@ type PendingRequest = { kind: 'send'; turnId: number } | { kind: 'expand'; expan
 export interface CanvasCardUpdate {
   id: string
   rect: CanvasRect
-  inset?: boolean
 }
 
 /** What undo or redo did, with the reason when it could not. */
@@ -100,14 +100,13 @@ export type CanvasHistoryStep = { ok: true; label: string } | { ok: false; reaso
 export interface CanvasExpandPlacement {
   hostId: string
   rect: CanvasRect
-  inset: boolean
 }
 
 let nextTurnId = Date.now()
 
 const emptyDoc = (): CanvasDoc => ({
   turns: [],
-  layout: { cards: [], frames: [], links: [], viewport: DEFAULT_VIEWPORT }
+  layout: { cards: [], frames: [], links: [], stack: [], viewport: DEFAULT_VIEWPORT }
 })
 
 function snapshotOf({ turns, layout }: CanvasDoc): CanvasSnapshot {
@@ -146,6 +145,8 @@ export function useCanvas(): {
   cards: CanvasCard[]
   frames: CanvasFrame[]
   links: CanvasLink[]
+  /** Which cards are on top where they overlap: see `cardStackRanks`. */
+  stack: string[]
   viewport: CanvasViewport
   /** What undo and redo would do next; null when there is nothing. */
   undoLabel: string | null
@@ -163,6 +164,8 @@ export function useCanvas(): {
   setViewport: (viewport: CanvasViewport) => void
   /** Moves cards and frames as one undoable step. */
   moveItems: (label: string, cards: CanvasCardUpdate[], frames?: CanvasFrameUpdate[]) => void
+  /** Puts cards on top of what they overlap. */
+  raiseCards: (ids: Iterable<string>) => void
   undo: () => CanvasHistoryStep | null
   redo: () => CanvasHistoryStep | null
   addNote: (rect: CanvasRect, text: string) => string
@@ -312,9 +315,6 @@ export function useCanvas(): {
       if (!patch) return null
       const result = applyCanvasPatch(snapshotOf(docRef.current), patch, direction)
       if (!result.ok) {
-        if (result.reason === 'blocked') {
-          return { ok: false, reason: 'Something is in the way now. Move it, then try again.' }
-        }
         // That answer has moved on, so this step can never apply again.
         from.current = from.current.slice(0, -1)
         syncHistory()
@@ -459,8 +459,7 @@ export function useCanvas(): {
               rect: placement.rect,
               turnId,
               expansionId,
-              hostId: placement.hostId,
-              inset: placement.inset
+              hostId: placement.hostId
             }
           ]
         }
@@ -687,13 +686,22 @@ export function useCanvas(): {
           ...prev.layout,
           cards: prev.layout.cards.map((card) => {
             const update = byId.get(card.id)
-            if (!update) return card
-            return card.kind === 'expansion' && update.inset !== undefined
-              ? { ...card, rect: update.rect, inset: update.inset }
-              : { ...card, rect: update.rect }
+            return update ? { ...card, rect: update.rect } : card
           })
         }
       }))
+      requestSave(false)
+    },
+    [requestSave, updateDoc]
+  )
+
+  /** Going on top is not an edit: it joins no undo step and leaves the recents order alone. */
+  const raiseCards = useCallback(
+    (ids: Iterable<string>): void => {
+      const { cards, stack } = docRef.current.layout
+      const next = raisedStack(cards, stack, ids)
+      if (next === stack) return
+      updateDoc((prev) => ({ ...prev, layout: { ...prev.layout, stack: next } }))
       requestSave(false)
     },
     [requestSave, updateDoc]
@@ -716,8 +724,9 @@ export function useCanvas(): {
           }
         }))
       })
+      raiseCards(cards.map((card) => card.id))
     },
-    [recorded, updateCards, updateDoc]
+    [raiseCards, recorded, updateCards, updateDoc]
   )
 
   /** A change to the layout alone: never a change of content, so recents keep their order. */
@@ -1072,6 +1081,7 @@ export function useCanvas(): {
     cards: doc.layout.cards,
     frames: doc.layout.frames,
     links: doc.layout.links,
+    stack: doc.layout.stack,
     viewport: doc.layout.viewport,
     undoLabel: historyLabels.undo,
     redoLabel: historyLabels.redo,
@@ -1085,6 +1095,7 @@ export function useCanvas(): {
     rename,
     setViewport,
     moveItems,
+    raiseCards,
     undo,
     redo,
     addNote,

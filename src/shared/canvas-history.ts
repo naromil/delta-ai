@@ -6,7 +6,7 @@
  * streaming text and cards asked for since, as it finds it. Everything here is pure.
  */
 import type { CanvasCard, CanvasFrame, CanvasLayout, CanvasLink } from './canvas'
-import { isTopLevel, normalizeCanvasLayout, rectsOverlap } from './canvas'
+import { normalizeCanvasLayout } from './canvas'
 import type { Turn } from './conversation'
 import { finalizeTurns } from './rich-text'
 
@@ -33,8 +33,8 @@ export type CanvasPatchDirection = 'undo' | 'redo'
 
 export type CanvasPatchResult =
   | { ok: true; snapshot: CanvasSnapshot }
-  /** `changed`: a turn it touches has moved on. `blocked`: something now stands in the way. */
-  | { ok: false; reason: 'changed' | 'blocked' }
+  /** A turn it touches has moved on. */
+  | { ok: false }
 
 function diffList<T extends { id: unknown }>(before: T[], after: T[]): Array<Change<T>> {
   const beforeAt = new Map(before.map((item, index) => [item.id, index]))
@@ -113,17 +113,6 @@ function applyChanges<T extends { id: unknown }>(
   return result
 }
 
-function overlappingPairs(cards: CanvasCard[]): Set<string> {
-  const standing = cards.filter(isTopLevel)
-  const pairs = new Set<string>()
-  for (const [i, a] of standing.entries()) {
-    for (const b of standing.slice(i + 1)) {
-      if (rectsOverlap(a.rect, b.rect)) pairs.add([a.id, b.id].sort().join(' '))
-    }
-  }
-  return pairs
-}
-
 /** Applies a patch to the canvas as it is now, not as it was when the patch was made. */
 export function applyCanvasPatch(
   current: CanvasSnapshot,
@@ -135,7 +124,7 @@ export function applyCanvasPatch(
     const expected = undoing ? change.after : change.before
     const now = current.turns.find((turn) => turn.id === change.id)
     if (expected === undefined ? now !== undefined : now !== expected) {
-      return { ok: false, reason: 'changed' }
+      return { ok: false }
     }
   }
 
@@ -150,10 +139,6 @@ export function applyCanvasPatch(
     turns
   )
 
-  const had = overlappingPairs(current.cards)
-  for (const pair of overlappingPairs(layout.cards)) {
-    if (!had.has(pair)) return { ok: false, reason: 'blocked' }
-  }
   return {
     ok: true,
     snapshot: { turns, cards: layout.cards, frames: layout.frames, links: layout.links }

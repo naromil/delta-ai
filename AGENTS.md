@@ -105,8 +105,8 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | `attachments.ts`      | `ImageAttachment`, per-message/size limits, `isImageInput` / `isImageAttachment` validation, `scaledImageSize`                                                                                                                |
 | `canvas.ts`           | Pure canvas model: card types, rectangles, snapping, `estimateWords`, `withCanvasFit`, `resolveMove`, session walks (`turnsThroughCard`), `linkPath`, viewport math, `normalizeCanvasLayout`                                  |
 | `canvas-selection.ts` | What a selection covers: `marqueeHits`, `movingForSelection` (frames bring contents, cards bring what is joined), `sessionAncestorIds`, `cardAtPoint`, `selectionMarkdown`, `sourceExcerpts`                                  |
-| `canvas-arrange.ts`   | Rigid blocks: `alignSelection`, `distributeSelection`, `tidySelection`, `duplicateSelection`; never overlaps what stands on the plane                                                                                         |
-| `canvas-history.ts`   | Undo as patches: `diffCanvas`, `applyCanvasPatch` (leaves what the patch did not touch, refuses a turn that moved on or a landing that is taken)                                                                              |
+| `canvas-arrange.ts`   | Rigid blocks: `alignSelection`, `distributeSelection`, `tidySelection`, `duplicateSelection`; spaces out only what it moves                                                                                                   |
+| `canvas-history.ts`   | Undo as patches: `diffCanvas`, `applyCanvasPatch` (leaves what the patch did not touch, refuses a turn that moved on)                                                                                                         |
 | `canvas-outline.ts`   | The canvas as a list: `canvasOutline`, `searchCanvasOutline`                                                                                                                                                                  |
 | `canvas-context.ts`   | What links send: `sessionContextLinks`, `contextExcerpts` (limits, shared history once), `requestContext`                                                                                                                     |
 | `prompts.ts`          | All LLM-facing prompt/instruction strings: system prompts, context template, lookup default, expand instructions                                                                                                              |
@@ -226,7 +226,8 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | Memory updated indicator               | `components/MemoryIndicator.tsx`, `memory/tools.ts` (`broadcastMemoryUpdated`)                                             |
 | Canvas geometry, sessions, word fit    | `shared/canvas.ts` (+ `estimateWords` constants mirror `assets/canvas.css`)                                                |
 | Canvas gestures, tools, expansion flow | `views/canvas/CanvasView.tsx`                                                                                              |
-| Canvas card height and pushing         | `shared/canvas.ts` (`resizeCard`, `fitCardHeight`), measured in `CanvasView.tsx`                                           |
+| Canvas card height and pushing         | `shared/canvas.ts` (`resizeCard`, `resizeCardKeepingClear`, `fitCardHeight`), measured in `CanvasView.tsx`                 |
+| Canvas stacking (which card is on top) | `shared/canvas.ts` (`cardStackRanks`, `raisedStack`), `raiseCards` in `hooks/useCanvas.ts`, z-index scale in `canvas.css`  |
 | Canvas card buttons                    | `views/canvas/CanvasCardView.tsx`, `hooks/useCanvas.ts` (`regenerateCard`, `editCard`)                                     |
 | Canvas streaming and saving            | `hooks/useCanvas.ts`                                                                                                       |
 | Canvas sizing instruction              | `shared/prompts.ts` (`buildCanvasFitNote`)                                                                                 |
@@ -392,7 +393,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   editor and closes it. The selection bar sits at the bottom because at the top it covered the title
   bars of the cards a Fit puts there.
 - **A note is a card, a frame and a connection are not.** A note (`kind: 'note'`) stands on the plane
-  like any card, so it snaps, joins and may not overlap, but holds no turn, so it continues no session
+  like any card, so it snaps, joins and may overlap, but holds no turn, so it continues no session
   (`continuationCandidates`) and curator passes never see it: note edits save with `touchContent: false`.
   A blank note never reaches the document (`noteDraft`). Frames sit under the cards and are no obstacle;
   only the title and corner take the pointer, so a marquee can start inside one. Membership is
@@ -401,8 +402,8 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 - **Undo is patches, because answers keep streaming.** `recorded(label, action)` in `useCanvas` diffs
   by identity around one user action, so everything that edits the document must copy only what it
   edits. `applyCanvasPatch` puts back only what that action changed. Moving, resizing, colour, notes,
-  frames, connections, duplicate and delete are undoable; asking, expanding and height fitting are
-  not recorded. Regenerate and edit are not either, and their confirmation still says so. The stacks are
+  frames, connections, duplicate and delete are undoable; asking, expanding, height fitting and
+  bringing a card forward are not recorded. Regenerate and edit are not either, and their confirmation still says so. The stacks are
   per open canvas and in memory only. The double confirmation for taking other cards along stays, with
   wording that says Ctrl+Z works; deleting only what was explicitly selected asks nothing.
 - **Asking about a selection is material, not history.** `card.sources` names the cards, and
@@ -429,8 +430,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   pointer from there until the next click (`handleSizingPress` takes that press before a card's own
   handlers), and the draft continues that card wherever it stands; no travel gives the default size.
 - **A draft resizes from the corner away from its parent** (`draftGrowth`, `resizeDraftRect`), by
-  drag or Alt+arrows. Growth stops at what stands in the way, since a draft has nothing to push and
-  no card has moved yet. `estimateWords` follows, so this is how the answer's length is chosen.
+  drag or Alt+arrows, and may grow over other cards. `estimateWords` follows, so this is how the answer's length is chosen.
 - **Far out, a card is its title.** Below `FAR_ZOOM` the surface gets `data-far` at rest, and
   `.canvas-card-lod` covers the card with its title scaled against the zoom. The header and body are
   `visibility: hidden`, never `display: none`, because a card finishing out there still measures its
@@ -438,7 +438,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   line longer under the scrollbar it had, and so keep the scrollbar.
 - **Collapsing goes through `resizeCard`** (`setCardCollapsed`), so what is joined below follows.
   `collapsedFrom` is the height to return to, and anything sizing from a card (`openCardSize`) must use
-  that, not `rect.h`. Inset cards on a collapsed host are not rendered (`hiddenInsetIds`). Regenerate
+  that, not `rect.h`. Regenerate
   reopens first, as the rectangle decides the length.
 - **The plane moves outside React.** Wheel zoom, wheel pan, drag pan and arrow keys go through
   `createViewportMotion`: frames ease with `chaseViewport` and are painted directly, with the layer
@@ -453,19 +453,33 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   user message at request time only, so turns never store it, and the note overrides the system
   prompt's concision and expand's four-sentence limit.
 - **A drag moves what was chosen; touching cards are joined when resizing or with Shift.** A plain drag
-  or nudge moves the selection and anything inset on it (`detachedCardIds`). Shift+drag moves everything
+  or nudge moves only the selection. Shift+drag moves everything
   joined by a shared side (`movingCardIds`), and align, tidy and duplicate still treat joined cards as one
   block. Since Shift also adds to a selection, a Shift press only toggles once it is let go without
   travelling (`shiftPress`). Resizing (`resizeCard`) carries the cards beyond the moved edge both
   ways, plus anything joined only through them (`edgeFollowers`); a card also joined by another route
-  keeps its place. Growing pushes whatever else is in the way; shrinking stops where a follower can come
-  back no further (`roomBehind`), so a gesture is limited rather than refused.
+  keeps its place. Joined cards never land on each other: a resize pushes one it reaches, and shrinking
+  stops where a follower can come back no further. Anything not joined stays where it is, so the card
+  may end up over it.
+- **Cards may overlap wherever the user puts them; nothing automatic covers one.** Drawing, dragging,
+  nudging, resizing, arranging and undo never refuse a landing. Placement nobody aimed still looks for
+  open space (`adjacentSlot`, `rectClearOf`), and a change of size nobody aimed (answer fitting, reopening
+  a collapsed card) goes through `resizeCardKeepingClear`, which treats every card as a manual resize
+  treats joined ones, leaving pairs that already overlapped alone. A drawn rectangle overlapping a card without sharing a side starts a new session.
+- **The pile is `layout.stack`, not the order of `layout.cards`.** That order means age (newest
+  continuation, the card Enter continues) and sets the DOM order, and moving a node would lose its
+  scroll, focus and text selection, so cards never reorder: `cardStackRanks` turns the stack into an
+  inline `z-index`. Cards the stack does not name sit above those it does, so a new card needs no
+  bookkeeping. A press (`raisePressedCard`), a
+  selection or a move calls `raiseCards`, which does nothing unless something actually covers the card,
+  so a plain click saves nothing. Hit tests use `cardAtPoint`, which reads the stack. Anything meant to
+  sit above every card uses a z-index from 100000 (see `canvas.css`); a seam under a third card is left out.
 - **A finished answer then fits its card's height, never its width.** `useCanvas` marks a card when
   its answer completes normally (not stopped, not failed), and `CanvasBoard` measures it on screen
   (`measureCardHeight` reads the scroll height of a body squeezed to nothing, so margins and tall
   formulas that escape the text's box are counted) and applies `fitCardHeight`, so an answer that finished in another view fits on return. It resizes
   as `resizeCard` does. A body still scrolls when the card
-  cannot change: an inset card capped by its host (refitted when dragged out), or a card that
+  cannot change: a card that
   cannot shrink because what hangs below cannot follow.
 - **Regenerate and Retry are one action sized by the card's current rectangle** (`regenerateCard`).
   Like chat it drops what came after: every card in `cascadeCardIds`. Anything that takes other cards
@@ -475,9 +489,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   continues one only (`continuationCandidates`, newest first) and sends only that history; the
   drawing highlights it (`is-continued`) and the draft's "Continues" picker can switch to another
   candidate or to a new session. Alt+drag pulls a card off its parent and neighbours, bringing the descendants attached
-  to it (`pulledOutCardIds`; one reached by a link stays) and leaving its session history (`parentId`) intact; anything standing on the plane may not overlap, and a
-  refused drop turns everything that would have moved red (`refusedIds`) and springs back through the
-  cards' own transform transition.
+  to it (`pulledOutCardIds`; one reached by a link stays) and leaving its session history (`parentId`) intact.
 - **The draft is the canvas's composer, and the viewport follows it like a pinned chat.** Sending
   closes it; the next one opens on request (Enter continues the card just sent, or a card's `+`), kept
   against its parent through `Draft.side` as the card grows or moves; it cannot send while the answer
@@ -507,11 +519,11 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   so the card, frame, link, text and plane menus need no knowledge of this. The pointer is captured only
   once the press becomes a drag, since capture would retarget the menu.
 - **Canvas expansions are `ExpansionNode`s shown as cards.** `useExpansionContextMenu` chooses the
-  term, then `CanvasView` holds it as `Placing` until a rectangle is drawn or clicked. Inside the
-  host the card is `inset`; dragged clear (`resolveMove`) it stands alone and `CanvasLinks` draws
-  the link, under the cards and faintly over them so it never strikes through text. Offsets are
+  term, then `CanvasView` holds it as `Placing` until a rectangle is drawn or clicked. The term stays in
+  `ExpansionNode`; the card is a card like any other, wherever it is drawn or dropped, even over its
+  host, and `CanvasLinks` draws the link from the term, under the cards and faintly over them so it never strikes through text. Offsets are
   measured relative to the scaled `.canvas-card-surface`, which stays correct mid-animation.
-  `folded` has no meaning on a canvas. A wrapped term's link starts at the middle of its longest line
+  `folded` has no meaning on a canvas. Nothing depends on a card lying inside another: `normalizeCanvasLayout` drops the `inset` flag older canvases stored. A wrapped term's link starts at the middle of its longest line
   (`termPoint`), since the middle of its bounding box can be empty space.
 - **The map follows the viewport without rendering.** `paintViewport` calls `CanvasMinimap.paint`, which
   sets the SVG `viewBox` and view rectangle directly. The `viewBox` is held still during a drag on the

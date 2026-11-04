@@ -7,6 +7,7 @@ import type {
 } from '../../src/shared/canvas'
 import {
   adjacentSlot,
+  cardStackRanks,
   continueHandleBlocked,
   canvasContinuations,
   cascadeCardIds,
@@ -26,7 +27,9 @@ import {
   rectAgainst,
   rectsOverlap,
   resizeCard,
+  resizeCardKeepingClear,
   resizeFollowerIds,
+  raisedStack,
   resolveMove,
   rectClearBelow,
   rectClearOf,
@@ -69,10 +72,9 @@ function expansion(
   expansionId: number,
   turnId: number,
   hostId: string,
-  inset: boolean,
   at: CanvasRect = rect(0, 0, 50, 50)
 ): CanvasExpansionCard {
-  return { kind: 'expansion', id, rect: at, turnId, expansionId, hostId, inset }
+  return { kind: 'expansion', id, rect: at, turnId, expansionId, hostId }
 }
 
 function turn(
@@ -210,23 +212,20 @@ describe('words that fit', () => {
 describe('sessions', () => {
   const root = message('a', 1, rect(0, 0))
   const next = message('b', 3, rect(100, 0), 'a')
-  const inset = expansion('e', 7, 2, 'a', true, rect(10, 10, 40, 40))
-  const free = expansion('f', 8, 2, 'a', false, rect(500, 500))
+  const over = expansion('e', 7, 2, 'a', rect(10, 10, 40, 40))
+  const free = expansion('f', 8, 2, 'a', rect(500, 500))
   const fromFree = message('c', 5, rect(600, 500), 'f')
-  const cards: CanvasCard[] = [root, next, inset, free, fromFree]
+  const cards: CanvasCard[] = [root, next, over, free, fromFree]
 
-  it('continues the newest card sharing a side, and never an inset one', () => {
+  it('continues the newest card sharing a side, whatever it lies over', () => {
     expect(continuationParent(rect(200, 0), cards)?.id).toBe('b')
-    expect(continuationParent(rect(0, 100), [root, inset])?.id).toBe('a')
-    expect(continuationParent(rect(-40, 10, 50, 40), [inset])).toBeUndefined()
+    expect(continuationParent(rect(0, 100), [root, over])?.id).toBe('a')
+    expect(continuationParent(rect(-40, 10, 50, 40), [over])?.id).toBe('e')
     expect(continuationParent(rect(900, 900), cards)).toBeUndefined()
   })
 
-  it('moves the whole session and what sits on it, but not outward expansions', () => {
-    expect(movingCardIds(cards, 'b')).toEqual(new Set(['a', 'b', 'e']))
-  })
-
-  it('moves an inset expansion alone', () => {
+  it('moves the whole session, but not expansions that only lie over it', () => {
+    expect(movingCardIds(cards, 'b')).toEqual(new Set(['a', 'b']))
     expect(movingCardIds(cards, 'e')).toEqual(new Set(['e']))
   })
 
@@ -267,44 +266,23 @@ describe("a card's + handle", () => {
 describe('dropping a dragged card', () => {
   const host = message('a', 1, rect(0, 0, 400, 400))
   const neighbour = message('b', 3, rect(600, 0, 200, 200))
-  const inset = expansion('e', 7, 2, 'a', true, rect(10, 10, 100, 100))
-  const cards: CanvasCard[] = [host, neighbour, inset]
+  const free = expansion('e', 7, 2, 'a', rect(10, 10, 100, 100))
+  const cards: CanvasCard[] = [host, neighbour, free]
   const alone = new Set(['e'])
 
-  it('stays inset while the expansion fits inside its host', () => {
-    expect(resolveMove(cards, 'e', alone, 50, 50)).toEqual({
-      ok: true,
-      updates: [{ id: 'e', rect: rect(60, 60, 100, 100), inset: true }]
-    })
+  it('lands where it was dropped: on its host, across an edge or on another card', () => {
+    for (const dx of [50, 350, 650]) {
+      expect(resolveMove(cards, alone, dx, 0)).toEqual([
+        { id: 'e', rect: rect(10 + dx, 10, 100, 100) }
+      ])
+    }
   })
 
-  it('becomes a separate card once it clears the host', () => {
-    expect(resolveMove(cards, 'e', alone, 400, 0)).toEqual({
-      ok: true,
-      updates: [{ id: 'e', rect: rect(410, 10, 100, 100), inset: false }]
-    })
-  })
-
-  it('refuses a drop across the edge of the host or onto another card', () => {
-    expect(resolveMove(cards, 'e', alone, 350, 0).ok).toBe(false)
-    expect(resolveMove(cards, 'e', alone, 650, 0).ok).toBe(false)
-  })
-
-  it('goes back inset when dragged home', () => {
-    const free = expansion('f', 8, 2, 'a', false, rect(450, 0, 100, 100))
-    const result = resolveMove([host, free], 'f', new Set(['f']), -300, 50)
-    expect(result).toEqual({
-      ok: true,
-      updates: [{ id: 'f', rect: rect(150, 50, 100, 100), inset: true }]
-    })
-  })
-
-  it('moves a session as one and checks every card in it', () => {
+  it('moves a session as one, even onto another card', () => {
     const next = message('n', 5, rect(400, 0, 100, 100), 'a')
     const group = new Set(['a', 'n'])
     const session: CanvasCard[] = [host, next, neighbour]
-    expect(resolveMove(session, 'a', group, 0, 500).ok).toBe(true)
-    expect(resolveMove(session, 'a', group, 150, 0).ok).toBe(false)
+    expect(resolveMove(session, group, 150, 0).map((update) => update.rect.x)).toEqual([150, 550])
   })
 })
 
@@ -325,8 +303,8 @@ describe('session history', () => {
     message('a', 1, rect(0, 0)),
     message('b', 3, rect(100, 0), 'a'),
     message('c', 5, rect(0, 100), 'a'),
-    expansion('e', 8, 2, 'a', false),
-    expansion('n', 9, 2, 'e', false),
+    expansion('e', 8, 2, 'a'),
+    expansion('n', 9, 2, 'e'),
     message('d', 10, rect(500, 0), 'n')
   ]
 
@@ -457,10 +435,10 @@ describe('load boundary', () => {
           good,
           message('lost', 50, rect(0, 0)),
           { ...good, id: 'bad-rect', rect: { x: 0, y: 0, w: -1, h: 5 } },
-          expansion('e', 7, 2, 'a', true),
-          expansion('no-node', 99, 2, 'a', true),
-          expansion('no-host', 7, 2, 'gone', false),
-          expansion('chained', 7, 2, 'no-host', false),
+          expansion('e', 7, 2, 'a'),
+          expansion('no-node', 99, 2, 'a'),
+          expansion('no-host', 7, 2, 'gone'),
+          expansion('chained', 7, 2, 'no-host'),
           { ...good, id: 'adrift', parentId: 'gone' }
         ]
       },
@@ -470,7 +448,7 @@ describe('load boundary', () => {
     expect((layout.cards[2] as CanvasMessageCard).parentId).toBeUndefined()
   })
 
-  it('checks containment for inset placement', () => {
+  it('checks containment', () => {
     expect(containsRect(rect(0, 0), rect(10, 10, 50, 50))).toBe(true)
     expect(containsRect(rect(0, 0), rect(60, 60, 50, 50))).toBe(false)
   })
@@ -485,15 +463,8 @@ describe('rectClearBelow', () => {
 })
 
 describe('fitCardHeight', () => {
-  const inset = (id: string, hostId: string, at: CanvasRect): CanvasExpansionCard => ({
-    kind: 'expansion',
-    id,
-    rect: at,
-    turnId: 1,
-    expansionId: 1,
-    hostId,
-    inset: true
-  })
+  const over = (id: string, hostId: string, at: CanvasRect): CanvasExpansionCard =>
+    expansion(id, 1, 1, hostId, at)
   const heightOf = (updates: ReturnType<typeof fitCardHeight>, id: string): number | undefined =>
     updates.find((update) => update.id === id)?.rect.h
   const topOf = (updates: ReturnType<typeof fitCardHeight>, id: string): number | undefined =>
@@ -537,27 +508,27 @@ describe('fitCardHeight', () => {
     expect(topOf(updates, 'far')).toBeUndefined()
   })
 
-  it('takes what sits on a pushed card and a side continuation with it', () => {
+  it('takes a side continuation with a pushed card, and pushes what it newly reaches', () => {
     const cards = [
       message('a', 1, rect(0, 0, 300, 200)),
       message('b', 3, rect(0, 200, 300, 200)),
-      inset('over-b', 'b', rect(20, 230, 100, 90)),
+      over('over-b', 'b', rect(20, 230, 100, 90)),
       message('beside-b', 5, rect(300, 200, 300, 200), 'b')
     ]
     const updates = fitCardHeight(cards, 'a', 260)
     expect(topOf(updates, 'b')).toBe(260)
-    expect(topOf(updates, 'over-b')).toBe(290)
+    expect(topOf(updates, 'over-b')).toBe(260)
     expect(topOf(updates, 'beside-b')).toBe(260)
   })
 
-  it('keeps an inset card inside its host', () => {
-    const cards = [message('a', 1, rect(0, 0, 300, 300)), inset('e', 'a', rect(20, 100, 100, 90))]
-    expect(fitCardHeight(cards, 'e', 900)).toEqual([{ id: 'e', rect: rect(20, 100, 100, 200) }])
+  it('fits an expansion lying over its host, leaving the host where it is', () => {
+    const cards = [message('a', 1, rect(0, 0, 300, 300)), over('e', 'a', rect(20, 100, 100, 90))]
+    expect(fitCardHeight(cards, 'e', 900)).toEqual([{ id: 'e', rect: rect(20, 100, 100, 900) }])
   })
 
-  it('never shrinks a host past what sits on its text', () => {
-    const cards = [message('a', 1, rect(0, 0, 300, 400)), inset('e', 'a', rect(20, 200, 100, 100))]
-    expect(heightOf(fitCardHeight(cards, 'a', 150), 'a')).toBe(300)
+  it('shrinks a host under an expansion lying over it', () => {
+    const cards = [message('a', 1, rect(0, 0, 300, 400)), over('e', 'a', rect(20, 200, 100, 100))]
+    expect(heightOf(fitCardHeight(cards, 'a', 150), 'a')).toBe(150)
   })
 
   it('stays tall when what hangs below cannot follow it up', () => {
@@ -567,6 +538,53 @@ describe('fitCardHeight', () => {
       message('blocker', 5, rect(300, 100, 300, 200))
     ]
     expect(fitCardHeight(cards, 'a', 150)).toEqual([])
+  })
+})
+
+describe('stacking cards that overlap', () => {
+  const a = message('a', 1, rect(0, 0, 200, 200))
+  const b = message('b', 3, rect(100, 100, 200, 200))
+  const far = message('far', 5, rect(900, 0, 200, 200))
+  const cards = [a, b, far]
+
+  it('puts newer cards on top until something is brought forward', () => {
+    const ranks = cardStackRanks(cards, [])
+    expect(ranks.get('b')).toBeGreaterThan(ranks.get('a') as number)
+  })
+
+  it('brings a covered card above what covers it, without reordering the cards', () => {
+    const stack = raisedStack(cards, [], ['a'])
+    const ranks = cardStackRanks(cards, stack)
+    expect(ranks.get('a')).toBeGreaterThan(ranks.get('b') as number)
+    expect(cards.map((card) => card.id)).toEqual(['a', 'b', 'far'])
+  })
+
+  it('changes nothing when nothing covers the card', () => {
+    const stack = ['a']
+    expect(raisedStack(cards, stack, ['b'])).toBe(stack)
+    expect(raisedStack(cards, stack, ['far'])).toBe(stack)
+    expect(raisedStack(cards, stack, ['missing'])).toBe(stack)
+  })
+
+  it('puts a new card above everything brought forward', () => {
+    const stack = raisedStack(cards, [], ['a'])
+    const fresh = message('new', 7, rect(50, 50, 100, 100))
+    const ranks = cardStackRanks([...cards, fresh], stack)
+    expect(ranks.get('new')).toBeGreaterThan(ranks.get('a') as number)
+  })
+
+  it('brings an expansion forward without its host', () => {
+    const over = expansion('e', 7, 2, 'a', rect(10, 10, 50, 50))
+    const all = [over, a]
+    const raised = cardStackRanks(all, raisedStack(all, [], ['e']))
+    expect(raised.get('e')).toBeGreaterThan(raised.get('a') as number)
+  })
+
+  it('trusts no stored stack', () => {
+    const note = { kind: 'note', id: 'a', rect: rect(0, 0), text: 'x' }
+    const layout = normalizeCanvasLayout({ cards: [note], stack: ['a', 'a', 'gone', 3] }, [])
+    expect(layout.stack).toEqual(['a'])
+    expect(normalizeCanvasLayout({}, []).stack).toEqual([])
   })
 })
 
@@ -640,10 +658,8 @@ describe('keeping adjacent cards joined', () => {
     expect(movedTo(both, 'right')?.x).toBe(340)
   })
 
-  it('takes what hangs only off a follower, and what sits on any of them', () => {
-    const over: CanvasExpansionCard = {
-      ...expansion('over', 9, 2, 'b', true, rect(320, 20, 50, 50))
-    }
+  it('takes what hangs only off a follower, but not what merely lies over one', () => {
+    const over = expansion('over', 9, 2, 'b', rect(320, 20, 50, 50))
     const cards = [
       message('a', 1, rect(0, 0, 300, 200)),
       message('b', 3, rect(300, 0, 300, 200)),
@@ -653,7 +669,7 @@ describe('keeping adjacent cards joined', () => {
     const wider = resizeCard(cards, 'a', { w: 340, h: 200 })
     expect(movedTo(wider, 'b')?.x).toBe(340)
     expect(movedTo(wider, 'under-b')?.x).toBe(340)
-    expect(movedTo(wider, 'over')?.x).toBe(360)
+    expect(movedTo(wider, 'over')).toBeUndefined()
   })
 
   it('leaves a card also joined by another route, which stays adjacent', () => {
@@ -669,27 +685,82 @@ describe('keeping adjacent cards joined', () => {
     expect(movedTo(wider, 'e')).toBeUndefined()
   })
 
-  it('pushes a card that was not touching, in a chain', () => {
+  it('lets a resize run over a card it was not joined to', () => {
     const cards = [
       message('a', 1, rect(0, 0, 300, 200)),
-      message('near', 3, rect(320, 0, 100, 200)),
-      message('next', 5, rect(420, 0, 100, 200)),
-      message('far', 7, rect(320, 500, 100, 100))
+      message('near', 3, rect(320, 0, 100, 200))
     ]
     const wider = resizeCard(cards, 'a', { w: 400, h: 200 })
-    expect(movedTo(wider, 'near')?.x).toBe(400)
-    expect(movedTo(wider, 'next')?.x).toBe(500)
-    expect(movedTo(wider, 'far')).toBeUndefined()
+    expect(movedTo(wider, 'a')?.w).toBe(400)
+    expect(movedTo(wider, 'near')).toBeUndefined()
   })
 
-  it('stops shrinking where a follower can come back no further', () => {
+  it('pushes a card it reaches when that card is joined to it another way', () => {
+    const cards = [
+      message('a', 1, rect(0, 0, 100, 100)),
+      message('under', 3, rect(0, 100, 400, 100)),
+      message('on-under', 5, rect(200, 0, 100, 100))
+    ]
+    const wider = resizeCard(cards, 'a', { w: 250, h: 100 })
+    expect(movedTo(wider, 'a')?.w).toBe(250)
+    expect(movedTo(wider, 'on-under')?.x).toBe(250)
+    expect(movedTo(wider, 'under')).toBeUndefined()
+  })
+
+  it('stops shrinking where joined cards would land on each other', () => {
     const cards = [
       message('a', 1, rect(0, 0, 300, 100)),
       message('tall', 3, rect(300, 0, 300, 300)),
       message('blocker', 5, rect(0, 100, 300, 100))
     ]
     expect(movedTo(resizeCard(cards, 'a', { w: 250, h: 100 }), 'a')?.w).toBe(300)
-    expect(movedTo(resizeCard(cards, 'a', { w: 250, h: 100 }), 'tall')).toBeUndefined()
+  })
+
+  it('lets followers come back over a card not joined to them', () => {
+    const cards = [
+      message('a', 1, rect(0, 0, 300, 100)),
+      message('tall', 3, rect(300, 0, 300, 300)),
+      message('apart', 5, rect(0, 150, 280, 100))
+    ]
+    const narrower = resizeCard(cards, 'a', { w: 250, h: 100 })
+    expect(movedTo(narrower, 'a')?.w).toBe(250)
+    expect(movedTo(narrower, 'tall')?.x).toBe(250)
+    expect(movedTo(narrower, 'apart')).toBeUndefined()
+  })
+
+  it('pushes a card that was not touching, in a chain, when keeping clear', () => {
+    const cards = [
+      message('a', 1, rect(0, 0, 300, 200)),
+      message('near', 3, rect(320, 0, 100, 200)),
+      message('next', 5, rect(420, 0, 100, 200)),
+      message('far', 7, rect(320, 500, 100, 100))
+    ]
+    const wider = resizeCardKeepingClear(cards, 'a', { w: 400, h: 200 })
+    expect(movedTo(wider, 'near')?.x).toBe(400)
+    expect(movedTo(wider, 'next')?.x).toBe(500)
+    expect(movedTo(wider, 'far')).toBeUndefined()
+  })
+
+  it('leaves a card it already overlapped where it is, when keeping clear', () => {
+    const cards = [
+      message('a', 1, rect(0, 0, 300, 200)),
+      message('over', 3, rect(100, 100, 300, 300)),
+      message('below', 5, rect(0, 450, 300, 100))
+    ]
+    const taller = resizeCardKeepingClear(cards, 'a', { w: 300, h: 500 })
+    expect(movedTo(taller, 'over')).toBeUndefined()
+    expect(movedTo(taller, 'below')?.y).toBe(500)
+  })
+
+  it('stops shrinking where a follower can come back no further, when keeping clear', () => {
+    const cards = [
+      message('a', 1, rect(0, 0, 300, 100)),
+      message('tall', 3, rect(300, 0, 300, 300)),
+      message('blocker', 5, rect(0, 100, 300, 100))
+    ]
+    const narrower = resizeCardKeepingClear(cards, 'a', { w: 250, h: 100 })
+    expect(movedTo(narrower, 'a')?.w).toBe(300)
+    expect(movedTo(narrower, 'tall')).toBeUndefined()
   })
 
   it('shrinks an L-shaped corner as far as it can, without overlap or a gap', () => {
@@ -698,7 +769,7 @@ describe('keeping adjacent cards joined', () => {
       message('right', 3, rect(440, 0, 380, 300)),
       message('below', 5, rect(0, 340, 380, 300))
     ]
-    const updates = resizeCard(cards, 'a', { w: 320, h: 250 })
+    const updates = resizeCardKeepingClear(cards, 'a', { w: 320, h: 250 })
     const a = movedTo(updates, 'a') as CanvasRect
     const right = movedTo(updates, 'right') as CanvasRect
     const below = movedTo(updates, 'below') as CanvasRect
@@ -706,16 +777,6 @@ describe('keeping adjacent cards joined', () => {
     expect(right.x).toBe(320)
     expect(below.y).toBe(300)
     expect(rectsOverlap(right, below)).toBe(false)
-  })
-
-  it('moves only an inset card when one is resized', () => {
-    const cards = [
-      message('a', 1, rect(0, 0, 300, 300)),
-      expansion('e', 7, 2, 'a', true, rect(10, 10, 100, 100))
-    ]
-    expect(resizeCard(cards, 'e', { w: 120, h: 100 })).toEqual([
-      { id: 'e', rect: rect(10, 10, 120, 100) }
-    ])
   })
 
   it('names the followers, so a resize does not snap to them', () => {
@@ -736,14 +797,6 @@ describe('keeping adjacent cards joined', () => {
     expect(fitCardHeight(cards, 'a', 200).find((update) => update.id === 'unrelated')?.rect.y).toBe(
       200
     )
-  })
-
-  it('does not call a free expansion inset when its host moves with it', () => {
-    const host = message('h', 1, rect(0, 0, 300, 300))
-    const free = expansion('f', 7, 2, 'h', false, rect(300, 0, 100, 100))
-    const result = resolveMove([host, free], 'f', new Set(['h', 'f']), -150, 0)
-    expect(result).toMatchObject({ ok: true })
-    if (result.ok) expect(result.updates.find((u) => u.id === 'f')?.inset).toBe(false)
   })
 })
 
@@ -781,7 +834,7 @@ describe('navigation', () => {
   const b = message('b', 3, rect(0, 100), 'a')
   const c = message('c', 5, rect(100, 0), 'a')
   const far = message('far', 7, rect(400, 600))
-  const e = expansion('e', 9, 2, 'b', false, rect(300, 120))
+  const e = expansion('e', 9, 2, 'b', rect(300, 120))
   const cards: CanvasCard[] = [a, b, c, far, e]
 
   it('goes to the nearest card in a direction, preferring a straight line', () => {
@@ -823,13 +876,12 @@ describe('navigation', () => {
 describe('canvasContinuations', () => {
   it('marks an expansion touching its host as a branch, and leaves a distant one its term link', () => {
     const host = message('a', 1, rect(0, 0))
-    const expansion = (id: string, at: CanvasRect, isInset = false): CanvasCard => ({
+    const expansion = (id: string, at: CanvasRect): CanvasCard => ({
       id,
       kind: 'expansion',
       hostId: 'a',
       turnId: 1,
       expansionId: 1,
-      inset: isInset,
       rect: at
     })
     const marks = canvasContinuations([
@@ -912,7 +964,7 @@ describe('canvasContinuations', () => {
   it('counts a touching expansion and its continuation as one mark each', () => {
     const marks = canvasContinuations([
       message('a', 1, rect(0, 0)),
-      expansion('e', 1, 2, 'a', false, rect(0, 100)),
+      expansion('e', 1, 2, 'a', rect(0, 100)),
       message('b', 3, rect(100, 100), 'e')
     ])
     expect(marks.map((mark) => [mark.kind, mark.id])).toEqual([
@@ -921,13 +973,13 @@ describe('canvasContinuations', () => {
     ])
   })
 
-  it('links from an inset parent, which has no boundary of its own on the plane', () => {
+  it('marks the boundary with an expansion lying over its own host', () => {
     const marks = canvasContinuations([
       message('a', 1, rect(0, 0)),
-      expansion('e', 1, 2, 'a', true, rect(10, 10, 90, 90)),
+      expansion('e', 1, 2, 'a', rect(10, 10, 90, 90)),
       message('b', 3, rect(100, 0), 'e')
     ])
-    expect(marks[0]).toMatchObject({ kind: 'link', id: 'b' })
+    expect(marks.find((mark) => mark.id === 'b')).toMatchObject({ kind: 'seam' })
   })
 
   it('ignores a parent that no longer exists', () => {

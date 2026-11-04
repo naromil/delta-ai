@@ -479,10 +479,12 @@ user's own text, holding no turn). The layout also holds frames and connections.
 - **Chatting** needs no mouse: after sending, Enter opens the next draft under the new card, the
   viewport follows it like a pinned chat until the user moves the view, and the keyboard reaches every card
   (arrows, Enter, B for back, `?` for the full list). Links can be clicked to travel along them.
-- **Expanding** selects a term as usual, then asks for a rectangle. Drawn inside the message it is
-  `inset`; dragged clear of the message it becomes a separate card, linked from the term.
+- **Expanding** selects a term as usual, then asks for a rectangle. The answer is a card like any other,
+  linked from the term, wherever it is drawn or dropped.
 - **Finished answers** set the card's height, never its width (`fitCardHeight`): continuations below
-  follow and anything else in the way is pushed down.
+  follow and anything else it newly reaches is pushed down, so an answer never hides a neighbour.
+- **Overlap** is allowed for anything the user places: drawing, dragging, nudging, resizing and arranging.
+  Pressing or selecting a covered card brings it forward (`layout.stack`).
 - **Regenerate** uses the card's current rectangle and removes what depended on the old answer.
 - **Tools** are Select (the default), Hand, Answer, Note, Connect and Frame. Select picks with a click,
   Shift+click or a marquee from empty space; dragging moves just the selection, and Shift+drag brings everything touching it.
@@ -498,7 +500,7 @@ user's own text, holding no turn). The layout also holds frames and connections.
   branch. Dragging a card, note or `+` onto the composer adds one while the question is written, and its corner sets the answer's length. Dragging a `+` to open space places the next message there and sizes it.
 - **Undo** is a stack of patches, not snapshots (`canvas-history.ts`), so taking back a move cannot
   rewind an answer that is still streaming. Asking is not an undoable action. A patch whose turn has
-  moved on (it was regenerated) is refused and dropped, and one that would land on another card waits.
+  moved on (it was regenerated) is refused and dropped.
 - **Getting around**: a map, an outline with search, jumping back and forward (Alt+Left/Right), and
   far out (below 50%) each card shows just its title at a readable size.
 

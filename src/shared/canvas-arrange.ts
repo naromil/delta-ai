@@ -3,7 +3,7 @@
  *
  * The unit is a block: a selected card with what is joined to it, or a frame with what
  * it holds. Blocks move rigidly, so joined cards stay joined and nothing leaves a frame.
- * Nothing that stands on the plane may overlap, here as anywhere. Everything is pure.
+ * Arranging spaces out what it moves and may land it over what stays. Everything is pure.
  */
 import type {
   CanvasCard,
@@ -15,7 +15,7 @@ import type {
   CanvasNoteCard,
   CanvasRect
 } from './canvas'
-import { isTopLevel, rectClearOf, rectsOverlap, topLevelRects } from './canvas'
+import { cardRects, rectClearOf, rectsOverlap } from './canvas'
 import type { CanvasMoving } from './canvas-selection'
 import { boundsOf, movingBounds, movingForSelection } from './canvas-selection'
 import type { Turn } from './conversation'
@@ -86,7 +86,7 @@ export function selectionBlockCount(items: CanvasItems, selected: ReadonlySet<st
   return blocksFor(items, selected).length
 }
 
-/** Turns where each block lands into moves, refusing any that overlap what stands there. */
+/** Turns where each block lands into moves. */
 function settleBlocks(items: CanvasItems, placed: PlacedBlock[]): CanvasArrangeResult {
   const cardDelta = new Map<string, { dx: number; dy: number }>()
   const frameDelta = new Map<string, { dx: number; dy: number }>()
@@ -98,17 +98,6 @@ function settleBlocks(items: CanvasItems, placed: PlacedBlock[]): CanvasArrangeR
   const shifted = (id: string, rect: CanvasRect, deltas: typeof cardDelta): CanvasRect => {
     const delta = deltas.get(id)
     return delta ? { ...rect, x: rect.x + delta.dx, y: rect.y + delta.dy } : rect
-  }
-  const standing = items.cards
-    .filter(isTopLevel)
-    .map((card) => ({ id: card.id, rect: shifted(card.id, card.rect, cardDelta) }))
-  for (const [i, a] of standing.entries()) {
-    if (!cardDelta.has(a.id)) continue
-    for (const [j, b] of standing.entries()) {
-      if (i !== j && !(cardDelta.has(b.id) && j < i) && rectsOverlap(a.rect, b.rect)) {
-        return { ok: false }
-      }
-    }
   }
   return {
     ok: true,
@@ -198,10 +187,7 @@ export function tidySelection(
 ): CanvasArrangeResult {
   const ids =
     selected ??
-    new Set([
-      ...items.cards.filter(isTopLevel).map((card) => card.id),
-      ...items.frames.map((frame) => frame.id)
-    ])
+    new Set([...items.cards.map((card) => card.id), ...items.frames.map((frame) => frame.id)])
   const blocks = blocksFor(items, ids)
   const bounds = boundsOf(blocks.map((block) => block.rect))
   if (blocks.length === 0 || !bounds) return { ok: false }
@@ -235,7 +221,7 @@ export function tidySelection(
   ) as CanvasRect
   const landing = rectClearOf(
     { ...packedBounds, x: bounds.x, y: bounds.y },
-    topLevelRects(items.cards, moving.cards),
+    cardRects(items.cards, moving.cards),
     TIDY_GAP
   )
   return settleBlocks(
@@ -287,7 +273,7 @@ export function duplicateSelection(
 
   const landing = rectClearOf(
     { ...bounds, x: bounds.x + bounds.w + TIDY_GAP },
-    topLevelRects(layout.cards),
+    cardRects(layout.cards),
     ARRANGE_GAP
   )
   const shift = (rect: CanvasRect): CanvasRect => ({

@@ -19,11 +19,11 @@ import {
   MIN_MESSAGE_SIZE,
   MIN_NOTE_SIZE,
   adjacentSlot,
+  cardRects,
+  cardStackRanks,
   cascadeCardIds,
   clampPointInside,
-  clampRectInside,
   containsPoint,
-  containsRect,
   continuationCandidates,
   continueHandleBlocked,
   draftGrowth,
@@ -31,13 +31,10 @@ import {
   fitViewport,
   fitsOnScreen,
   gridSpacing,
-  hiddenInsetIds,
-  isTopLevel,
   nearestCardInDirection,
   openCardSize,
   rectAgainst,
   rectCenteredAt,
-  rectClearBelow,
   rectClearOf,
   rectFromPoints,
   rectsOverlap,
@@ -52,7 +49,6 @@ import {
   snapEdges,
   snapMove,
   sourceCardId,
-  topLevelRects,
   unionRect,
   visibleWorldRect,
   wheelZoomFactor,
@@ -215,7 +211,6 @@ interface DrawOutcome {
   guidesY: number[]
   /** Why this rectangle cannot be used; null when it can. */
   refusal: string | null
-  inset: boolean
 }
 
 const SNAP_SCREEN_PX = 10
@@ -225,16 +220,9 @@ const NOTICE_MS = 4000
 const EXPORT_SAVED_MS = 2000
 
 const REFUSE_TOO_SMALL = 'That rectangle is too small to hold an answer. Draw a larger one.'
-const REFUSE_OVERLAP =
-  'Rectangles cannot overlap. Draw in open space, or against a side to continue a session.'
-const REFUSE_IN_MESSAGE =
-  'To draw inside a message, select some text in it and choose Expand first.'
-const REFUSE_MOVE = 'There is something in the way, so the card went back.'
 const REFUSE_ARRANGE = 'Other cards are in the way of that arrangement.'
 const NO_CARD_TO_CONNECT = 'Start a connection on a card.'
 const CONNECT_ANOTHER = 'Drag to a different card to connect them.'
-const NO_ROOM = 'There is no room on that side. Drag the + to place the next message.'
-const NO_CONTINUE_INSET = 'Drag this expansion clear of its message to continue it.'
 const NO_CONTINUE_FAILED = 'Retry this answer before continuing it.'
 const WAITING_PARENT = 'Waiting for the answer it continues…'
 const FAILED_PARENT = 'The answer it continues failed. Retry it first.'
@@ -280,7 +268,8 @@ const ARROW_SIDES: Readonly<Record<string, CanvasSide>> = {
 const WHEEL_LATCH_MS = 160
 
 function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
-  const { cards, frames, links, viewport, turns, setViewport, moveItems } = canvas
+  const { cards, frames, links, stack, viewport, turns, setViewport, moveItems, raiseCards } =
+    canvas
   const surfaceRef = useRef<HTMLDivElement>(null)
   const [tool, setTool] = useState<CanvasTool>(cards.length === 0 ? 'answer' : 'select')
   const [gesture, setGesture] = useState<Gesture | null>(null)
@@ -446,6 +435,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
   /* ---- Expansions: choose a term, then draw its size ---- */
 
   const cardsRef = useRef(cards)
+  const stackRef = useRef(stack)
   const framesRef = useRef(frames)
   const linksRef = useRef(links)
   const selectedRef = useRef(selectedIds)
@@ -453,8 +443,12 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     cardsRef.current = cards
     framesRef.current = frames
     linksRef.current = links
+    stackRef.current = stack
     selectedRef.current = selectedIds
-  }, [cards, frames, links, selectedIds])
+  }, [cards, frames, links, selectedIds, stack])
+
+  // However a card came to be chosen, by key, outline or marquee, it should be visible.
+  useEffect(() => raiseCards(selectedIds), [raiseCards, selectedIds])
 
   const select = useCallback((ids: Iterable<string>): void => {
     const next = new Set(ids)
@@ -503,10 +497,9 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
   const drawnRect = useCallback(
     (what: DrawKind, start: CanvasPoint, end: CanvasPoint): DrawOutcome => {
       const threshold = SNAP_SCREEN_PX / viewport.zoom
-      const others = topLevelRects(cards)
+      const others = cardRects(cards)
       const raw = rectFromPoints(start, end)
       const isClick = raw.w < CLICK_DRAG_LIMIT && raw.h < CLICK_DRAG_LIMIT
-      const host = placing ? cards.find((card) => card.id === placing.hostId) : undefined
 
       if (what === 'frame') {
         const snapped = snapEdges(
@@ -515,22 +508,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
           threshold
         )
         const tooSmall = snapped.rect.w < MIN_FRAME_SIZE.w || snapped.rect.h < MIN_FRAME_SIZE.h
-        return { ...snapped, refusal: tooSmall ? REFUSE_TOO_SMALL : null, inset: false }
-      }
-
-      if (placing && host && containsPoint(host.rect, start)) {
-        const rect = clampRectInside(
-          isClick ? rectCenteredAt(end, DEFAULT_EXPANSION_SIZE) : raw,
-          host.rect
-        )
-        const tooSmall = rect.w < MIN_EXPANSION_SIZE.w || rect.h < MIN_EXPANSION_SIZE.h
-        return {
-          rect,
-          guidesX: [],
-          guidesY: [],
-          refusal: tooSmall ? REFUSE_TOO_SMALL : null,
-          inset: containsRect(host.rect, rect)
-        }
+        return { ...snapped, refusal: tooSmall ? REFUSE_TOO_SMALL : null }
       }
 
       const min = placing ? MIN_EXPANSION_SIZE : what === 'note' ? MIN_NOTE_SIZE : MIN_MESSAGE_SIZE
@@ -544,17 +522,8 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
         others,
         threshold
       )
-      const overlaps = others.some((rect) => rectsOverlap(snapped.rect, rect))
-      const startedInCard = others.some((rect) => containsPoint(rect, start))
-      const refusal =
-        snapped.rect.w < min.w || snapped.rect.h < min.h
-          ? REFUSE_TOO_SMALL
-          : overlaps
-            ? !placing && what === 'answer' && startedInCard
-              ? REFUSE_IN_MESSAGE
-              : REFUSE_OVERLAP
-            : null
-      return { ...snapped, refusal, inset: false }
+      const tooSmall = snapped.rect.w < min.w || snapped.rect.h < min.h
+      return { ...snapped, refusal: tooSmall ? REFUSE_TOO_SMALL : null }
     },
     [cards, placing, viewport.zoom]
   )
@@ -581,8 +550,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       if (placing) {
         const result = canvas.expand(placing.turnId, placing.target, placing.prompt, {
           hostId: placing.hostId,
-          rect: outcome.rect,
-          inset: outcome.inset
+          rect: outcome.rect
         })
         if (!result.ok) showNotice('That selection is no longer available. Select it again.')
         setPlacing(null)
@@ -680,7 +648,15 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
    * While a dropped `+` is being sized, a press belongs to it whatever it lands on, so it is
    * taken before a card's own handlers. Any other button gives up.
    */
+  /** A press on a card that something covers brings it forward, whatever the press goes on to do. */
+  const raisePressedCard = (e: React.PointerEvent): void => {
+    if (tool !== 'select' || placing || spaceHeld || e.button === 1) return
+    const id = (e.target as Element).closest('[data-canvas-card]')?.getAttribute('data-canvas-card')
+    if (id) raiseCards([id])
+  }
+
   const handleSizingPress = (e: React.PointerEvent): void => {
+    raisePressedCard(e)
     if (gesture?.type !== 'draw' || !gesture.unheld) return
     if (e.button !== 0) {
       setGesture(null)
@@ -723,7 +699,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     }
     if (tool === 'connect') {
       const start = pointerInWorld(e)
-      const from = cardAtPoint(cardsRef.current, start)
+      const from = cardAtPoint(cardsRef.current, start, stackRef.current)
       if (!from) {
         showNotice(NO_CARD_TO_CONNECT)
         return
@@ -790,7 +766,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     if (gesture) {
       moveGesture(e)
     } else if (tool === 'connect') {
-      setHoverCardId(cardAtPoint(cardsRef.current, pointerInWorld(e))?.id ?? null)
+      setHoverCardId(cardAtPoint(cardsRef.current, pointerInWorld(e), stackRef.current)?.id ?? null)
     }
   }
 
@@ -835,7 +811,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     const travelY = gesture.pointer.y - gesture.start.y
     if (Math.hypot(travelX, travelY) * viewport.zoom < DRAG_START_PX) return still
     const moved = { ...subject, x: subject.x + travelX, y: subject.y + travelY }
-    const snap = snapMove(moved, topLevelRects(cards, gesture.ids), SNAP_SCREEN_PX / viewport.zoom)
+    const snap = snapMove(moved, cardRects(cards, gesture.ids), SNAP_SCREEN_PX / viewport.zoom)
     return {
       dx: snap.rect.x - subject.x,
       dy: snap.rect.y - subject.y,
@@ -859,17 +835,9 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       w: Math.max(card.rect.w + gesture.pointer.x - gesture.start.x, min.w),
       h: Math.max(card.rect.h + gesture.pointer.y - gesture.start.y, min.h)
     }
-    if (card.kind === 'expansion' && card.inset) {
-      const host = cards.find((item) => item.id === card.hostId)
-      return host ? clampRectInside(rect, host.rect) : rect
-    }
     // A card that follows the moving edge is not a target: it would hold the edge in place.
     const carried = new Set([card.id, ...resizeFollowerIds(cards, card.id)])
-    const snapped = snapEdges(
-      rect,
-      topLevelRects(cards, carried),
-      SNAP_SCREEN_PX / viewport.zoom
-    ).rect
+    const snapped = snapEdges(rect, cardRects(cards, carried), SNAP_SCREEN_PX / viewport.zoom).rect
     return { ...rect, w: snapped.x + snapped.w - rect.x, h: snapped.y + snapped.h - rect.y }
   }, [cards, gesture, viewport.zoom])
 
@@ -883,7 +851,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
         dw: grow.x * (gesture.pointer.x - gesture.start.x),
         dh: grow.y * (gesture.pointer.y - gesture.start.y)
       },
-      topLevelRects(cards),
+      cardRects(cards),
       SNAP_SCREEN_PX / viewport.zoom
     )
   }, [cards, gesture, viewport.zoom])
@@ -911,9 +879,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
 
   const dragResult = useMemo(
     () =>
-      gesture?.type === 'drag'
-        ? resolveMove(cards, gesture.id, gesture.ids, dragDelta.dx, dragDelta.dy)
-        : null,
+      gesture?.type === 'drag' ? resolveMove(cards, gesture.ids, dragDelta.dx, dragDelta.dy) : null,
     [cards, dragDelta, gesture]
   )
 
@@ -924,7 +890,6 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
         : null,
     [cards, gesture, resizedRect]
   )
-  const resizeBlocked = gesture?.type === 'resize' && resizedRect !== null && !resizeUpdates
 
   const focusCardElement = (id: string): void => {
     surfaceRef.current
@@ -933,7 +898,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
   }
 
   const finishConnect = (from: string, at: CanvasPoint): void => {
-    const target = cardAtPoint(cards, at)
+    const target = cardAtPoint(cards, at, stack)
     if (!target || target.id === from) {
       showNotice(CONNECT_ANOTHER)
       return
@@ -974,13 +939,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
         chosen = new Set([id])
         if (!shiftPress) select(chosen)
       }
-      let moving = movingForSelection(items, chosen, carrying)
-      // An inset card chosen among others stays put, but one being dragged means itself.
-      if (framesRef.current.every((frame) => frame.id !== id) && !moving.cards.has(id)) {
-        chosen = new Set([id])
-        if (!shiftPress) select(chosen)
-        moving = movingForSelection(items, chosen, carrying)
-      }
+      const moving = movingForSelection(items, chosen, carrying)
       claimPress(e)
       currentIdRef.current = id
       setGesture({
@@ -1461,10 +1420,6 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       const all = cardsRef.current
       const card = all.find((item) => item.id === id)
       if (!card) return
-      if (hiddenInsetIds(all).has(id)) {
-        const host = card.kind === 'expansion' ? card.hostId : undefined
-        if (host !== undefined) setCollapsed(new Set([host]), false)
-      }
       rememberView()
       if (viewportRef.current.zoom < FAR_ZOOM) {
         // Too far out to read it, so the jump also comes in close enough.
@@ -1484,7 +1439,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       }
       focusCard(id, true)
     },
-    [flash, focusCard, glideTo, openArea, rememberView, select, setCollapsed, unfollow, zoomToRects]
+    [flash, focusCard, glideTo, openArea, rememberView, select, unfollow, zoomToRects]
   )
 
   /* ---- The composer: drafts, and the conversation they follow ---- */
@@ -1501,18 +1456,11 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     (id: string, sides: CanvasSide[]): void => {
       const card = cardsRef.current.find((item) => item.id === id)
       if (!card) return
-      if (!isTopLevel(card)) {
-        showNotice(NO_CONTINUE_INSET)
-        return
-      }
       if (card.kind === 'note') {
         // A note holds no session to continue, so the next card is about it instead.
         const size = DEFAULT_MESSAGE_SIZE
-        const side = sides.find((item) => adjacentSlot(card, item, cardsRef.current, size))
-        if (side === undefined) {
-          showNotice(NO_ROOM)
-          return
-        }
+        const side =
+          sides.find((item) => adjacentSlot(card, item, cardsRef.current, size)) ?? sides[0]
         openDraft({ rect: rectAgainst(card.rect, side, size), sessions: [], sourceIds: [id] })
         return
       }
@@ -1521,11 +1469,8 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
         return
       }
       const full = openCardSize(card)
-      const side = sides.find((item) => adjacentSlot(card, item, cardsRef.current, full) !== null)
-      if (side === undefined) {
-        showNotice(NO_ROOM)
-        return
-      }
+      const side =
+        sides.find((item) => adjacentSlot(card, item, cardsRef.current, full) !== null) ?? sides[0]
       currentIdRef.current = id
       openDraft({
         rect: { ...card.rect, ...openCardSize(card) },
@@ -1545,7 +1490,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     const all = cardsRef.current
     const chosen = selectedCards({ cards: all, frames: framesRef.current }, selectedRef.current)
     const only = chosen.length === 1 ? chosen[0] : undefined
-    if (only && only.kind !== 'note' && isTopLevel(only)) {
+    if (only && only.kind !== 'note') {
       continueCard(only.id, ['bottom', 'right'])
       return
     }
@@ -1553,7 +1498,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     if (!bounds) return
     const rect = rectClearOf(
       { x: bounds.x + bounds.w + NEW_SESSION_GAP, y: bounds.y, ...DEFAULT_MESSAGE_SIZE },
-      topLevelRects(all),
+      cardRects(all),
       NEW_SESSION_GAP / 2
     )
     openDraft({ rect, sessions: [], sourceIds: chosen.map((card) => card.id) })
@@ -1564,7 +1509,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     (point: CanvasPoint): void => {
       const rect = rectClearOf(
         rectCenteredAt(point, DEFAULT_MESSAGE_SIZE),
-        topLevelRects(cardsRef.current),
+        cardRects(cardsRef.current),
         NEW_SESSION_GAP / 2
       )
       openDraft({ rect, sessions: [] })
@@ -1596,8 +1541,6 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       continueCard(extend.from, [extend.side])
     } else if (overDraft) {
       linkToDraft([extend.from])
-    } else if (cardAtPoint(cards, extend.pointer)) {
-      showNotice(REFUSE_OVERLAP)
     } else {
       setGesture({
         type: 'draw',
@@ -1652,24 +1595,16 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
         return
       }
       if (gesture.shiftPress && !selectedIds.has(gesture.id)) select([gesture.id])
-      if (!dragResult?.ok) {
-        showNotice(REFUSE_MOVE)
-        return
-      }
+      if (!dragResult) return
       const frameUpdates = frames
         .filter((frame) => gesture.frameIds.has(frame.id))
         .map((frame) => ({
           id: frame.id,
           rect: { ...frame.rect, x: frame.rect.x + dragDelta.dx, y: frame.rect.y + dragDelta.dy }
         }))
-      moveItems('Move', dragResult.updates, frameUpdates)
-      // Inside its host the answer may have been cut short; out here it has room.
-      const wasInset = cards.some((card) => card.id === gesture.id && !isTopLevel(card))
-      const isOut = dragResult.updates.some((item) => item.id === gesture.id && !item.inset)
-      if (wasInset && isOut) canvas.requestFit(gesture.id)
+      moveItems('Move', dragResult, frameUpdates)
     } else if (gesture.type === 'resize' && resizedRect) {
       if (resizeUpdates) moveItems('Resize', resizeUpdates)
-      else showNotice(REFUSE_MOVE)
     }
   }
 
@@ -1679,7 +1614,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     const center = screenToWorld(viewportRef.current, { x: size.width / 2, y: size.height / 2 })
     const rect = rectClearOf(
       rectCenteredAt(center, DEFAULT_MESSAGE_SIZE),
-      topLevelRects(cardsRef.current),
+      cardRects(cardsRef.current),
       NEW_SESSION_GAP
     )
     openDraft({ rect, sessions: [] })
@@ -1694,7 +1629,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
         : screenToWorld(viewportRef.current, { x: size.width / 2, y: size.height / 2 })
       const rect = rectClearOf(
         rectCenteredAt(center, DEFAULT_NOTE_SIZE),
-        topLevelRects(cardsRef.current),
+        cardRects(cardsRef.current),
         NEW_SESSION_GAP / 2
       )
       select([addNote(rect, text)])
@@ -1722,7 +1657,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     }
     const all = cardsRef.current
     const current =
-      all.find((card) => card.id === currentIdRef.current && isTopLevel(card)) ??
+      all.find((card) => card.id === currentIdRef.current) ??
       all.findLast((card) => card.kind === 'message')
     if (current) continueCard(current.id, ['bottom', 'right'])
     else newSession()
@@ -1769,11 +1704,8 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
   }, [zoomToRects])
 
   const selectEverything = useCallback((): void => {
-    const hidden = hiddenInsetIds(cardsRef.current)
     select([
-      ...cardsRef.current
-        .filter((card) => isTopLevel(card) && !hidden.has(card.id))
-        .map((card) => card.id),
+      ...cardsRef.current.map((card) => card.id),
       ...framesRef.current.map((frame) => frame.id)
     ])
   }, [select])
@@ -1796,15 +1728,9 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       const step = far ? NUDGE_LARGE : NUDGE
       const dx = side === 'left' ? -step : side === 'right' ? step : 0
       const dy = side === 'top' ? -step : side === 'bottom' ? step : 0
-      const first = [...chosen][0]
-      const result = resolveMove(all, first, moving.cards, dx, dy)
-      if (!result.ok) {
-        showNotice(REFUSE_MOVE)
-        return
-      }
       moveItems(
         'Nudge',
-        result.updates,
+        resolveMove(all, moving.cards, dx, dy),
         framesRef.current
           .filter((frame) => moving.frames.has(frame.id))
           .map((frame) => ({
@@ -1813,7 +1739,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
           }))
       )
     },
-    [moveItems, showNotice]
+    [moveItems]
   )
 
   /* ---- Keyboard ---- */
@@ -1823,12 +1749,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
       const side = ARROW_SIDES[e.key]
       if (side) {
         e.preventDefault()
-        const hidden = hiddenInsetIds(cardsRef.current)
-        const next = nearestCardInDirection(
-          cardsRef.current.filter((card) => !hidden.has(card.id)),
-          id,
-          side
-        )
+        const next = nearestCardInDirection(cardsRef.current, id, side)
         if (next) focusCard(next.id, false, e.shiftKey)
       } else if (e.key === 'Enter') {
         e.preventDefault()
@@ -1957,7 +1878,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
         noteHere: () => {
           const rect = rectClearOf(
             rectCenteredAt(at, DEFAULT_NOTE_SIZE),
-            topLevelRects(cards),
+            cardRects(cards),
             NEW_SESSION_GAP / 2
           )
           setNoteDraft({ key: ++draftKeyRef.current, rect })
@@ -2119,37 +2040,26 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
 
   /* ---- What is on screen ---- */
 
-  const shownCards = useMemo((): CanvasCard[] => {
-    const hidden = hiddenInsetIds(cards)
-    return hidden.size === 0 ? cards : cards.filter((card) => !hidden.has(card.id))
-  }, [cards])
+  const stackRanks = useMemo(() => cardStackRanks(cards, stack), [cards, stack])
 
   const displayed = useMemo((): CanvasCard[] => {
     if (gesture?.type === 'drag') {
       const { dx, dy } = dragDelta
-      const moved = shownCards.map((card) =>
+      return cards.map((card) =>
         gesture.ids.has(card.id)
           ? { ...card, rect: { ...card.rect, x: card.rect.x + dx, y: card.rect.y + dy } }
           : card
       )
-      // The link appears the moment the card clears its host, before the drop.
-      return moved.map((card) => {
-        if (card.id !== gesture.id || card.kind !== 'expansion') return card
-        const host = moved.find((item) => item.id === card.hostId)
-        return { ...card, inset: host ? containsRect(host.rect, card.rect) : card.inset }
-      })
     }
     if (gesture?.type === 'resize' && resizedRect) {
-      // Refused, the card still shows its size, and its neighbours stay where they are.
       const moved = new Map(resizeUpdates?.map((update) => [update.id, update.rect]))
-      if (!resizeUpdates) moved.set(gesture.id, resizedRect)
-      return shownCards.map((card) => {
+      return cards.map((card) => {
         const rect = moved.get(card.id)
         return rect ? { ...card, rect } : card
       })
     }
-    return shownCards
-  }, [dragDelta, gesture, resizedRect, resizeUpdates, shownCards])
+    return cards
+  }, [cards, dragDelta, gesture, resizedRect, resizeUpdates])
 
   const displayedFrames = useMemo(() => {
     if (gesture?.type === 'drag' && gesture.frameIds.size > 0) {
@@ -2194,17 +2104,14 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     [displayed, draft]
   )
 
-  // A draft kept against its parent follows it as it grows or moves; one that a card
-  // grew or was dropped over moves out of the way, but not from a card still held, which
-  // may be coming to link.
+  // A draft kept against its parent follows it as it grows or moves.
   const draftRect = useMemo(() => {
     if (!draft) return null
     if (resizedDraft) return resizedDraft.rect
-    const base =
-      draft.side && draftParent ? rectAgainst(draftParent.rect, draft.side, draft.rect) : draft.rect
-    const held = gesture?.type === 'drag' ? gesture.ids : undefined
-    return rectClearBelow(base, topLevelRects(displayed, held))
-  }, [displayed, draft, draftParent, gesture, resizedDraft])
+    return draft.side && draftParent
+      ? rectAgainst(draftParent.rect, draft.side, draft.rect)
+      : draft.rect
+  }, [draft, draftParent, resizedDraft])
 
   // Held over the composer, a card or a `+` links rather than moves.
   const overDraft =
@@ -2212,17 +2119,6 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     (gesture?.type === 'extend' ||
       (gesture?.type === 'drag' && cards.some((card) => card.id === gesture.id))) &&
     containsPoint(draftRect, gesture.pointer)
-
-  // A refused drop or resize sends back everything that would have moved, so all of it warns.
-  const refusedIds = useMemo((): ReadonlySet<string> => {
-    if (gesture?.type === 'drag') {
-      return dragResult?.ok === false && !overDraft ? gesture.ids : new Set()
-    }
-    if (gesture?.type === 'resize' && resizeBlocked) {
-      return new Set([gesture.id, ...resizeFollowerIds(cards, gesture.id)])
-    }
-    return new Set()
-  }, [cards, dragResult, gesture, overDraft, resizeBlocked])
 
   // The answer being continued and its composer, both when they fit; else the composer,
   // with the newest lines of the answer just above it, as in a chat.
@@ -2311,7 +2207,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
   const resizeDraftBy = (dw: number, dh: number): void => {
     if (!draft || !draftRect) return
     const side = draftParent ? draft.side : undefined
-    const { rect } = resizeDraftRect(draftRect, side, { dw, dh }, topLevelRects(displayed), 0)
+    const { rect } = resizeDraftRect(draftRect, side, { dw, dh }, cardRects(displayed), 0)
     setDraft({ ...draft, rect })
     refollow()
   }
@@ -2409,9 +2305,9 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
     gesture?.type === 'connect' || gesture?.type === 'extend' ? gesture.from : null
   const connectToId = useMemo(() => {
     if (gesture?.type !== 'connect') return null
-    const target = cardAtPoint(cards, gesture.pointer)
+    const target = cardAtPoint(cards, gesture.pointer, stack)
     return target && target.id !== gesture.from ? target.id : null
-  }, [cards, gesture])
+  }, [cards, gesture, stack])
   const pendingConnector = useMemo(() => {
     if (drawContinues && drawing) return { from: drawContinues.rect, to: drawing.rect }
     if (gesture?.type === 'extend') {
@@ -2560,7 +2456,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
               (gesture?.type === 'resize' &&
                 (gesture.id === card.id ||
                   (resizeUpdates?.some((update) => update.id === card.id) ?? false)))
-            const invalid = refusedIds.has(card.id)
+            const stackLevel = (stackRanks.get(card.id) ?? 0) + 1
             const dimmed = placing
               ? placing.hostId !== card.id
               : searchMatches !== null && !searchMatches.has(card.id)
@@ -2572,7 +2468,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
                   editing={editingNoteId === card.id}
                   selected={liveSelection.has(card.id)}
                   dragging={dragging}
-                  invalid={invalid}
+                  stackLevel={stackLevel}
                   pulsing={pulseId === card.id}
                   dimmed={dimmed}
                   continued={
@@ -2601,7 +2497,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
                 dragging={dragging}
                 handleRight={!continueHandleBlocked(card, 'right', displayed)}
                 handleBottom={!continueHandleBlocked(card, 'bottom', displayed)}
-                invalid={invalid}
+                stackLevel={stackLevel}
                 pulsing={pulseId === card.id}
                 dimmed={dimmed}
                 selected={liveSelection.has(card.id)}
@@ -2620,6 +2516,7 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
           <CanvasLinks
             cards={displayed}
             links={links}
+            stackRanks={stackRanks}
             surfaceRef={surfaceRef}
             dragging={gesture?.type === 'drag' || gesture?.type === 'resize'}
             selectedIds={liveSelection}
@@ -2897,8 +2794,8 @@ function CanvasBoard({ canvas }: { canvas: Canvas }): React.JSX.Element {
               </>
             ) : placing ? (
               <>
-                Draw inside the message to size the answer to “{placing.label}”, or click for the
-                default size. Esc cancels.
+                Draw a rectangle to size the answer to “{placing.label}”, or click for the default
+                size. Esc cancels.
               </>
             ) : (
               toolHint
