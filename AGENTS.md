@@ -219,7 +219,7 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
 | Stop/retry generation                  | `useChatStreaming.ts` (`stop`/`retry`) + `Conversation.tsx`, `Turn.tsx`                                                    |
 | Edit and resend a user message         | `useChatStreaming.ts` (`editMessage` → `truncateAndResend`) + `Turn.tsx`, `Conversation.tsx`                               |
 | Delete the open conversation           | `useChatStreaming.ts` (`deleteConversation`) + `Conversation.tsx` toolbar                                                  |
-| App-wide shortcuts / search modal      | `App.tsx` (Ctrl/Cmd+N, Ctrl/Cmd+K, `ConversationSearch` mount)                                                             |
+| App-wide shortcuts / search modal      | `App.tsx` (Ctrl/Cmd+N/K/,, `ConversationSearch` mount)                                                                     |
 | Change chat auto-scroll                | `hooks/useStickToBottom.ts`                                                                                                |
 | Renderer chat UI                       | `App.tsx`, `Conversation.tsx`, `Turn.tsx`, `ConversationSearch.tsx`                                                        |
 | Agent memory tools / document base     | `memory/store.ts` (ops + confinement), `memory/tools.ts` (tool set), `shared/prompts.ts` (rules)                           |
@@ -624,8 +624,8 @@ Renderer (React 19) → Preload (contextBridge) → Main process (Node)
   expands attached to the turns they drop. The request book (`hooks/chat/requests.ts`) is
   updated before `chatCancel`, so late chunks for a dropped id are no-ops rather than writes to
   a turn that no longer exists.
-- **App-level chat chrome.** `App.tsx` owns the Ctrl/Cmd+N (new chat, switches to Chat) and
-  Ctrl/Cmd+K (search) listeners, the `ConversationSearch` modal and the composer draft, so they
+- **App-level chat chrome.** `App.tsx` owns the Ctrl/Cmd+N (new chat, switches to Chat),
+  Ctrl/Cmd+K (search) and Ctrl/Cmd+, (Settings) listeners, the `ConversationSearch` modal and the composer draft, so they
   work from every view and the draft survives `Conversation` unmounting. The Home view lists the
   five most recent conversations (`conversation-list`). Deleting the open conversation goes through
   its own toolbar (`deleteConversation` in the hook detaches the meta first so no autosave follows).

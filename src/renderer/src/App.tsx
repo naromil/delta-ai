@@ -182,6 +182,9 @@ function App(): React.JSX.Element {
       } else if (key === 'n') {
         e.preventDefault()
         startNewChat()
+      } else if (key === ',') {
+        e.preventDefault()
+        setView('settings')
       }
     }
     window.addEventListener('keydown', handleShortcut)

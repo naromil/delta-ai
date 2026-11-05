@@ -8,7 +8,7 @@
 - [x] Ignore Enter during IME composition in the search modal and the Knowledge re-analyze field — Ctrl/Cmd+K opens the highlighted chat mid-composition for CJK input
 - [x] List the keyboard shortcuts in the Look-up Guide view — Ctrl/Cmd+N, K, E, Shift+E and Esc-to-stop exist but are undiscoverable
 - [x] Fix stale Look-up Guide text — it points to a "chat sidebar" that doesn't exist, hardcodes Ctrl+Shift+D instead of the configured hotkey, and describes Expand as definition-only
-- [ ] Ctrl/Cmd+, opens Settings — the standard desktop shortcut is missing from the app-wide handler in `App.tsx`
+- [x] Ctrl/Cmd+, opens Settings — the standard desktop shortcut is missing from the app-wide handler in `App.tsx`
 - [ ] Catch rejected `loadSettings`/`getHotkeyStatus` reads in the Look-up Guide and Settings views (and drop the redundant casts on the already-typed `loadSettings`) — a failed read leaves the mode picker unloaded with an unhandled rejection
 - [ ] Unit-test `saveConversationState` in `hooks/chat/persistence.ts` — the autosave skip rules (no/blank turns, lookup source, finalized loading expansions) have no coverage
 - [ ] Unit-test `formatRelativeTime` in `lib/format.ts` — the Home recents labels have untested 1m/1h/24h/7d boundaries
