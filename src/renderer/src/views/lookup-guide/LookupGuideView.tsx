@@ -1,11 +1,14 @@
 import { useState, useEffect, useCallback } from 'react'
 import type { LookupContextMode } from '../../../../shared/models'
 
+const DEFAULT_HOTKEY = 'Ctrl+Shift+D'
+const HOTKEY_PLACEHOLDER = '{hotkey}'
+
 const GUIDE_SECTIONS = [
   {
     title: 'Triggering the Look-Up',
     description: [
-      'Press the global hotkey (default Ctrl+Shift+D) anywhere to open the Look-Up popup.',
+      `Press your look-up hotkey (${HOTKEY_PLACEHOLDER}) anywhere to open the Look-Up popup; change it in Settings.`,
       'The popup appears near your cursor as a small floating window.',
       'On Wayland / KDE the position may be centered by the compositor.'
     ]
@@ -33,8 +36,8 @@ const GUIDE_SECTIONS = [
     title: 'Conversation & Responses',
     description: [
       'AI responses appear below the input in a conversation view.',
-      'You can right-click any word or selection to expand it with a definition.',
-      'Use "Expand on\u2026" to ask a custom follow-up about the selected text.',
+      'Right-click a word or selection and choose Expand to have it defined or explained in place.',
+      'Use "Expand on\u2026" to ask your own question about the selection, or pick a quick question.',
       'Press Escape to dismiss menus or to close the window when the Ask field is empty.'
     ]
   },
@@ -43,7 +46,7 @@ const GUIDE_SECTIONS = [
     description: [
       'Click the + button in the header to send the entire conversation to the main chat window.',
       'The screen context is automatically included as the first user message.',
-      'Once transferred, the conversation is persisted and searchable from the chat sidebar.'
+      'Once transferred, the conversation is saved: it shows under Recent conversations on Home and in Ctrl/Cmd+K search.'
     ]
   }
 ]
@@ -75,10 +78,12 @@ const MODE_DESCRIPTIONS: Record<LookupContextMode, string> = {
 function LookupGuideView(): React.JSX.Element {
   const [contextMode, setContextMode] = useState<LookupContextMode>('none')
   const [modesLoaded, setModesLoaded] = useState(false)
+  const [hotkey, setHotkey] = useState(DEFAULT_HOTKEY)
 
   useEffect(() => {
     window.api.loadSettings().then((s) => {
-      const settings = s as { lookupContextMode?: string } | null
+      const settings = s as { hotkey?: string; lookupContextMode?: string } | null
+      if (settings?.hotkey) setHotkey(settings.hotkey)
       if (
         settings?.lookupContextMode === 'none' ||
         settings?.lookupContextMode === 'clipboard' ||
@@ -114,7 +119,7 @@ function LookupGuideView(): React.JSX.Element {
               </h2>
               <ul className="lookup-guide-section-list">
                 {section.description.map((item, i) => (
-                  <li key={i}>{item}</li>
+                  <li key={i}>{item.replace(HOTKEY_PLACEHOLDER, hotkey)}</li>
                 ))}
               </ul>
             </div>
