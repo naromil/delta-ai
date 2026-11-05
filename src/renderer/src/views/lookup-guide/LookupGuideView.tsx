@@ -79,21 +79,35 @@ const MODE_DESCRIPTIONS: Record<LookupContextMode, string> = {
 function LookupGuideView(): React.JSX.Element {
   const [contextMode, setContextMode] = useState<LookupContextMode>('none')
   const [modesLoaded, setModesLoaded] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [hotkey, setHotkey] = useState(DEFAULT_HOTKEY)
 
   useEffect(() => {
-    window.api.loadSettings().then((s) => {
-      const settings = s as { hotkey?: string; lookupContextMode?: string } | null
-      if (settings?.hotkey) setHotkey(settings.hotkey)
-      if (
-        settings?.lookupContextMode === 'none' ||
-        settings?.lookupContextMode === 'clipboard' ||
-        settings?.lookupContextMode === 'fullscreen-ocr'
-      ) {
-        setContextMode(settings.lookupContextMode)
-      }
-      setModesLoaded(true)
-    })
+    let cancelled = false
+    window.api
+      .loadSettings()
+      .then((settings) => {
+        if (cancelled) return
+        if (settings.hotkey) setHotkey(settings.hotkey)
+        if (
+          settings.lookupContextMode === 'none' ||
+          settings.lookupContextMode === 'clipboard' ||
+          settings.lookupContextMode === 'fullscreen-ocr'
+        ) {
+          setContextMode(settings.lookupContextMode)
+        }
+      })
+      .catch(() => {
+        // Picking a mode still saves just that field, so the picker stays usable.
+        if (!cancelled)
+          setLoadError('Could not read your current mode; choosing one still saves it.')
+      })
+      .finally(() => {
+        if (!cancelled) setModesLoaded(true)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   const handleModeChange = useCallback(async (mode: LookupContextMode) => {
@@ -151,6 +165,11 @@ function LookupGuideView(): React.JSX.Element {
           <p className="lookup-guide-mode-hint">
             Choose how the Look-Up popup acquires its context when the hotkey is pressed.
           </p>
+          {loadError && (
+            <p className="settings-error" role="alert">
+              {loadError}
+            </p>
+          )}
           <div className="lookup-guide-mode-toggle">
             {(['none', 'clipboard', 'fullscreen-ocr'] as LookupContextMode[]).map((mode) => (
               <button

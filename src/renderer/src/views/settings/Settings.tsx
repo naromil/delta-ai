@@ -71,6 +71,7 @@ function Settings(): React.JSX.Element {
   const [theme, setTheme] = useState<ThemeMode>('dark')
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [hydrated, setHydrated] = useState(false)
   const savedConfigRef = useRef<string | null>(null)
   const savedSettingsRef = useRef<string | null>(null)
@@ -98,33 +99,36 @@ function Settings(): React.JSX.Element {
     let cancelled = false
 
     void (async () => {
-      const [cfg, raw] = await Promise.all([
-        window.api.loadModelConfig(),
-        window.api.loadSettings()
-      ])
+      let loaded: [unknown, Awaited<ReturnType<typeof window.api.loadSettings>>]
+      try {
+        loaded = await Promise.all([window.api.loadModelConfig(), window.api.loadSettings()])
+      } catch (err) {
+        // Stay unhydrated: autosave must never write defaults over files it could not read.
+        if (!cancelled) {
+          const detail = err instanceof Error ? `: ${err.message}` : ''
+          setLoadError(
+            `Could not load your settings${detail}. Changes will not be saved until Settings is reopened.`
+          )
+        }
+        return
+      }
       if (cancelled) return
+      const [cfg, settings] = loaded
 
-      const settings = raw as {
-        hotkey?: string
-        closeToTray?: boolean
-        lookupContextMode?: string
-        kbAutoMaintain?: boolean
-        theme?: string
-      } | null
       const config = (
         cfg && typeof cfg === 'object' ? cfg : createDefaultModelConfig()
       ) as ModelConfig
-      const nextHotkey = settings?.hotkey || 'Ctrl+Shift+D'
-      const nextTray = settings?.closeToTray ?? true
+      const nextHotkey = settings.hotkey || 'Ctrl+Shift+D'
+      const nextTray = settings.closeToTray ?? true
       const nextMode: LookupContextMode =
-        settings?.lookupContextMode === 'clipboard' ||
-        settings?.lookupContextMode === 'fullscreen-ocr' ||
-        settings?.lookupContextMode === 'none'
+        settings.lookupContextMode === 'clipboard' ||
+        settings.lookupContextMode === 'fullscreen-ocr' ||
+        settings.lookupContextMode === 'none'
           ? settings.lookupContextMode
           : 'none'
-      const nextKbAutoMaintain = settings?.kbAutoMaintain ?? true
+      const nextKbAutoMaintain = settings.kbAutoMaintain ?? true
       const nextTheme: ThemeMode =
-        settings?.theme === 'system' || settings?.theme === 'light' || settings?.theme === 'dark'
+        settings.theme === 'system' || settings.theme === 'light' || settings.theme === 'dark'
           ? settings.theme
           : 'dark'
 
@@ -152,9 +156,14 @@ function Settings(): React.JSX.Element {
       .then(setCatalog)
       .catch((err: unknown) => setCatalog(catalogErrorState(err)))
 
-    window.api.getHotkeyStatus().then((status) => {
-      if (!cancelled) setHotkeyMode(status.mode)
-    })
+    window.api
+      .getHotkeyStatus()
+      .then((status) => {
+        if (!cancelled) setHotkeyMode(status.mode)
+      })
+      .catch(() => {
+        // the mode hint is advisory; the next successful save reports the real mode
+      })
 
     return () => {
       cancelled = true
@@ -354,6 +363,12 @@ function Settings(): React.JSX.Element {
           {SAVE_STATUS_TEXT[saveStatus]}
         </span>
       </div>
+
+      {loadError && (
+        <p className="settings-error" role="alert">
+          {loadError}
+        </p>
+      )}
 
       {saveError && (
         <p className="settings-error" role="alert">
